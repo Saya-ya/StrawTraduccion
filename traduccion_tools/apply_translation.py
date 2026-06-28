@@ -112,7 +112,7 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
         return False, "No es LZ77"
     
     expected_size = struct.unpack_from('<I', raw, 4)[0]
-    comp_data = raw[16:]
+    comp_data = raw[12:]  # header es 12 bytes (magic + decomp_size + comp_size)
     out, mapping = trace_decompression(comp_data, expected_size)
     
     if dec_offset + len(new_bytes_utf16le) > len(out):

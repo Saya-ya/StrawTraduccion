@@ -30,7 +30,7 @@ def trace_decompression(comp_data, expected_size):
       type='MATCH': (comp_offset, window_offset, sub_index)
     """
     out = bytearray()
-    window = bytearray(4096)
+    window = bytearray([0x20] * 4096)
     window_pos = 0xFEE
     src_pos = 0
     mapping = []
@@ -112,7 +112,7 @@ def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
         return False, f"ID {file_id} no es LZ77"
 
     expected_size = struct.unpack_from('<I', raw, 4)[0]
-    comp_data = raw[16:]
+    comp_data = raw[12:]  # header es 12 bytes (magic + decomp_size + comp_size)
 
     # Trazar descompresión para encontrar las posiciones en el stream comprimido
     out, mapping = trace_decompression(comp_data, expected_size)

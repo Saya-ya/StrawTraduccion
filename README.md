@@ -3,7 +3,7 @@
 ## ⚠️ Aviso Importante y Legal
 
 * **Traducción 100% Gratuita:** Este parche es un proyecto hecho de fans para fans y su distribución es **completamente gratuita**. Queda estrictamente prohibida su venta o comercialización. Si pagaste por esta traducción o la descargaste de un sitio de pago, te han estafado.
-* **Requiere ISO Original:** Para utilizar estas herramientas y aplicar el parche, es requisito indispensable que utilices una copia de seguridad (ISO) extraída de **tu propio juego original**. Este proyecto **NO** incluye, distribuye ni enlaza a ROMs o ISOs con derechos de autor . Por favor, apoya a los desarrolladores originales, en caso de que una version traducida orignal por parte de la compañia es licenciada en tu pais favor de borrar esta version y adquirir la orignal.
+* **Requiere ISO Original:** Para utilizar estas herramientas y aplicar el parche, es requisito indispensable que utilices una copia de seguridad (ISO) extraída de **tu propio juego original**. Este proyecto **NO** incluye, distribuye ni enlaza a ROMs o ISOs con derechos de autor. Por favor, apoya a los desarrolladores originales; en caso de que una versión traducida oficial por parte de la compañía sea licenciada en tu país, favor de borrar esta versión y adquirir la original.
 
 ---
 
@@ -11,90 +11,126 @@
 
 El juego guarda los textos en **dos lugares distintos**:
 
-
-## Arquitectura del juego
-
-El juego guarda los textos en **dos lugares distintos**:
-
-| Archivo | Qué contiene | Encoding |
-|---------|-------------|----------|
-| `SLPS_256.11` (ELF) | Menús, sistema, descripciones de personajes | **Shift-JIS** |
-| `Data.bin` (archivos LZ77) | Diálogos del juego (escenas) | **UTF-16LE** |
+| Archivo | Qué contiene | Encoding | ¿Comprimido? |
+|---------|-------------|----------|:---:|
+| `SLPS_256.11` (ELF) | Menús, sistema, descripciones de personajes | **Shift-JIS** | **NO** |
+| `Data.bin` (scripts LZ77) | Diálogos del juego (escenas) | **UTF-16LE** | **SÍ (LZSS)** |
 
 `Data.bin` es un archive con **27,411 archivos** internos. De esos, **997** están comprimidos con LZSS y contienen los scripts. El resto son audio (SS2 ADPCM) y texturas (TIM2).
 
 ---
 
-## Cómo funciona la extracción
+## Cómo identificar el tipo de texto
 
-### 1. Textos del ELF (menús, descripciones)
+Al abrir `textos/dialogo.csv`, la columna `source` te dice cómo tratarlo:
 
-El ELF contiene los textos del sistema en **Shift-JIS**. La extracción escanea el archivo binario buscando secuencias de bytes que formen caracteres japoneses válidos (rango 0x81-0x9F + 0xE0-0xEF como lead bytes).
+| source | Significado | Método |
+|--------|-------------|--------|
+| `ELF` | Texto sin comprimir (Shift-JIS en el ejecutable) | Parcheo directo |
+| `SCRIPT` | Texto comprimido con LZSS (UTF-16LE en Data.bin) | Parcheo directo **o** recompresión |
 
+---
+
+## Método 1: Parcheo directo (`apply_translation.py`)
+
+**Usar cuando:** el texto está en el ELF, o en un script LZ77 donde **todos** los bytes a modificar son LITERAL y la traducción cabe en el espacio original.
+
+Modifica bytes **dentro del stream original** sin cambiar su estructura. No recomprime.
+
+**Limitaciones:**
+- La traducción debe ocupar ≤ bytes que el original
+- Si un byte es MATCH (referencia a datos anteriores), no se puede tocar (~15% de los casos)
+- Si algún texto falla, hay que usar recompresión para **ese script entero**
+
+```bash
+python traduccion_tools/apply_translation.py textos/dialogo.csv
 ```
-extract_dialogue.py --elf
+
+Salida típica:
 ```
-
-Encuentra strings como:
-- `メモリーカード` (Memory Card)
-- `聖ミアトル女学園４年月組在籍。` (descripción de personaje)
-- `セーブデータを読み込み中です。` (cargando datos...)
-
-El offset en el CSV es la posición exacta dentro del ELF donde empieza el texto.
-
-### 2. Textos de los scripts (diálogos)
-
-Cada script está comprimido con **LZSS** (variante de PS2). El proceso:
-
-1. Se descomprime el archivo con `lz77.py`
-2. Se escanea el output buscando secuencias **UTF-16LE** que formen texto japonés
-3. Se filtran strings que tengan hiragana/katakana (para descartar opcodes)
-4. El resultado va al CSV con `[file_id, offset, texto_original]`
-
-```
-extract_dialogue.py --csv dialogo.csv
+=== Resultados ===
+  Aplicadas OK:        10
+  Saltadas (tamaño):   1    ← traducción más larga que el original
+  Saltadas (MATCH):    6    ← bytes referenciados, no modificables
 ```
 
 ---
 
-## Cómo funciona la traducción (apply_translation.py)
+## Método 2: Recompresión (`patch_dec.py`)
 
-### El problema del espacio
+**Usar cuando:** el parcheo directo falla (MATCH, o la traducción no cabe). **Ahora funcional gracias al fix del header LZ77 (ver sección técnica abajo).**
 
-El japonés es muy compacto: 1 kanji = 1 concepto. El español necesita varias letras.
+Flujo:
+1. Descomprime el `.dec` → obtiene el script sin comprimir
+2. Modificas el texto **directamente en el `.dec`** (con editor hex o script)
+3. Recomprime con el compresor corregido
+4. Inyecta en `Data.bin`
 
-```
-園の奧深くに     = 6 caracteres = 12 bytes (UTF-16LE)
-En el jardín     = 12 caracteres = 24 bytes (UTF-16LE) ← NO CABE
-Jardín           = 6 caracteres = 12 bytes ← SÍ CABE
-```
+```bash
+# Paso 1: Extraer scripts (una vez)
+python tools/extract_all.py --type lz77
+# → work/scripts_extraidos/ID_07461.dec
 
-La herramienta **compara el tamaño en bytes** del original vs la traducción:
-- Si cabe → parchea
-- Si no cabe → salta con warning
+# Paso 2: Modificar el .dec (reemplazar texto UTF-16LE)
+# (manual o con script)
 
-### El problema del compresor (y la solución)
-
-Los archivos LZ77 no se pueden recomprimir (el compresor tiene un bug que causa pantalla negra). En vez de recomprimir, **modificamos bytes directamente en el stream comprimido original**.
-
-El truco: en LZSS, cada byte del output puede ser de dos tipos:
-- **LITERAL**: el byte está copiado tal cual en el stream comprimido → se puede modificar
-- **MATCH**: el byte es una referencia a datos anteriores → NO se puede modificar sin romper todo
-
-La mayoría de los bytes de texto (~85%) son LITERAL. `patch_compressed.py` traza la descompresión para encontrar qué bytes del stream comprimido corresponden a cada byte del texto, y solo modifica los LITERAL.
-
-```
-Texto descomprimido    Stream comprimido (bytes LITERAL)
-────────────────────   ─────────────────────────────────
-"園の奧深くに"          pos 1001 → 0x57 (園 byte 1)
-                        pos 1002 → 0x12 (園 byte 2)
-                        pos 1003 → 0x30 (の byte 1)
-                        ... etc
+# Paso 3: Recomprimir e inyectar
+cp originales/Data.bin work/Data_patched.bin
+python tools/patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
 ```
 
-### El mapeo de fuente (español → cirílico)
+**Ventaja sobre parcheo directo:**
+- Sin límite de MATCH (todo el texto se puede cambiar)
+- Sin límite estricto de tamaño (el slot tiene ~32KB, usamos ~4KB)
 
-El juego no tiene `á`, `é`, `ñ` en su fuente original. Para resolverlo, se reusaron glifos de **caracteres cirílicos** que sí existen en la fuente del juego, reemplazando sus texturas vía PCSX2.
+**Limitación real:** el `.dec` es bytecode con punteros internos. Si estiras un texto, los datos siguientes se desplazan y los punteros se rompen. Para traducciones largas se necesita un *script rebuilder* que actualice los punteros.
+
+---
+
+## Flujo de trabajo completo
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 1. EXTRACCIÓN                                                │
+│                                                              │
+│   # Scripts comprimidos (Data.bin)                           │
+│   python tools/extract_all.py --type lz77                    │
+│   → work/scripts_extraidos/ID_*.dec  (997 archivos)          │
+│                                                              │
+│   # Textos a CSV                                             │
+│   python traduccion_tools/extract_dialogue.py                │
+│   python traduccion_tools/extract_dialogue.py --elf          │
+│   → textos/dialogo.csv  (~75,000 textos)                     │
+│                                                              │
+│   Columnas: [source, file_id, offset, original, translated]  │
+├──────────────────────────────────────────────────────────────┤
+│ 2. TRADUCCIÓN (MANUAL)                                       │
+│                                                              │
+│   Editar la columna "translated_text" en el CSV              │
+│   Ayuda: python traduccion_tools/searcher.py "texto"         │
+├──────────────────────────────────────────────────────────────┤
+│ 3. APLICACIÓN                                                │
+│                                                              │
+│   # Opción A: Parcheo directo (rápido, limitado)             │
+│   python traduccion_tools/apply_translation.py dialog.csv    │
+│                                                              │
+│   # Opción B: Recompresión (para lo que falle en A)          │
+│   # 1. Modificar el .dec a mano                              │
+│   # 2. python tools/patch_dec.py --id <ID> --dec <archivo>   │
+├──────────────────────────────────────────────────────────────┤
+│ 4. CONSTRUCCIÓN DE ISO                                       │
+│                                                              │
+│   python traduccion_tools/build_iso.py                       │
+│   python traduccion_tools/inject_elf.py                      │
+│   → work/Strawberry_translated.iso                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## El mapeo de fuente (español → cirílico)
+
+El juego no tiene `á`, `é`, `ñ` en su fuente original. Para resolverlo, se reusan glifos de **caracteres cirílicos** que sí existen en la fuente del juego, reemplazando sus texturas vía PCSX2.
 
 La tabla de sustitución vive en `apply_translation.py`:
 
@@ -112,105 +148,68 @@ SPANISH_TO_GLYPH_UTF16 = {
 
 El traductor **escribe español normal** (`á`, `é`, `ñ`). El script de parcheo hace la sustitución automáticamente. El CSV es 100% legible, sin códigos raros.
 
-### Shift-JIS: el peligro del off-by-one
-
-En Shift-JIS, los caracteres cirílicos NO son consecutivos. Hay un `Ё` (U+0401) metido entre `Е` y `Ж`:
-
-```
-Posición real en Shift-JIS:
-  0x8443 = Г    0x8444 = Д    0x8445 = Е    0x8446 = Ё ← este desplaza todo
-  0x8447 = Ж    0x8448 = З    0x8449 = И    0x844A = Й    ...
-```
-
-Por eso `apply_translation.py` **no hardcodea bytes Shift-JIS**. Convierte español → cirílico (Unicode) y luego deja que Python haga `.encode('shift-jis')` con la tabla correcta.
-
----
-
-## Flujo de trabajo completo
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ 1. EXTRACCIÓN                                           │
-│                                                         │
-│   python extract_dialogue.py --csv dialogo.csv          │
-│   python extract_dialogue.py --elf --csv sistema.csv    │
-│                                                         │
-│   → CSV con columnas:                                   │
-│     [source, file_id, offset, original_text, translated]│
-├─────────────────────────────────────────────────────────┤
-├─────────────────────────────────────────────────────────┤
-│ 2. TRADUCCIÓN (MANUAL O BÚSQUEDA)                       │
-│                                                         │
-│   Utiliza la herramienta de búsqueda para ubicar textos:│
-│   python traduccion_tools/searcher.py "texto"           │
-│                                                         │
-│   El traductor edita el CSV, llenando la columna        │
-│   "translated_text" con español REAL (á, é, í, ó...)    │
-├─────────────────────────────────────────────────────────┤
-│ 3. APLICACIÓN                                           │
-│                                                         │
-│   python apply_translation.py dialogo.csv               │
-│                                                         │
-│   → Sustituye español→cirílico (en código, no en CSV)   │
-│   → Parchea Data.bin y SLPS_256.11                      │
-├─────────────────────────────────────────────────────────┤
-│ 4. CONSTRUCCIÓN DE ISO                                  │
-│                                                         │
-│   python traduccion_tools/build_iso.py                  │
-│   python traduccion_tools/inject_elf.py                 │
-│                                                         │
-│   → Reemplaza Data.bin y ELF en la ISO original         │
-├─────────────────────────────────────────────────────────┤
-│ 5. PRUEBA EN PCSX2                                      │
-│                                                         │
-│   Cargar work/Strawberry_translated.iso                 │
-│   Verificar que el texto traducido se ve correctamente  │
-└─────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## Estructura del proyecto
 
 ```
-traduccion/
-├── originales/           # Archivos originales (recuerda extraer el iso legal)
+StrawTraduccion/
+├── originales/                # Archivos originales (NO distribuidos)
 │   ├── Data.bin
 │   ├── SLPS_256.11
-│   └── Strawberry.iso
-├── work/                    # Archivos de trabajo (se regeneran)
+│   └── Strawberry_patched.iso
+├── work/                      # Archivos de trabajo (regenerables)
+│   ├── scripts_extraidos/     # .dec extraídos (997 scripts)
 │   ├── Data_patched.bin
 │   ├── SLPS_256.11_translated
 │   └── Strawberry_translated.iso
-├── tools/                   # Herramientas de bajo nivel
-│   ├── lz77.py              # Decompresor LZSS de PS2
-│   ├── parse_archive.py     # Analiza la FAT de Data.bin
-│   ├── extract_all.py       # Extrae archivos individuales
-│   └── patch_compressed.py  # Parchea bytes en stream LZSS
-├── traduccion_tools/        # Herramientas de traducción
-│   ├── extract_dialogue.py  # Extrae textos con heurística
-│   ├── apply_translation.py # Aplica CSV → parchea archivos
-│   ├── build_iso.py         # Reconstruye la ISO
-│   ├── inject_elf.py        # Inyecta el ELF traducido en la ISO
-│   └── searcher.py          # Buscador de frases en los CSV
-├── textos/                  # CSVs de traducción
-└── LEEME.md                 # Este documento
+├── tools/                     # Bajo nivel: LZ77, compresión, parcheo
+│   ├── lz77.py                # Decompresor/compresor LZSS de PS2
+│   ├── patch_compressed.py    # Parcheo directo en stream LZSS
+│   ├── patch_dec.py           # Script Rebuilder: recomprime + inyecta
+│   ├── extract_all.py         # Extrae archivos individuales de Data.bin
+│   └── parse_archive.py       # Analiza la FAT de Data.bin
+├── traduccion_tools/          # Alto nivel: extracción, traducción, ISO
+│   ├── extract_dialogue.py    # Extrae textos JP → CSV (heurística)
+│   ├── apply_translation.py   # Aplica CSV: parcheo directo (ambos tipos)
+│   ├── build_iso.py           # Reconstruye ISO con Data.bin modificado
+│   ├── inject_elf.py          # Inyecta ELF traducido en la ISO
+│   └── searcher.py            # Busca frases en los CSVs
+├── pine_*.py                  # Herramientas PINE (RAM patching en vivo)
+├── extract_ram.py             # Extrae RAM de savestates PCSX2
+├── textos/                    # CSVs de traducción
+│   └── dialogo.csv            # 75,924 textos (SCRIPTS + ELF)
+├── Replacement/               # Texturas de fuente (PCSX2)
+└── README.md
 ```
 
 ---
 
-# Paso para que funcione el parche
+## Nota técnica: El fix del header LZ77
 
-En la carpeta replacement se encuentra el png que deberas mover a la direccion de tu carpeta de pcsx2 para que todo fucione bien, si tienes dudas contactame en Facebook en mi pagina https://www.facebook.com/share/p/1HRfueK2eB/ 
+El decompressor nativo del PS2 (código MIPS en el ELF) procesa el header LZ77 así:
+
+```
+[magic "LZ77":4] [decomp_size:4] [comp_size:4] [stream comprimido:N]
+ ←── 12 bytes de header ──→ ←── stream empieza aquí ──→
+```
+
+El campo que llamábamos "metadata" (bytes 12-15) **no es un campo separado** — es el inicio del stream comprimido. Nuestro Python original usaba un header de 16 bytes y empezaba a descomprimir 4 bytes después que el PS2, produciendo una salida diferente (6,905 bytes de diferencia) y causando pantalla negra.
+
+**Fix aplicado (2026-06-28):** header de 12 bytes, decompresor salta 12 bytes (no 16), compresor genera stream continuo desde byte 12.
 
 ---
 
 ## Limitaciones actuales
 
-1. **Tamaño de Textos (Story Mode):** En los archivos `.dec` (historia) el texto está almacenado en UTF-16LE. Dado que cada letra del alfabeto latino también ocupa 2 bytes (como un kanji), el tamaño final de la traducción **no debe exceder** el número de caracteres del texto original en japonés, o el juego colapsará. Hasta no desarrollar un *Script Rebuilder* real, los textos deben ser recortados. En el ELF (menús), este problema está resuelto gracias al padding de espacios.
+1. **Bytecode con punteros:** Los `.dec` son scripts con bytecode que referencia posiciones absolutas. Estirar un texto desplaza los datos siguientes y rompe los punteros. Se requiere un *script rebuilder* que actualice referencias internas para traducciones de longitud libre.
+2. **Extracción con heurística:** El extractor usa reglas de idioma japonés para filtrar opcodes, pero no es un parseador de bytecode perfecto. Puede haber falsos positivos.
+3. **Bytes MATCH (solo parcheo directo):** ~15% de los bytes de texto son referencias y no se pueden modificar sin recompresión.
+4. **Fuente:** Requiere texturas de reemplazo en PCSX2 para caracteres españoles (áéíóúñ¡¿).
+5. **Métricas de glifo:** El espaciado de caracteres puede verse raro (el ancho del glifo cirílico original no coincide con el español).
 
-2. **Extracción con Heurística:** El extractor `extract_dialogue.py` usa una regla heurística para encontrar oraciones, ignorando los opcodes del juego, pero sigue sin ser un parseador de bytecode perfecto (el engine del juego mezcla texto y programación intensamente). Múltiples oraciones falsas podrían colarse en `dialogo.csv`. Se requiere confirmación manual usando `searcher.py` para asegurar que el texto a traducir sea el correcto.
+---
 
-3. **Bytes MATCH**: si un byte del texto es MATCH en vez de LITERAL, no se puede parchear (~15% de los casos).
-4. **Fuente**: requiere texturas de reemplazo en PCSX2 para los caracteres españoles (áéíóúñ).
-5. **Métricas de glifo**: el espaciado de los caracteres nuevos puede verse raro (el ancho original del carácter cirílico no coincide con el español).
+# Paso para que funcione el parche
+
+En la carpeta `Replacement/` se encuentra el PNG que deberás mover a la carpeta de texturas de PCSX2 para que los caracteres españoles se rendericen correctamente. Si tienes dudas contacta en: https://www.facebook.com/share/p/1HRfueK2eB/
