@@ -1,4 +1,4 @@
-source,file_id,offset,original_text,translated_text
+﻿source,file_id,offset,original_text,translated_text
 ELF,ELF,0x005D3E,鰤韻(q鎭,
 ELF,ELF,0x01F19D,礇呉窿,
 ELF,ELF,0x0202FB,汐稘実7,
@@ -69,19 +69,19 @@ ELF,ELF,0x081D1F,櫟欒鬱歡歙歔歛歿殀殕殍毆殲殼泄沮泛,
 ELF,ELF,0x0867A8,囮劔劔,
 ELF,ELF,0x0867B0,囮劔劔,
 ELF,ELF,0x087CD2,疏膵瓩@厳x,
-ELF,ELF,0x088170,メニューへ戻りますか？,
-ELF,ELF,0x0881B0,タイトルへ戻りますか？,
-ELF,ELF,0x088220,クイックセーブしますか？,
-ELF,ELF,0x088240,クイックセーブデータは既に存在しますが,
-ELF,ELF,0x088267,　　 上書きしてもよろしいですか？,
-ELF,ELF,0x088290,保存しました。,
-ELF,ELF,0x0882A0,クイックセーブされていません。,
-ELF,ELF,0x0882BF,クイックロードを中止します。,
-ELF,ELF,0x0882E0,クイックロードしますか？,
+ELF,ELF,0x088170,メニューへ戻りますか？,¿Volver al menu?
+ELF,ELF,0x0881B0,タイトルへ戻りますか？,¿Volver al menu?
+ELF,ELF,0x088220,クイックセーブしますか？,¿Guardado Rapido?
+ELF,ELF,0x088240,クイックセーブデータは既に存在しますが,Ya hay un guardado.
+ELF,ELF,0x088267,　　 上書きしてもよろしいですか？, ¿Sobreescribir?
+ELF,ELF,0x088290,保存しました。,Guardado.
+ELF,ELF,0x0882A0,クイックセーブされていません。,No hay guardado R.
+ELF,ELF,0x0882BF,クイックロードを中止します。,Carga cancelada.
+ELF,ELF,0x0882E0,クイックロードしますか？,¿Cargar Rapido?
 ELF,ELF,0x088440,立絵 : chara[%2d] %d番のファイル読み込み待機,
-ELF,ELF,0x088480,いいえ,
+ELF,ELF,0x088480,いいえ,No
 ELF,ELF,0x0893D0,パニックの停止待機中,
-ELF,ELF,0x089420,履歴がありません,
+ELF,ELF,0x089420,履歴がありません,No hay historial
 ELF,ELF,0x089438,【？？？】,
 ELF,ELF,0x08A043,剰撲S\攫z,
 ELF,ELF,0x08A0A3,糾佐侮i,
@@ -138,14 +138,14 @@ ELF,ELF,0x08BECC,Ｆテ葛嫺歹,
 ELF,ELF,0x08BF3A,瀁?f詛馭,
 ELF,ELF,0x08BFC4,派拮嬋ド,
 ELF,ELF,0x08C142,Ｍ考嗟〕嬪~lhlsl値人,
-ELF,ELF,0x08C2B8,千華留,
-ELF,ELF,0x08C2E8,体育祭,
-ELF,ELF,0x08C2F0,プリンセスセミナー,
-ELF,ELF,0x08C308,エピローグ,
-ELF,ELF,0x08C320,お兄ちゃんエンド,
-ELF,ELF,0x08C338,ノーマルエンド,
-ELF,ELF,0x08E428,オープニング,
-ELF,ELF,0x08E438,チュートリアル,
+ELF,ELF,0x08C2B8,千華留,Chikaru
+ELF,ELF,0x08C2E8,体育祭,Festival Dep.
+ELF,ELF,0x08C2F0,プリンセスセミナー,Sem. Princesa
+ELF,ELF,0x08C308,エピローグ,Epilogo
+ELF,ELF,0x08C320,お兄ちゃんエンド,Final Hermano
+ELF,ELF,0x08C338,ノーマルエンド,Final Normal
+ELF,ELF,0x08E428,オープニング,Opening
+ELF,ELF,0x08E438,チュートリアル,Tutorial
 ELF,ELF,0x090630,聖ミアトル女学園４年月組在籍。,St. Miator 4to Año Cl. Luna.
 ELF,ELF,0x09064F,素直で明るい元気な女の子。,Chica honesta y alegre.
 ELF,ELF,0x09066A,割と慌てものでビックリすること,"Es asustadiza, y de la nada"
@@ -166,88 +166,88 @@ ELF,ELF,0x090820,あなたは学園に編入する主人公。,Eres la nueva alu
 ELF,ELF,0x09083F,女の子しか居ない、乙女の園を,Podrás disfrutar de un
 ELF,ELF,0x09085C,堪能することができちゃいます＠,jardín solo para chicas.
 ELF,ELF,0x09087B,★秘密の日記が見れちゃう！？★,★¡Verás diarios secretos!★
-ELF,ELF,0x090A00,ストロベリー・パニック！,
-ELF,ELF,0x090AA0,メモリーカード(PS2)を,
-ELF,ELF,0x090AB6,調べています。,
-ELF,ELF,0x090AC5,抜き差ししないでください。,
-ELF,ELF,0x090AE0,セーブデータを読み込み中です。,
-ELF,ELF,0x090AFF,メモリーカード(PS2)を,
-ELF,ELF,0x090B15,抜き差ししないで下さい。,
-ELF,ELF,0x090B3B,差込口１に,
-ELF,ELF,0x090B46,メモリーカード(PS2)が,
-ELF,ELF,0x090B5C,正しく差し込まれていません。,
-ELF,ELF,0x090B80,メモリーカード(PS2)の,
-ELF,ELF,0x090B96,空き容量が不足しています。,
-ELF,ELF,0x090BC0,セーブデータを読み込みました。,
-ELF,ELF,0x090BE0,セーブデータが破損していました。,
-ELF,ELF,0x090C10,ストロベリーパニック！の,
-ELF,ELF,0x090C29,セーブデータを作成するには,
-ELF,ELF,0x090C49,以上の空き容量が必要です。,
-ELF,ELF,0x090C70,セーブデータの読み込みに,
-ELF,ELF,0x090C89,失敗しました。,
-ELF,ELF,0x090CA0,このまま開始しますか？,
-ELF,ELF,0x090CB8,テクスチャ,
-ELF,ELF,0x090CC8,モデル,
-ELF,ELF,0x090CD0,フォント,
-ELF,ELF,0x090CE0,メモカアイコン,
-ELF,ELF,0x090D28,いいえ,
-ELF,ELF,0x090D68,　天音のテーマ,
-ELF,ELF,0x090D78,　夜々のテーマ,
-ELF,ELF,0x090D88,　蕾のテーマ,
-ELF,ELF,0x090DA0,　千華留のテーマ,
-ELF,ELF,0x090DB8,　檸檬のテーマ,
-ELF,ELF,0x090DC8,　籠女のテーマ,
-ELF,ELF,0x090DD8,　静馬のテーマ,
-ELF,ELF,0x090DE8,　玉青のテーマ,
-ELF,ELF,0x090DF8,　千代のテーマ,
-ELF,ELF,0x090E08,　光莉のテーマ,
-ELF,ELF,0x090E18,　絆奈のテーマ,
-ELF,ELF,0x090E28,　渚砂のテーマ,
-ELF,ELF,0x090E38,　日常,
-ELF,ELF,0x090E40,　百合１,
-ELF,ELF,0x090E50,　百合２,
-ELF,ELF,0x090E60,　コミカル,
-ELF,ELF,0x090E70,　シリアス,
-ELF,ELF,0x090E80,　おまけ,
-ELF,ELF,0x090E90,　天使と悪魔１,
-ELF,ELF,0x090EA0,　天使と悪魔２,
-ELF,ELF,0x090EB0,　パニック１,
-ELF,ELF,0x090EC0,　パニック２,
-ELF,ELF,0x090EE0,　そばにいるよ,
-ELF,ELF,0x091830,？？？？？？？？,
-ELF,ELF,0x0918B0,システムデータは保存されません,
-ELF,ELF,0x0918CF,保存しないで終了しますか？,
-ELF,ELF,0x0918F0,ストロベリーパニック！の,
-ELF,ELF,0x091909,セーブデータを作成するには,
-ELF,ELF,0x091929,以上の空き容量が必要です。,
-ELF,ELF,0x09195B,差込口１に,
-ELF,ELF,0x091966,メモリーカード(PS2)が,
-ELF,ELF,0x09197C,正しく差し込まれていません。,
-ELF,ELF,0x0919A0,メモリーカード(PS2)の,
-ELF,ELF,0x0919B6,空き容量が不足しています。,
-ELF,ELF,0x0919E0,システムデータの読み込みに,
-ELF,ELF,0x0919FB,失敗しました。,
-ELF,ELF,0x091A10,システムデータの保存に,
-ELF,ELF,0x091A27,失敗しました。,
-ELF,ELF,0x091A40,メモリーカード(PS2)の,
-ELF,ELF,0x091A56,フォーマットに失敗しました。,
-ELF,ELF,0x091A80,メモリーカード(PS2)が,
-ELF,ELF,0x091A96,フォーマットされていません。,
-ELF,ELF,0x091AB3,フォーマットしてよろしいですか？,
-ELF,ELF,0x091AE0,システムデータをセーブ中です。,
-ELF,ELF,0x091AFF,メモリーカード(PS2)を,
-ELF,ELF,0x091B15,抜き差ししないでください。,
-ELF,ELF,0x091B30,フォーマットしています。,
-ELF,ELF,0x091B49,メモリーカード(PS2)を,
-ELF,ELF,0x091B5F,抜き差ししないでください。,
-ELF,ELF,0x091B80,セーブデータをチェック中です。,
-ELF,ELF,0x091B9F,メモリーカード(PS2)を,
-ELF,ELF,0x091BB5,抜き差ししないでください。,
-ELF,ELF,0x091BD0,メモリーカード(PS2)を,
-ELF,ELF,0x091BE6,調べています。,
-ELF,ELF,0x091BF5,抜き差ししないでください。,
-ELF,ELF,0x091C10,システムデータを保存しますか？,
-ELF,ELF,0x091C30,タイトルへ戻りますか？,
+ELF,ELF,0x090A00,ストロベリー・パニック！,Strawberry Panic!
+ELF,ELF,0x090AA0,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x090AB6,調べています。,Revisando...
+ELF,ELF,0x090AC5,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x090AE0,セーブデータを読み込み中です。,Cargando datos.
+ELF,ELF,0x090AFF,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x090B15,抜き差ししないで下さい。,No la extraigas.
+ELF,ELF,0x090B3B,差込口１に,En la ranura 1
+ELF,ELF,0x090B46,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x090B5C,正しく差し込まれていません。,no esta insertada.
+ELF,ELF,0x090B80,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x090B96,空き容量が不足しています。,no tiene espacio.
+ELF,ELF,0x090BC0,セーブデータを読み込みました。,Datos cargados.
+ELF,ELF,0x090BE0,セーブデータが破損していました。,Datos corruptos.
+ELF,ELF,0x090C10,ストロベリーパニック！の,Strawberry Panic!
+ELF,ELF,0x090C29,セーブデータを作成するには,Para crear datos
+ELF,ELF,0x090C49,以上の空き容量が必要です。,requiere espacio.
+ELF,ELF,0x090C70,セーブデータの読み込みに,Error al cargar
+ELF,ELF,0x090C89,失敗しました。,los datos.
+ELF,ELF,0x090CA0,このまま開始しますか？,¿Deseas iniciar?
+ELF,ELF,0x090CB8,テクスチャ,Textura
+ELF,ELF,0x090CC8,モデル,Modelo
+ELF,ELF,0x090CD0,フォント,Fuente
+ELF,ELF,0x090CE0,メモカアイコン,Icono MemCard
+ELF,ELF,0x090D28,いいえ,No
+ELF,ELF,0x090D68,　天音のテーマ, Tema de Amane
+ELF,ELF,0x090D78,　夜々のテーマ, Tema de Yaya
+ELF,ELF,0x090D88,　蕾のテーマ, Tema de Tsubomi
+ELF,ELF,0x090DA0,　千華留のテーマ, Tema Chikaru
+ELF,ELF,0x090DB8,　檸檬のテーマ, Tema de Remon
+ELF,ELF,0x090DC8,　籠女のテーマ, Tema de Kagome
+ELF,ELF,0x090DD8,　静馬のテーマ, Tema de Shizuma
+ELF,ELF,0x090DE8,　玉青のテーマ, Tema de Tamao
+ELF,ELF,0x090DF8,　千代のテーマ, Tema de Chiyo
+ELF,ELF,0x090E08,　光莉のテーマ, Tema de Hikari
+ELF,ELF,0x090E18,　絆奈のテーマ, Tema de Kizuna
+ELF,ELF,0x090E28,　渚砂のテーマ, Tema de Nagisa
+ELF,ELF,0x090E38,　日常, Rutina
+ELF,ELF,0x090E40,　百合１, Yuri 1
+ELF,ELF,0x090E50,　百合２, Yuri 2
+ELF,ELF,0x090E60,　コミカル, Comedia
+ELF,ELF,0x090E70,　シリアス, Serio
+ELF,ELF,0x090E80,　おまけ, Extras
+ELF,ELF,0x090E90,　天使と悪魔１, Angel y Dem. 1
+ELF,ELF,0x090EA0,　天使と悪魔２, Angel y Dem. 2
+ELF,ELF,0x090EB0,　パニック１, Panico 1
+ELF,ELF,0x090EC0,　パニック２, Panico 2
+ELF,ELF,0x090EE0,　そばにいるよ, A tu lado
+ELF,ELF,0x091830,？？？？？？？？,????????
+ELF,ELF,0x0918B0,システムデータは保存されません,No se guardara.
+ELF,ELF,0x0918CF,保存しないで終了しますか？,¿Salir sin guardar?
+ELF,ELF,0x0918F0,ストロベリーパニック！の,Strawberry Panic!
+ELF,ELF,0x091909,セーブデータを作成するには,Para crear datos
+ELF,ELF,0x091929,以上の空き容量が必要です。,requiere espacio.
+ELF,ELF,0x09195B,差込口１に,En la ranura 1
+ELF,ELF,0x091966,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x09197C,正しく差し込まれていません。,no esta insertada.
+ELF,ELF,0x0919A0,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x0919B6,空き容量が不足しています。,no tiene espacio.
+ELF,ELF,0x0919E0,システムデータの読み込みに,Error al cargar
+ELF,ELF,0x0919FB,失敗しました。,los datos.
+ELF,ELF,0x091A10,システムデータの保存に,Error al guardar
+ELF,ELF,0x091A27,失敗しました。,los datos.
+ELF,ELF,0x091A40,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x091A56,フォーマットに失敗しました。,Error al format.
+ELF,ELF,0x091A80,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x091A96,フォーマットされていません。,No esta format.
+ELF,ELF,0x091AB3,フォーマットしてよろしいですか？,¿Formatear ahora?
+ELF,ELF,0x091AE0,システムデータをセーブ中です。,Guardando...
+ELF,ELF,0x091AFF,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x091B15,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x091B30,フォーマットしています。,Formateando...
+ELF,ELF,0x091B49,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x091B5F,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x091B80,セーブデータをチェック中です。,Chequeando datos...
+ELF,ELF,0x091B9F,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x091BB5,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x091BD0,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x091BE6,調べています。,Revisando...
+ELF,ELF,0x091BF5,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x091C10,システムデータを保存しますか？,¿Guardar sistema?
+ELF,ELF,0x091C30,タイトルへ戻りますか？,¿Volver al menu?
 ELF,ELF,0x091CB0,クイックセーブします。,
 ELF,ELF,0x091CC7,既にクイックセーブデータがある場合は、,
 ELF,ELF,0x091CEE,上書きされてしまいます。,
@@ -323,70 +323,70 @@ ELF,ELF,0x0927A0,選択したプレイデータで,
 ELF,ELF,0x0927B7,ゲームを開始しますか？,
 ELF,ELF,0x0927D0,ロードを終了しますか？,
 ELF,ELF,0x0927F0,セーブを終了しますか？,
-ELF,ELF,0x092810,ストロベリーパニック！の,
-ELF,ELF,0x092829,セーブデータを作成するには,
-ELF,ELF,0x092849,以上の空き容量が必要です。,
-ELF,ELF,0x09287B,差込口１に,
-ELF,ELF,0x092886,メモリーカード(PS2)が,
-ELF,ELF,0x09289C,正しく差し込まれていません。,
-ELF,ELF,0x0928C0,メモリーカード(PS2)の,
-ELF,ELF,0x0928D6,空き容量が不足しています。,
-ELF,ELF,0x092900,セーブデータの読み込みに,
-ELF,ELF,0x092919,失敗しました。,
+ELF,ELF,0x092810,ストロベリーパニック！の,Strawberry Panic!
+ELF,ELF,0x092829,セーブデータを作成するには,Para crear datos
+ELF,ELF,0x092849,以上の空き容量が必要です。,requiere espacio.
+ELF,ELF,0x09287B,差込口１に,En la ranura 1
+ELF,ELF,0x092886,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x09289C,正しく差し込まれていません。,no esta insertada.
+ELF,ELF,0x0928C0,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x0928D6,空き容量が不足しています。,no tiene espacio.
+ELF,ELF,0x092900,セーブデータの読み込みに,Error al cargar
+ELF,ELF,0x092919,失敗しました。,los datos.
 ELF,ELF,0x092930,セーブデータを保存しました。,
-ELF,ELF,0x092950,メモリーカード(PS2)が,
-ELF,ELF,0x092966,フォーマットされていません。,
+ELF,ELF,0x092950,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x092966,フォーマットされていません。,No esta format.
 ELF,ELF,0x092983,フォーマットしてセーブしますか？,
 ELF,ELF,0x0929B0,セーブデータの保存に,
-ELF,ELF,0x0929C5,失敗しました。,
-ELF,ELF,0x0929E0,メモリーカード(PS2)の,
-ELF,ELF,0x0929F6,フォーマットに失敗しました。,
+ELF,ELF,0x0929C5,失敗しました。,los datos.
+ELF,ELF,0x0929E0,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x0929F6,フォーマットに失敗しました。,Error al format.
 ELF,ELF,0x092A20,セーブデータを保存しています。,
-ELF,ELF,0x092A3F,メモリーカード(PS2)を,
-ELF,ELF,0x092A55,抜き差ししないでください。,
+ELF,ELF,0x092A3F,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x092A55,抜き差ししないでください。,No la extraigas.
 ELF,ELF,0x092A70,既にプレイデータが存在します。,
 ELF,ELF,0x092A8F,上書きになりますが,
 ELF,ELF,0x092AA2,よろしいですか？,
-ELF,ELF,0x092AC0,フォーマットしています。,
-ELF,ELF,0x092AD9,メモリーカード(PS2)を,
-ELF,ELF,0x092AEF,抜き差ししないでください。,
-ELF,ELF,0x092B10,セーブデータが破損していました。,
-ELF,ELF,0x092B40,セーブデータをチェック中です。,
-ELF,ELF,0x092B5F,メモリーカード(PS2)を,
-ELF,ELF,0x092B75,抜き差ししないでください。,
-ELF,ELF,0x092BC0,メモリーカード(PS2)を,
-ELF,ELF,0x092BD6,調べています。,
-ELF,ELF,0x092BE5,抜き差ししないで下さい。,
+ELF,ELF,0x092AC0,フォーマットしています。,Formateando...
+ELF,ELF,0x092AD9,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x092AEF,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x092B10,セーブデータが破損していました。,Datos corruptos.
+ELF,ELF,0x092B40,セーブデータをチェック中です。,Chequeando datos...
+ELF,ELF,0x092B5F,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x092B75,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x092BC0,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x092BD6,調べています。,Revisando...
+ELF,ELF,0x092BE5,抜き差ししないで下さい。,No la extraigas.
 ELF,ELF,0x092D28,？？？,
-ELF,ELF,0x092FC0,システムデータは保存されません,
-ELF,ELF,0x092FDF,保存しないで終了しますか？,
-ELF,ELF,0x093000,ストロベリーパニック！の,
-ELF,ELF,0x093019,セーブデータを作成するには,
-ELF,ELF,0x093039,以上の空き容量が必要です。,
-ELF,ELF,0x09306B,差込口１に,
-ELF,ELF,0x093076,メモリーカード(PS2)が,
-ELF,ELF,0x09308C,正しく差し込まれていません。,
-ELF,ELF,0x0930B0,メモリーカード(PS2)の,
-ELF,ELF,0x0930C6,空き容量が不足しています。,
-ELF,ELF,0x0930F0,システムデータの読み込みに,
-ELF,ELF,0x09310B,失敗しました。,
-ELF,ELF,0x093120,システムデータの保存に,
-ELF,ELF,0x093137,失敗しました。,
-ELF,ELF,0x093150,メモリーカード(PS2)の,
-ELF,ELF,0x093166,フォーマットに失敗しました。,
-ELF,ELF,0x093190,メモリーカード(PS2)が,
-ELF,ELF,0x0931A6,フォーマットされていません。,
-ELF,ELF,0x0931C3,フォーマットしてよろしいですか？,
-ELF,ELF,0x0931F0,システムデータをセーブ中です。,
-ELF,ELF,0x09320F,メモリーカード(PS2)を,
-ELF,ELF,0x093225,抜き差ししないでください。,
-ELF,ELF,0x093240,フォーマットしています。,
-ELF,ELF,0x093259,メモリーカード(PS2)を,
-ELF,ELF,0x09326F,抜き差ししないでください。,
-ELF,ELF,0x093290,セーブデータをチェック中です。,
-ELF,ELF,0x0932AF,メモリーカード(PS2)を,
-ELF,ELF,0x0932C5,抜き差ししないでください。,
-ELF,ELF,0x0932E0,メモリーカード(PS2)を,
-ELF,ELF,0x0932F6,調べています。,
-ELF,ELF,0x093305,抜き差ししないでください。,
-ELF,ELF,0x093320,システムデータを保存しますか？,
+ELF,ELF,0x092FC0,システムデータは保存されません,No se guardara.
+ELF,ELF,0x092FDF,保存しないで終了しますか？,¿Salir sin guardar?
+ELF,ELF,0x093000,ストロベリーパニック！の,Strawberry Panic!
+ELF,ELF,0x093019,セーブデータを作成するには,Para crear datos
+ELF,ELF,0x093039,以上の空き容量が必要です。,requiere espacio.
+ELF,ELF,0x09306B,差込口１に,En la ranura 1
+ELF,ELF,0x093076,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x09308C,正しく差し込まれていません。,no esta insertada.
+ELF,ELF,0x0930B0,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x0930C6,空き容量が不足しています。,no tiene espacio.
+ELF,ELF,0x0930F0,システムデータの読み込みに,Error al cargar
+ELF,ELF,0x09310B,失敗しました。,los datos.
+ELF,ELF,0x093120,システムデータの保存に,Error al guardar
+ELF,ELF,0x093137,失敗しました。,los datos.
+ELF,ELF,0x093150,メモリーカード(PS2)の,La Memory Card
+ELF,ELF,0x093166,フォーマットに失敗しました。,Error al format.
+ELF,ELF,0x093190,メモリーカード(PS2)が,la Memory Card
+ELF,ELF,0x0931A6,フォーマットされていません。,No esta format.
+ELF,ELF,0x0931C3,フォーマットしてよろしいですか？,¿Formatear ahora?
+ELF,ELF,0x0931F0,システムデータをセーブ中です。,Guardando...
+ELF,ELF,0x09320F,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x093225,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x093240,フォーマットしています。,Formateando...
+ELF,ELF,0x093259,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x09326F,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x093290,セーブデータをチェック中です。,Chequeando datos...
+ELF,ELF,0x0932AF,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x0932C5,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x0932E0,メモリーカード(PS2)を,Memory Card(PS2)
+ELF,ELF,0x0932F6,調べています。,Revisando...
+ELF,ELF,0x093305,抜き差ししないでください。,No la extraigas.
+ELF,ELF,0x093320,システムデータを保存しますか？,¿Guardar sistema?
