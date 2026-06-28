@@ -1,0 +1,35 @@
+# Archivos del juego (copyright)
+originales/
+*.iso
+*.bin
+Data.bin
+Data_patched.bin
+SLPS_256.*
+SYSTEM.CNF
+IOP/
+
+# Archivos generados
+work/
+__pycache__/
+*.pyc
+*.p2s
+sstates/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Output de traducción (se regenera)
+output/
+*.tm2
+*.dec
+*.ss2
+*.bin
+
+# Otros
+basuradeotrointento/
+Strawberry Panic! (Japan)/
