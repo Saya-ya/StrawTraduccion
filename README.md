@@ -152,9 +152,10 @@ Por eso `apply_translation.py` **no hardcodea bytes Shift-JIS**. Convierte espa�
 ├─────────────────────────────────────────────────────────┤
 │ 4. CONSTRUCCIÓN DE ISO                                  │
 │                                                         │
-│   python build_iso.py                                   │
+│   python traduccion_tools/build_iso.py                  │
+│   python traduccion_tools/inject_elf.py                 │
 │                                                         │
-│   → Reemplaza Data.bin + ELF en la ISO original         │
+│   → Reemplaza Data.bin y ELF en la ISO original         │
 ├─────────────────────────────────────────────────────────┤
 │ 5. PRUEBA EN PCSX2                                      │
 │                                                         │
@@ -185,7 +186,8 @@ traduccion/
 ├── traduccion_tools/        # Herramientas de traducción
 │   ├── extract_dialogue.py  # Extrae textos → CSV
 │   ├── apply_translation.py # Aplica CSV → parchea archivos
-│   └── build_iso.py         # Reconstruye la ISO
+│   ├── build_iso.py         # Reconstruye la ISO
+│   └── inject_elf.py        # Inyecta el ELF traducido en la ISO
 ├── textos/                  # CSVs de traducción
 └── LEEME.md                 # Este documento
 ```
