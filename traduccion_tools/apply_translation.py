@@ -144,12 +144,22 @@ def apply_translations(csv_path, data_bin_path):
         print(f"ERROR: {bin_path} no existe")
         return
     
-    # Copia de trabajo
-    work_path = bin_path.parent / 'Data_patched.bin'
+    # Copias de trabajo
+    work_path = bin_path.parent.parent / 'work' / 'Data_patched.bin'
+    work_elf_path = bin_path.parent.parent / 'work' / 'SLPS_256.11_translated'
+    
+    import shutil
+    work_path.parent.mkdir(parents=True, exist_ok=True)
+    
     if not work_path.exists() or work_path.stat().st_size != bin_path.stat().st_size:
-        import shutil
         print(f"Creando copia de trabajo: {work_path}")
         shutil.copy2(bin_path, work_path)
+        
+    elf_orig = bin_path.parent / 'SLPS_256.11'
+    if elf_orig.exists():
+        if not work_elf_path.exists() or work_elf_path.stat().st_size != elf_orig.stat().st_size:
+            print(f"Creando copia de trabajo ELF: {work_elf_path}")
+            shutil.copy2(elf_orig, work_elf_path)
     
     stats = {'ok': 0, 'skip_size': 0, 'skip_match': 0, 'skip_other': 0}
     
@@ -181,13 +191,13 @@ def apply_translations(csv_path, data_bin_path):
                 
                 if len(new_bytes) <= len(orig_bytes):
                     # Parchear ELF (directo, sin compresión)
-                    with open(work_path, 'r+b') as elf:
+                    with open(work_elf_path, 'r+b') as elf:
                         elf.seek(dec_offset)
                         elf.write(new_bytes)
                         # Rellenar resto con espacios/nulos
                         padding = len(orig_bytes) - len(new_bytes)
                         if padding > 0:
-                            elf.write(b'\x00' * padding)
+                            elf.write(b'\x20' * padding)
                     stats['ok'] += 1
                 else:
                     stats['skip_size'] += 1
