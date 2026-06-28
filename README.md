@@ -192,6 +192,12 @@ traduccion/
 
 ---
 
+# Paso para que funcione el parche
+
+En la carpeta replacement se encuentra el png que deberas mover a la direccion de tu carpeta de pcsx2 para que todo fucione bien, si tienes dudas contactame en Facebook en mi pagina https://www.facebook.com/share/p/1HRfueK2eB/ 
+
+---
+
 ## Limitaciones actuales
 
 1. **Espacio de texto fijo**: la traducción debe caber en los mismos bytes que el original. Si no cabe, se salta.
