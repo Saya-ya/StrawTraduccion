@@ -2,8 +2,10 @@
 """
 extract_all.py — Extrae archivos de Data.bin usando la FAT correcta.
 
-FAT: offset 0x8004, 27411 entradas de 12 bytes [id:u32, size:u32, offset:u32]
-LZ77: 16-byte header, decompresor corregido (LSB-first, ventana 4096)
+FAT: offset 0x8004, 27411 entradas de 12 bytes.
+IMPORTANTE: el size_field de una fila es el tamaño del archivo ANTERIOR; el
+tamaño real de un ID está en el size_field de la fila siguiente. Ver datafat.py.
+LZ77: header de 12 bytes, decompresor corregido (LSB-first, ventana 4096)
 
 Uso:
     python extract_all.py                          # Extrae TODO
@@ -12,17 +14,11 @@ Uso:
     python extract_all.py --id 7461                # Archivo específico
 """
 
-import json
-import struct
 import sys
 from pathlib import Path
 
 from lz77 import decompress
-
-FAT_OFFSET = 0x8004
-NUM_ENTRIES = 27411
-ENTRY_SIZE = 12
-ENTRY_FORMAT = "<III"  # id, size, offset
+from datafat import FAT_OFFSET, NUM_ENTRIES, ENTRY_SIZE, read_entries
 
 BIN_PATH = Path("originales/Data.bin")
 INDEX_PATH = Path("work/index.json")
@@ -31,15 +27,16 @@ OUT_BASE = Path("work")
 
 def parse_fat(data):
     """Parse FAT from raw Data.bin bytes."""
-    entries = []
-    for i in range(NUM_ENTRIES):
-        off = FAT_OFFSET + i * ENTRY_SIZE
-        raw = data[off:off + ENTRY_SIZE]
-        if len(raw) < ENTRY_SIZE:
-            break
-        fid, size, data_offset = struct.unpack(ENTRY_FORMAT, raw)
-        entries.append({"index": i, "id": fid, "size": size, "offset": data_offset})
-    return entries
+    return [
+        {
+            "index": r["row"],
+            "id": r["id"],
+            "size": r["size"],             # tamaño REAL de este archivo
+            "size_field": r["size_field"], # tamaño del archivo anterior
+            "offset": r["off"],
+        }
+        for r in read_entries(data) if r["is_file"]
+    ]
 
 
 def extract_entry(data_bin, entry, out_base):

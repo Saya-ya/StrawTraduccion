@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from lz77 import decompress
+from datafat import read_entries, find_row
 
 
 def trace_decompression(comp_data, expected_size):
@@ -30,7 +31,7 @@ def trace_decompression(comp_data, expected_size):
       type='MATCH': (comp_offset, window_offset, sub_index)
     """
     out = bytearray()
-    window = bytearray([0x20] * 4096)
+    window = bytearray([0x00] * 4096)  # PS2 usa memset(buf, 0, 4113)
     window_pos = 0xFEE
     src_pos = 0
     mapping = []
@@ -82,25 +83,12 @@ def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
     bin_path = Path(data_bin_path)
     file_size = bin_path.stat().st_size
 
-    # Leer solo la FAT para encontrar el archivo
-    FAT_OFFSET = 0x8004
-    fat_size = 27411 * 12
-
-    with open(bin_path, 'rb') as f:
-        f.seek(FAT_OFFSET)
-        fat_data = f.read(fat_size)
-
-    data_offset = None
-    for i in range(27411):
-        off = i * 12
-        fid, size, foff = struct.unpack_from('<III', fat_data, off)
-        if fid == file_id:
-            data_offset = foff
-            orig_size = size
-            break
-
-    if data_offset is None:
-        return False, f"ID {file_id} no encontrado en FAT"
+    rows = read_entries(bin_path)
+    row = find_row(rows, file_id)
+    if row is None:
+        return False, f"ID {file_id} no encontrado en FAT", []
+    data_offset = row['off']
+    orig_size = row['size']  # tamaño REAL: size_field de la fila siguiente
 
     # Leer solo los bytes del archivo comprimido
     with open(bin_path, 'rb') as f:
@@ -109,7 +97,7 @@ def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
 
     hdr = raw[:4]
     if hdr != b'LZ77':
-        return False, f"ID {file_id} no es LZ77"
+        return False, f"ID {file_id} no es LZ77", []
 
     expected_size = struct.unpack_from('<I', raw, 4)[0]
     comp_data = raw[12:]  # header es 12 bytes (magic + decomp_size + comp_size)
@@ -118,12 +106,12 @@ def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
     out, mapping = trace_decompression(comp_data, expected_size)
 
     if dec_offset + len(new_bytes) > len(out):
-        return False, f"Offset {dec_offset}+{len(new_bytes)} fuera de rango ({len(out)} bytes)"
+        return False, f"Offset {dec_offset}+{len(new_bytes)} fuera de rango ({len(out)} bytes)", []
 
     # Verificar que todos los bytes son LITERAL
     for i in range(dec_offset, dec_offset + len(new_bytes)):
         if mapping[i][0] != 'LIT':
-            return False, f"Byte {i} (0x{i:04X}) es MATCH. No se puede parchear directamente."
+            return False, f"Byte {i} (0x{i:04X}) es MATCH. No se puede parchear directamente.", []
 
     # Aplicar cambios in-place (solo los bytes necesarios)
     comp_offsets = []
@@ -132,7 +120,9 @@ def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
             dec_i = dec_offset + i
             comp_pos = mapping[dec_i][1]
             comp_offsets.append(comp_pos)
-            abs_pos = data_offset + 16 + comp_pos
+            # comp_pos está mapeado contra raw[12:], por tanto el stream empieza
+            # en data_offset + 12. Usar +16 era el bug del header viejo.
+            abs_pos = data_offset + 12 + comp_pos
             f.seek(abs_pos)
             f.write(bytes([new_byte]))
 

@@ -19,6 +19,7 @@ from pathlib import Path
 # Agregar tools/ al path para importar lz77
 sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 from lz77 import decompress
+from datafat import read_entries
 
 def is_valid_japanese_text(text):
     if len(text) < 4:
@@ -146,9 +147,13 @@ def main():
     if args.elf:
         print(f"Extrayendo textos del ELF ({args.elf_path})...")
         strings = extract_elf_strings(args.elf_path)
-        with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
+        # Si el CSV ya existe (ej: scripts), hacemos append
+        file_exists = csv_path.exists()
+        mode = 'a' if file_exists else 'w'
+        with open(csv_path, mode, encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['source', 'file_id', 'offset', 'original_text', 'translated_text'])
+            if not file_exists:
+                writer.writerow(['source', 'file_id', 'offset', 'original_text', 'translated_text'])
             for offset, text in strings:
                 writer.writerow(['ELF', 'ELF', f"0x{offset:06X}", text, ''])
         print(f"Guardado en {csv_path} ({len(strings)} strings)")
@@ -158,15 +163,12 @@ def main():
     bin_path = Path(args.bin)
     data_bin = bin_path.read_bytes()
     
-    # Parse FAT
-    FAT_OFFSET = 0x8004
-    NUM_ENTRIES = 27411
-    entries = []
-    for i in range(NUM_ENTRIES):
-        off = FAT_OFFSET + i * 12
-        fid, size, data_offset = struct.unpack("<III", data_bin[off:off+12])
-        if size > 0:
-            entries.append({"id": fid, "size": size, "offset": data_offset})
+    # Parse FAT con el formato real:
+    # el tamaño de un ID vive en el size_field de la fila siguiente.
+    entries = [
+        {"id": r["id"], "size": r["size"], "offset": r["off"]}
+        for r in read_entries(data_bin) if r["is_file"]
+    ]
             
     if args.id:
         entries = [e for e in entries if e["id"] == args.id]

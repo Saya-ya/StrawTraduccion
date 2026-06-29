@@ -4,12 +4,13 @@ patch_dec.py — Script Rebuilder para Strawberry Panic! (PS2)
 
 Flujo completo:
   1. Lee el .dec modificado (o aplica traducciones del CSV)
-  2. Recomprime con lz77.compress() (ventana inicializada con 0x20)
-  3. Calcula el tamaño REAL del slot (distancia al siguiente entry en FAT)
+  2. Recomprime con lz77.compress() (ventana inicializada con 0x00)
+  3. Calcula el tamaño REAL del slot (distancia al siguiente offset en FAT)
   4. Inyecta dentro del slot sin corromper archivos vecinos
 
-IMPORTANTE: El campo 'size' de la FAT NO es el tamaño del archivo en disco.
-El tamaño real del slot = offset_siguiente_entry - offset_este_entry.
+IMPORTANTE: El campo 'size_field' de la fila de un ID NO es el tamaño de ese
+archivo: es el tamaño del archivo anterior. El tamaño real leído por el juego
+está en el size_field de la fila SIGUIENTE. Ver tools/datafat.py.
 
 Uso:
     python patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
@@ -23,28 +24,33 @@ import argparse
 from pathlib import Path
 
 from lz77 import decompress, compress
+from datafat import (
+    FAT_OFFSET,
+    NUM_ENTRIES as FAT_ENTRIES,
+    ENTRY_SIZE,
+    read_entries,
+    find_row,
+    slot_capacity,
+    size_field_write_offset,
+)
 
 DATA_BIN_ORIG = Path('originales/Data.bin')
 DATA_BIN_WORK = Path('work/Data_patched.bin')
-FAT_OFFSET    = 0x8004
-FAT_ENTRIES   = 27411
-ENTRY_SIZE    = 12  # bytes per FAT entry: [fid:u32, size_field:u32, foff:u32]
-
-
 def load_fat(bin_path):
-    """Lee la FAT completa y devuelve (entries_sorted, fat_raw)."""
-    with open(bin_path, 'rb') as f:
-        f.seek(FAT_OFFSET)
-        fat_raw = f.read(FAT_ENTRIES * ENTRY_SIZE)
-
-    entries = []
-    for i in range(FAT_ENTRIES):
-        fid, size_field, foff = struct.unpack_from('<III', fat_raw, i * ENTRY_SIZE)
-        if foff > 0:
-            entries.append({'fid': fid, 'size_field': size_field, 'foff': foff})
-
+    """Lee la FAT completa y devuelve entradas canónicas de archivos reales."""
+    rows = read_entries(bin_path)
+    entries = [
+        {
+            'row': r['row'],
+            'fid': r['id'],
+            'size_field': r['size_field'],
+            'size': r['size'],
+            'foff': r['off'],
+        }
+        for r in rows if r['is_file']
+    ]
     entries_by_offset = sorted(entries, key=lambda e: e['foff'])
-    return entries, entries_by_offset, fat_raw
+    return entries, entries_by_offset, rows
 
 
 def get_slot_info(target_fid, bin_path):
@@ -52,38 +58,38 @@ def get_slot_info(target_fid, bin_path):
     Devuelve (foff, real_slot_size) para un file ID.
     real_slot_size = distancia al siguiente entry en el archivo.
     """
-    entries, entries_by_offset, _ = load_fat(bin_path)
+    rows = read_entries(bin_path)
 
     # Encontrar el entry
-    target = None
-    for e in entries:
-        if e['fid'] == target_fid:
-            target = e
-            break
+    target = find_row(rows, target_fid)
     if target is None:
         return None, None
 
-    # Encontrar el siguiente entry por offset
-    sorted_offsets = [e['foff'] for e in entries_by_offset]
-    idx = sorted_offsets.index(target['foff'])
-    if idx + 1 < len(sorted_offsets):
-        next_foff = sorted_offsets[idx + 1]
-        slot_size = next_foff - target['foff']
-    else:
-        slot_size = target['size_field']  # último entry, usar size_field
+    return target['off'], slot_capacity(rows, target)
 
-    return target['foff'], slot_size
+
+def get_file_info(target_fid, bin_path):
+    """
+    Devuelve (row, foff, file_size, slot_size) para un ID.
+    file_size es el tamaño REAL que el loader lee (size_field de la fila siguiente).
+    slot_size es la capacidad física hasta el siguiente offset.
+    """
+    rows = read_entries(bin_path)
+    target = find_row(rows, target_fid)
+    if target is None:
+        return None, None, None, None
+    return target, target['off'], target['size'], slot_capacity(rows, target)
 
 
 def decompress_from_data_bin(target_fid, bin_path):
     """Descomprime el script de un file ID desde Data.bin."""
-    foff, slot_size = get_slot_info(target_fid, bin_path)
+    _, foff, file_size, slot_size = get_file_info(target_fid, bin_path)
     if foff is None:
         raise ValueError(f"ID {target_fid} no encontrado en FAT")
 
     with open(bin_path, 'rb') as f:
         f.seek(foff)
-        raw = f.read(slot_size)
+        raw = f.read(file_size)
 
     if raw[:4] != b'LZ77':
         raise ValueError(f"ID {target_fid} en 0x{foff:08X} no es LZ77 (magic: {raw[:4].hex()})")
@@ -95,8 +101,9 @@ def inject_compressed(target_fid, comp_data, bin_path):
     """
     Inyecta datos comprimidos en el slot de un file ID.
     Solo escribe dentro del slot real (no corrompe vecinos).
+    Actualiza el size_field en la FAT para que el PS2 lea los bytes correctos.
     """
-    foff, slot_size = get_slot_info(target_fid, bin_path)
+    target, foff, old_file_size, slot_size = get_file_info(target_fid, bin_path)
     if foff is None:
         raise ValueError(f"ID {target_fid} no encontrado en FAT")
 
@@ -106,33 +113,75 @@ def inject_compressed(target_fid, comp_data, bin_path):
             f"Necesita reubicación."
         )
 
+    # La FAT necesita el tamaño REAL actualizado para que el PS2 lea la cantidad
+    # correcta de bytes. En este archive, el tamaño del archivo de la fila i vive
+    # en el size_field de la fila i+1 (NO en la fila actual).
+    file_size = len(comp_data)  # incluye header LZ77 de 12 bytes
+
     with open(bin_path, 'r+b') as f:
+        # Escribir datos comprimidos en el slot
         f.seek(foff)
         f.write(comp_data)
-        # Rellenar el resto del slot con ceros (dentro del slot solamente)
+        # Rellenar el resto del slot con ceros
         f.write(b'\x00' * (slot_size - len(comp_data)))
+
+        # Actualizar size_field de la FILA SIGUIENTE.
+        f.seek(size_field_write_offset(target))
+        f.write(struct.pack('<I', file_size))
 
     return foff, slot_size
 
 
-def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True):
+def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, safe_zone=True, all_literal=False):
     """
     Pipeline completo: leer .dec → recomprimir → inyectar.
+    Si safe_zone=True, evita matches que referencien bytes modificados.
+    Si all_literal=True, usa 100% literales (sin matches, inmune a bugs del compresor).
     """
     if verbose:
         print(f"[*] Procesando ID {target_fid} desde {dec_path}")
 
-    foff, slot_size = get_slot_info(target_fid, bin_path)
+    _, foff, file_size, slot_size = get_file_info(target_fid, bin_path)
     if foff is None:
         print(f"[!] ID {target_fid} no encontrado")
         return False
 
     if verbose:
-        print(f"    Slot: 0x{foff:08X}, {slot_size:,} bytes ({slot_size // 1024}KB)")
+        print(f"    Offset: 0x{foff:08X}")
+        print(f"    Tamaño FAT real: {file_size:,} bytes")
+        print(f"    Slot físico:     {slot_size:,} bytes ({slot_size // 1024}KB)")
 
     # Leer .dec modificado
     with open(dec_path, 'rb') as f:
         dec_data = f.read()
+
+    # Leer .dec original para detectar zona modificada (para safe zone)
+    orig_dec = None
+    safe_start = None
+    safe_end = None
+    if safe_zone:
+        try:
+            orig_dec = decompress_from_data_bin(target_fid, DATA_BIN_ORIG)
+            # Encontrar primer y último byte modificado
+            first_mod = None
+            last_mod = None
+            for j in range(min(len(dec_data), len(orig_dec))):
+                if dec_data[j] != orig_dec[j]:
+                    if first_mod is None:
+                        first_mod = j
+                    last_mod = j
+            if first_mod is not None:
+                # Pasar el rango de bytes MODIFICADOS (no la safe zone).
+                # El compresor calculará las posiciones de ventana prohibidas
+                # a partir de este rango.
+                safe_start = first_mod
+                safe_end = last_mod
+                if verbose:
+                    print(f"    Modificaciones: 0x{safe_start:04X} - 0x{safe_end:04X} "
+                          f"({safe_end - safe_start + 1} bytes)")
+        except Exception as e:
+            if verbose:
+                print(f"    [warn] No se pudo calcular safe zone: {e}")
 
     # Leer metadata original (primeros 4 bytes del stream comprimido)
     with open(bin_path, 'rb') as f:
@@ -148,7 +197,9 @@ def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True):
 
     # Verificar round-trip antes de inyectar
     if verify:
-        comp_test = compress(dec_data, metadata=orig_metadata)
+        comp_test = compress(dec_data, metadata=orig_metadata,
+                           safe_zone_start=safe_start, safe_zone_end=safe_end,
+                           all_literal=all_literal)
         redec_test = decompress(comp_test)
         diffs = sum(a != b for a, b in zip(dec_data, redec_test))
         if diffs > 0 or len(dec_data) != len(redec_test):
@@ -159,7 +210,9 @@ def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True):
             print(f"    Round-trip: OK (0 diffs)")
 
     # Recomprimir (metadata va al inicio del stream, header = 12 bytes)
-    comp_data = compress(dec_data, metadata=orig_metadata)
+    comp_data = compress(dec_data, metadata=orig_metadata,
+                       safe_zone_start=safe_start, safe_zone_end=safe_end,
+                       all_literal=all_literal)
     if verbose:
         our_decomp = struct.unpack_from('<I', comp_data, 4)[0]
         our_comp_size = struct.unpack_from('<I', comp_data, 8)[0]
@@ -197,6 +250,7 @@ def main():
     parser.add_argument('--dec',    type=str, required=True, help='Ruta al .dec modificado')
     parser.add_argument('--out',    type=str, default=None,  help='Data.bin destino (default: work/Data_patched.bin)')
     parser.add_argument('--verify', action='store_true',     help='Verificar round-trip antes de inyectar')
+    parser.add_argument('--all-literal', action='store_true', help='Usar solo literales (sin matches, 100% seguro)')
     parser.add_argument('--info',   action='store_true',     help='Solo mostrar info del slot, no modificar')
     args = parser.parse_args()
 
@@ -204,12 +258,14 @@ def main():
 
     if args.info:
         ensure_work_copy()
-        foff, slot_size = get_slot_info(args.id, DATA_BIN_ORIG)
+        row, foff, file_size, slot_size = get_file_info(args.id, DATA_BIN_ORIG)
         if foff is None:
             print(f"ID {args.id} no encontrado")
             return
         print(f"ID {args.id}:")
         print(f"  Offset en Data.bin: 0x{foff:08X}")
+        print(f"  Tamaño FAT real:    {file_size:,} bytes")
+        print(f"  Size se escribe en: fila {row['row'] + 1} @ 0x{size_field_write_offset(row):08X}")
         print(f"  Slot real:          {slot_size:,} bytes ({slot_size // 1024}KB)")
         # Leer header
         with open(DATA_BIN_ORIG, 'rb') as f:
@@ -229,7 +285,7 @@ def main():
         print(f"ERROR: {dec_path} no existe")
         sys.exit(1)
 
-    ok = patch_script(args.id, dec_path, bin_path, verify=args.verify)
+    ok = patch_script(args.id, dec_path, bin_path, verify=args.verify, all_literal=args.all_literal)
     if ok:
         print(f"\n✓ Listo. Ahora reconstruye la ISO con:")
         print(f"    python traduccion_tools/build_iso.py")

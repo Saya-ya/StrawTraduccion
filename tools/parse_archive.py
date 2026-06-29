@@ -10,7 +10,9 @@ Formato del archive:
     0x0C: ???       u32 LE = 0x60000
     0x10: ???       u32 LE = 3
   File table (FAT) en offset 0x8004:
-    Cada entrada = 12 bytes: [id:u32, size:u32, offset:u32] LE
+    Cada entrada = 12 bytes: [id:u32, size_field:u32, offset:u32] LE
+    El size_field de la fila i pertenece al archivo de la fila anterior; el
+    tamaño real del archivo de la fila i está en la fila i+1.
   Datos a partir de offset 0x60000
 
 Uso:
@@ -23,11 +25,10 @@ import sys
 from collections import defaultdict, Counter
 from pathlib import Path
 
+from datafat import FAT_OFFSET as TABLE_OFFSET, ENTRY_SIZE, read_entries
+
 
 HEADER_FORMAT = "<4I"
-ENTRY_FORMAT = "<III"          # id, size, offset
-TABLE_OFFSET = 0x8004
-ENTRY_SIZE = 12
 MAGIC = 0x7878C800
 
 SIGNATURES = {
@@ -74,7 +75,8 @@ def parse_archive(path):
 
     print()
 
-    # Parsear tabla
+    # Parsear tabla con datafat.py (formato real: size real = fila siguiente)
+    rows = read_entries(data)
     entries = []
     file_types = defaultdict(int)
     gaps_by_id = []
@@ -83,13 +85,17 @@ def parse_archive(path):
 
     print(f"Parseando {num_files} entradas...")
 
-    for i in range(num_files):
-        entry_offset = TABLE_OFFSET + i * ENTRY_SIZE
-        raw = data[entry_offset:entry_offset + ENTRY_SIZE]
-        if len(raw) < ENTRY_SIZE:
-            break
-        fid, size, off = struct.unpack(ENTRY_FORMAT, raw)
-        entry = {"index": i, "id": fid, "size": size, "offset": off}
+    for r in rows:
+        if not r["is_file"]:
+            continue
+        fid, size, off = r["id"], r["size"], r["off"]
+        entry = {
+            "index": r["row"],
+            "id": fid,
+            "size": size,
+            "raw_size_field": r["size_field"],
+            "offset": off,
+        }
         entries.append(entry)
 
         # Detectar tipo
@@ -151,29 +157,22 @@ def parse_archive(path):
     else:
         print(f"IDs: todos únicos ({len(set(ids))} en {len(ids)})")
 
-    # Solapamientos (overlap): cuando offset_A + size_A > offset_B
-    overlapped = 0
-    for e in entries:
+    # Solapamientos (overlap): basta comparar con el siguiente por offset.
+    entries_by_offset = sorted((e for e in entries if e["offset"] > 0), key=lambda e: e["offset"])
+    overlapped_entries = []
+    for e, e2 in zip(entries_by_offset, entries_by_offset[1:]):
         e_end = e["offset"] + e["size"]
-        for e2 in entries:
-            if e2["offset"] > e["offset"] and e_end > e2["offset"]:
-                overlapped += 1
-                break
+        if e_end > e2["offset"]:
+            overlapped_entries.append((e, e2))
+    overlapped = len(overlapped_entries)
 
     print(f"\nArchivos con solapamiento (overlap): {overlapped}")
     if overlapped > 0:
         print("(Esto es normal — la FAT reporta tamaños mayores que los reales)")
         print("IDs con overlap:")
         shown = 0
-        for e in entries:
-            e_end = e["offset"] + e["size"]
-            overlapped_with = []
-            for e2 in entries:
-                if e2["offset"] > e["offset"] and e_end > e2["offset"]:
-                    overlapped_with.append(e2["id"])
-            if overlapped_with and shown < 10:
-                print(f"  ID {e['id']:>6d} (offset=0x{e['offset']:08X} size={e['size']:,}) solapa a: {overlapped_with[:5]}")
-                shown += 1
+        for e, e2 in overlapped_entries[:10]:
+            print(f"  ID {e['id']:>6d} (offset=0x{e['offset']:08X} size={e['size']:,}) solapa a: ID {e2['id']}")
 
     print()
     print(f"=== Distribución de IDs por tipo ===")

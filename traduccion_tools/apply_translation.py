@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 from lz77 import decompress
 from patch_compressed import trace_decompression
+from datafat import read_entries, find_row
 
 
 # ============================================================
@@ -86,23 +87,12 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
     """
     bin_path = Path(data_bin_path)
     
-    # Leer FAT
-    FAT_OFFSET = 0x8004
-    with open(bin_path, 'rb') as f:
-        f.seek(FAT_OFFSET)
-        fat_data = f.read(27411 * 12)
-    
-    data_offset = None
-    for i in range(27411):
-        off = i * 12
-        fid, size, foff = struct.unpack_from('<III', fat_data, off)
-        if fid == file_id:
-            data_offset = foff
-            orig_size = size
-            break
-    
-    if data_offset is None:
+    rows = read_entries(bin_path)
+    row = find_row(rows, file_id)
+    if row is None:
         return False, f"ID {file_id} no encontrado"
+    data_offset = row['off']
+    orig_size = row['size']  # tamaño REAL: size_field de la fila siguiente
     
     with open(bin_path, 'rb') as f:
         f.seek(data_offset)
@@ -130,7 +120,9 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
             dec_i = dec_offset + i
             comp_pos = mapping[dec_i][1]
             comp_offsets.append(comp_pos)
-            abs_pos = data_offset + 16 + comp_pos
+            # comp_pos está mapeado contra raw[12:], así que el stream real
+            # empieza en data_offset + 12 (header LZ77 de 12 bytes).
+            abs_pos = data_offset + 12 + comp_pos
             f.seek(abs_pos)
             f.write(bytes([new_byte]))
     
