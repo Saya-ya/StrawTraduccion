@@ -200,6 +200,42 @@ El campo que llamábamos "metadata" (bytes 12-15) **no es un campo separado** �
 
 ---
 
+## Nota técnica: El fix de la FAT (causa raíz de la corrupción al recomprimir)
+
+La FAT de `Data.bin` (offset `0x8004`, registros de 12 bytes
+`[id:u32, size_field:u32, offset:u32]`) tiene una particularidad clave:
+
+- El `offset` de la fila *i* SÍ corresponde al archivo con ese `id`.
+- El `size_field` de la fila *i* **NO es el tamaño de ese archivo**: es el tamaño
+  del archivo de la fila **anterior**. El tamaño real que el juego usa para leer
+  el archivo *i* del CD está en el `size_field` de la fila **i+1**.
+
+Verificado contra el binario: para los 997 scripts LZ77, `12 + comp_size` (del
+header LZ77) coincide con el `size_field` de la fila siguiente **997/997 veces**,
+nunca con la propia fila.
+
+**Bug que causaba la corrupción:** al recomprimir, el stream nuevo suele ser más
+grande que el original. El rebuilder escribía el nuevo tamaño en la fila del
+propio ID, así que el juego seguía leyendo el tamaño viejo (más pequeño),
+cargaba el stream truncado y la descompresión se rompía a mitad (la corrupción
+empezaba ~byte 21000 para ID 7461). Además, escribir en la fila propia
+machacaba el tamaño del archivo *anterior*.
+
+**Fix aplicado (2026-06-29):**
+- Nuevo módulo `tools/datafat.py` centraliza el parseo correcto de la FAT
+  (`size` real = `size_field` de la fila siguiente).
+- `tools/patch_dec.py` ahora escribe el nuevo tamaño en el `size_field` de la
+  fila **i+1** (sin tocar la fila propia → no corrompe al vecino).
+- `extract_all.py`, `extract_dialogue.py` y `parse_archive.py` leen el tamaño
+  real (fila siguiente); antes ~500 `.dec` salían truncados.
+- Parcheo directo (`patch_compressed.py`, `apply_translation.py`): el byte
+  absoluto del stream es `offset + 12 + comp_pos` (antes `+16`, residuo del
+  header viejo).
+- `lz77.decompress()` ahora es estricto: recorta exactamente a `comp_size` y
+  falla si el stream está truncado, en lugar de devolver salida parcial.
+
+---
+
 ## Limitaciones actuales
 
 1. **Bytecode con punteros:** Los `.dec` son scripts con bytecode que referencia posiciones absolutas. Estirar un texto desplaza los datos siguientes y rompe los punteros. Se requiere un *script rebuilder* que actualice referencias internas para traducciones de longitud libre.
