@@ -15,6 +15,7 @@ está en el size_field de la fila SIGUIENTE. Ver tools/datafat.py.
 Uso:
     python patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
     python patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec --verify
+    python patch_dec.py --id 7461 --rebuild --csv textos/dialogo.csv --verify
 """
 
 import struct
@@ -32,6 +33,11 @@ from datafat import (
     find_row,
     slot_capacity,
     size_field_write_offset,
+)
+from script_rebuilder import (
+    default_dec_path,
+    load_csv_rows,
+    rebuild_local_slack,
 )
 
 DATA_BIN_ORIG = Path('originales/Data.bin')
@@ -200,10 +206,16 @@ def ensure_work_copy():
 def main():
     parser = argparse.ArgumentParser(description='Script Rebuilder para Strawberry Panic!')
     parser.add_argument('--id',     type=int, required=True, help='File ID en FAT (ej: 7461)')
-    parser.add_argument('--dec',    type=str, required=True, help='Ruta al .dec modificado')
+    parser.add_argument('--dec',    type=str, default=None, help='Ruta al .dec modificado/base')
     parser.add_argument('--out',    type=str, default=None,  help='Data.bin destino (default: work/Data_patched.bin)')
     parser.add_argument('--verify', action='store_true',     help='Verificar round-trip antes de inyectar')
     parser.add_argument('--all-literal', action='store_true', help='Usar solo literales (sin matches, 100% seguro)')
+    parser.add_argument('--rebuild', action='store_true', help='Reconstruir .dec desde CSV usando local-slack antes de recomprimir')
+    parser.add_argument('--csv', type=str, default='textos/dialogo.csv', help='CSV para --rebuild')
+    parser.add_argument('--mode', choices=['local-slack'], default='local-slack', help='Modo de rebuilder')
+    parser.add_argument('--rebuilt-out', type=str, default=None, help='Ruta de salida del .dec reconstruido')
+    parser.add_argument('--no-consume-punctuation', action='store_true',
+                        help='No consumir puntuación japonesa sobrante en --rebuild')
     parser.add_argument('--info',   action='store_true',     help='Solo mostrar info del slot, no modificar')
     args = parser.parse_args()
 
@@ -233,10 +245,36 @@ def main():
 
     ensure_work_copy()
 
-    dec_path = Path(args.dec)
+    dec_path = Path(args.dec) if args.dec else default_dec_path(args.id)
     if not dec_path.exists():
         print(f"ERROR: {dec_path} no existe")
         sys.exit(1)
+
+    if args.rebuild:
+        print(f"[*] Rebuilder {args.mode}: ID {args.id} desde {dec_path}")
+        dec_data = dec_path.read_bytes()
+        rows = load_csv_rows(Path(args.csv), args.id)
+        rebuilt, report = rebuild_local_slack(
+            dec_data,
+            rows,
+            consume_punctuation=not args.no_consume_punctuation,
+        )
+        print(f"    Filas CSV: {report['rows_total']}, aplicadas: {report['rows_applied']}, "
+              f"segmentos: {report['segments_modified']}, needs_shift: {len(report['needs_shift'])}")
+        if report['needs_shift']:
+            for seg in report['needs_shift'][:10]:
+                print(f"    [needs_shift] 0x{seg['start']:X}: "
+                      f"requiere {seg['required_bytes']} / capacidad {seg['capacity_bytes']}")
+            print("ERROR: hay textos que requieren modo shift; no se inyecta.")
+            sys.exit(1)
+
+        rebuilt_path = Path(args.rebuilt_out) if args.rebuilt_out else (
+            Path('work/scripts_extraidos') / f'ID_{args.id:05d}_rebuilt.dec'
+        )
+        rebuilt_path.parent.mkdir(parents=True, exist_ok=True)
+        rebuilt_path.write_bytes(rebuilt)
+        print(f"    .dec reconstruido: {rebuilt_path}")
+        dec_path = rebuilt_path
 
     ok = patch_script(args.id, dec_path, bin_path, verify=args.verify, all_literal=args.all_literal)
     if ok:
