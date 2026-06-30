@@ -115,27 +115,19 @@ def decompress(compressed_data, expected_size=None, strict=True):
     return bytes(out)
 
 
-def compress(uncompressed_data, metadata=None, safe_zone_start=None, safe_zone_end=None, all_literal=False):
+def compress(uncompressed_data, all_literal=False):
     """
-    Comprime usando LZSS de PS2.
+    Comprime usando LZSS de PS2 con búsqueda greedy de ventana completa.
 
-    Fix 2026-06-28 v3: El header es de 12 bytes. El stream comprimido empieza en 
-    el byte 12. Los primeros 4 bytes del stream SON el "metadata" — no se 
-    pre-pone nada artificial. El compresor genera un stream continuo y lo que 
-    caiga en los bytes 12-15 es el metadata.
-    
-    metadata: Ignorado (solo para compatibilidad de API). El valor real se 
-              puede leer de los bytes 12-15 del stream generado.
-    
-    safe_zone_start/end: Rango de bytes donde se fuerza LITERAL para evitar
-    que matches lean de posiciones de ventana modificadas (compatibilidad PS2).
+    El header es de 12 bytes. El stream comprimido empieza en el byte 12.
+    Los primeros 4 bytes del stream son lo que históricamente se llamó "metadata"
+    — el compresor genera un stream continuo y lo que caiga en bytes 12-15 es
+    el valor real.
     """
 
     data_len = len(uncompressed_data)
     compressed = bytearray()
 
-    # FIX 2026-06-29: El PS2 inicializa la ventana con 0x00, NO con 0x20.
-    # Confirmado por MIPS disasm y comparación contra RAM.
     window = bytearray([0x00] * WINDOW_SIZE)
     window_pos = WINDOW_START
 
@@ -153,43 +145,29 @@ def compress(uncompressed_data, metadata=None, safe_zone_start=None, safe_zone_e
             bit_count = 0
             block_tokens = bytearray()
 
-    # Calcular zona de ventana "prohibida": posiciones de ventana
-    # que fueron escritas por bytes modificados y por tanto tienen
-    # valores diferentes al original
-    forbidden_window = set()
-    if safe_zone_start is not None and safe_zone_end is not None:
-        for dec_pos in range(safe_zone_start, safe_zone_end + 1):
-            wpos = (WINDOW_START + dec_pos) & 0xFFF
-            forbidden_window.add(wpos)
-
     while src_pos < data_len:
         match_len = 0
         match_offset = 0
         max_len = min(MAX_MATCH, data_len - src_pos)
 
         if not all_literal and max_len >= MIN_MATCH:
-            # Estrategia: SOLO matches desde zona de inicialización (0xF00-0xFFF)
-            # o matches muy cercanos (< 256 bytes de distancia).
-            # El compresor original del PS2 parece usar solo estos dos tipos.
             best_len = 0
             best_offset = 0
-            
-            # Buscar en zona de inicialización: el original prefiere
-            # offset=0xFEC (window_start - 2). Buscar desde ahí hacia atrás.
-            for w_idx in range(0xFEC, 0xEFF, -1):
-                if w_idx in forbidden_window:
-                    continue
-                dist = (window_pos - w_idx) & 0xFFF
-                if dist < MIN_MATCH:
-                    continue
+
+            # Búsqueda greedy de ventana completa (misma estrategia que el
+            # compresor original del juego). Busca el match más largo en
+            # toda la ventana deslizante de 4096 bytes.
+            search_start = max(0, src_pos - WINDOW_SIZE)
+            search_end = src_pos - MIN_MATCH
+            search_range = min(search_end - search_start, WINDOW_SIZE)
+
+            # Optimización: buscar desde la posición actual hacia atrás
+            for dist in range(MIN_MATCH, min(search_range + 1, WINDOW_SIZE)):
+                w_idx = (window_pos - dist) & 0xFFF
                 search_max = min(max_len, dist)
-                if search_max < MIN_MATCH:
-                    continue
                 curr_len = 0
                 while curr_len < search_max:
                     wpos = (w_idx + curr_len) & 0xFFF
-                    if wpos in forbidden_window:
-                        break
                     if window[wpos] != uncompressed_data[src_pos + curr_len]:
                         break
                     curr_len += 1
@@ -198,29 +176,6 @@ def compress(uncompressed_data, metadata=None, safe_zone_start=None, safe_zone_e
                     best_offset = w_idx
                     if best_len == max_len:
                         break
-            
-            # Luego buscar matches cercanos (< 256 bytes)
-            if best_len < max_len:
-                for dist in range(MIN_MATCH, 256):
-                    w_idx = (window_pos - dist) & 0xFFF
-                    if w_idx in forbidden_window:
-                        continue
-                    if w_idx >= 0xF00:  # ya buscado arriba
-                        continue
-                    search_max = min(max_len, dist)
-                    curr_len = 0
-                    while curr_len < search_max:
-                        wpos = (w_idx + curr_len) & 0xFFF
-                        if wpos in forbidden_window:
-                            break
-                        if window[wpos] != uncompressed_data[src_pos + curr_len]:
-                            break
-                        curr_len += 1
-                    if curr_len > best_len:
-                        best_len = curr_len
-                        best_offset = w_idx
-                        if best_len == max_len:
-                            break
 
             match_len = best_len
             match_offset = best_offset

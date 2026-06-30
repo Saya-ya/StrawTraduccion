@@ -132,11 +132,10 @@ def inject_compressed(target_fid, comp_data, bin_path):
     return foff, slot_size
 
 
-def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, safe_zone=True, all_literal=False):
+def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, all_literal=False):
     """
     Pipeline completo: leer .dec → recomprimir → inyectar.
-    Si safe_zone=True, evita matches que referencien bytes modificados.
-    Si all_literal=True, usa 100% literales (sin matches, inmune a bugs del compresor).
+    Si all_literal=True, usa 100% literales (sin matches).
     """
     if verbose:
         print(f"[*] Procesando ID {target_fid} desde {dec_path}")
@@ -147,59 +146,15 @@ def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, saf
         return False
 
     if verbose:
-        print(f"    Offset: 0x{foff:08X}")
-        print(f"    Tamaño FAT real: {file_size:,} bytes")
-        print(f"    Slot físico:     {slot_size:,} bytes ({slot_size // 1024}KB)")
+        print(f"    Offset: 0x{foff:08X}, slot: {slot_size:,} bytes ({slot_size // 1024}KB)")
 
     # Leer .dec modificado
     with open(dec_path, 'rb') as f:
         dec_data = f.read()
 
-    # Leer .dec original para detectar zona modificada (para safe zone)
-    orig_dec = None
-    safe_start = None
-    safe_end = None
-    if safe_zone:
-        try:
-            orig_dec = decompress_from_data_bin(target_fid, DATA_BIN_ORIG)
-            # Encontrar primer y último byte modificado
-            first_mod = None
-            last_mod = None
-            for j in range(min(len(dec_data), len(orig_dec))):
-                if dec_data[j] != orig_dec[j]:
-                    if first_mod is None:
-                        first_mod = j
-                    last_mod = j
-            if first_mod is not None:
-                # Pasar el rango de bytes MODIFICADOS (no la safe zone).
-                # El compresor calculará las posiciones de ventana prohibidas
-                # a partir de este rango.
-                safe_start = first_mod
-                safe_end = last_mod
-                if verbose:
-                    print(f"    Modificaciones: 0x{safe_start:04X} - 0x{safe_end:04X} "
-                          f"({safe_end - safe_start + 1} bytes)")
-        except Exception as e:
-            if verbose:
-                print(f"    [warn] No se pudo calcular safe zone: {e}")
-
-    # Leer metadata original (primeros 4 bytes del stream comprimido)
-    with open(bin_path, 'rb') as f:
-        f.seek(foff)
-        orig_hdr = f.read(16)
-    if orig_hdr[:4] == b'LZ77':
-        orig_metadata = struct.unpack_from('<I', orig_hdr, 12)[0]
-    else:
-        orig_metadata = 0x000005EF
-
-    if verbose:
-        print(f"    Metadata original: 0x{orig_metadata:08X}")
-
     # Verificar round-trip antes de inyectar
     if verify:
-        comp_test = compress(dec_data, metadata=orig_metadata,
-                           safe_zone_start=safe_start, safe_zone_end=safe_end,
-                           all_literal=all_literal)
+        comp_test = compress(dec_data, all_literal=all_literal)
         redec_test = decompress(comp_test)
         diffs = sum(a != b for a, b in zip(dec_data, redec_test))
         if diffs > 0 or len(dec_data) != len(redec_test):
@@ -209,10 +164,8 @@ def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, saf
         if verbose:
             print(f"    Round-trip: OK (0 diffs)")
 
-    # Recomprimir (metadata va al inicio del stream, header = 12 bytes)
-    comp_data = compress(dec_data, metadata=orig_metadata,
-                       safe_zone_start=safe_start, safe_zone_end=safe_end,
-                       all_literal=all_literal)
+    # Recomprimir
+    comp_data = compress(dec_data, all_literal=all_literal)
     if verbose:
         our_decomp = struct.unpack_from('<I', comp_data, 4)[0]
         our_comp_size = struct.unpack_from('<I', comp_data, 8)[0]
