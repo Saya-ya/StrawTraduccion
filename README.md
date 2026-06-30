@@ -31,6 +31,82 @@ Al abrir `textos/dialogo.csv`, la columna `source` te dice cómo tratarlo:
 
 ---
 
+## Guía para traductores
+
+Si solo querés traducir textos sin meterte en detalles técnicos, seguí estos pasos:
+
+### Requisitos
+
+- Python 3 instalado en tu PC
+- Tu ISO original del juego (extraída de tu propio disco)
+- La carpeta `StrawTraduccion` (este proyecto)
+- PCSX2 para probar
+
+### Paso 1 — Preparar los archivos (una sola vez)
+
+Abrí la ISO con WinRAR o 7-Zip y extraé estos archivos a la carpeta `originales/`:
+- `Data.bin`
+- `SLPS_256.11`
+
+Después ejecutá en la terminal:
+
+```bash
+python tools/extract_all.py --type lz77
+python traduccion_tools/extract_dialogue.py
+python traduccion_tools/extract_dialogue.py --elf
+```
+
+Esto genera `textos/dialogo.csv` con ~75,000 líneas de diálogo extraídas.
+
+### Paso 2 — Traducir
+
+Abrí `textos/dialogo.csv` con **LibreOffice Calc** o **Excel**. Verás 5 columnas:
+
+| source | file_id | offset | original_text | translated_text |
+|---|---|---|---|---|
+| SCRIPT | 7461 | 0x02048 | 桜の園の奧深くに | |
+| SCRIPT | 7461 | 0x0205C | 汚れを知らない乙女たちが集う | |
+
+Llená la columna `translated_text` con tu traducción al español. Escribí normalmente con tildes y eñes — las herramientas las convierten automáticamente a los glifos del juego.
+
+Para buscar frases específicas:
+```bash
+python traduccion_tools/searcher.py "texto a buscar"
+```
+
+**Importante**: solo funcionan los textos con `source = SCRIPT` cuyos `file_id` estén en la lista de scripts soportados. Actualmente son **48 scripts** (IDs 7461, 8005-8007, 8010-8043, 8047, 8050-8063). Los textos `source = ELF` (menús) usan otro método.
+
+### Paso 3 — Aplicar las traducciones y generar la ISO
+
+```bash
+# Copiar Data.bin virgen como base
+cp originales/Data.bin work/Data_patched.bin
+
+# Aplicar cada script traducido (repetir por cada file_id que tenga traducciones)
+python tools/patch_dec.py --id 7461 --rebuild --csv textos/dialogo.csv --verify
+python tools/patch_dec.py --id 8006 --rebuild --csv textos/dialogo.csv --verify
+
+# Construir la ISO final
+python traduccion_tools/build_iso.py
+python traduccion_tools/inject_elf.py
+```
+
+La ISO traducida queda en `work/Strawberry_translated.iso`.
+
+### Paso 4 — Probar en PCSX2
+
+Copiá el archivo PNG de la carpeta `Replacement/` a la carpeta de texturas de PCSX2 (`textures/SLPS-25611/`). Esto es necesario para que los caracteres españoles (á, é, í, ó, ú, ñ, ¡, ¿) se vean correctamente.
+
+### Si algo falla
+
+- Si el comando dice `needs_shift`: tu traducción es demasiado larga para el espacio disponible. Acortala o dividila.
+- Si no encuentra tu `file_id` en el CSV: verificá que exista en `work/scripts_extraidos/` y que sea de tipo `SCRIPT_DIALOGUE`.
+- Si la ISO no arranca: volvé a copiar `originales/Data.bin` a `work/Data_patched.bin` y re-ejecutá los comandos de parcheo.
+
+---
+
+## Guía técnica (detalles de bajo nivel)
+
 ## Método 1: Parcheo directo (`apply_translation.py`)
 
 **Usar cuando:** el texto está en el ELF, o en un script LZ77 donde **todos** los bytes a modificar son LITERAL y la traducción cabe en el espacio original.
@@ -56,34 +132,69 @@ Salida típica:
 
 ---
 
-## Método 2: Recompresión (`patch_dec.py`)
+## Método 2: Recompresión manual (`patch_dec.py`)
 
-**Usar cuando:** el parcheo directo falla (MATCH, o la traducción no cabe). **Ahora funcional gracias al fix del header LZ77 (ver sección técnica abajo).**
+**Usar cuando:** el script NO es de tipo SCRIPT_DIALOGUE, o necesitás forzar
+compresión sin matches (`--all-literal`).
 
 Flujo:
-1. Descomprime el `.dec` → obtiene el script sin comprimir
-2. Modificas el texto **directamente en el `.dec`** (con editor hex o script)
-3. Recomprime con el compresor corregido
-4. Inyecta en `Data.bin`
+1. Modificas el texto **directamente en el `.dec`** (con editor hex o script)
+2. Recomprime e inyecta en `Data.bin`
 
 ```bash
-# Paso 1: Extraer scripts (una vez)
-python tools/extract_all.py --type lz77
-# → work/scripts_extraidos/ID_07461.dec
-
-# Paso 2: Modificar el .dec (reemplazar texto UTF-16LE)
-# (manual o con script)
-
-# Paso 3: Recomprimir e inyectar
 cp originales/Data.bin work/Data_patched.bin
 python tools/patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
 ```
 
-**Ventaja sobre parcheo directo:**
-- Sin límite de MATCH (todo el texto se puede cambiar)
-- Sin límite estricto de tamaño (el slot tiene ~32KB, usamos ~4KB)
+Para máxima seguridad (evitar posibles bugs del compresor):
+```bash
+python tools/patch_dec.py --id 7461 --dec <archivo> --all-literal --verify
+```
 
-**Limitación real:** el `.dec` es bytecode con punteros internos. Si estiras un texto, los datos siguientes se desplazan y los punteros se rompen. Para traducciones largas se necesita un *script rebuilder* que actualice los punteros.
+---
+
+## Método 3: Script Rebuilder (`script_rebuilder.py`, modo `local-slack`)
+
+**Usar cuando:** la traducción es más larga que el original japonés pero cabe en
+el *padding* (zona de ceros) que sigue a cada texto dentro del `.dec`.
+
+Este es el **método recomendado** para traducir scripts de diálogo. Solo funciona
+con los 48 scripts tipo `SCRIPT_DIALOGUE` (ver `work/analysis/dec_inventory.json`).
+
+Cada texto en estos scripts tiene esta forma:
+
+```
+[texto UTF-16LE] [00 00] [00 00 00 00 ... ] [siguiente bloque]
+                  null       padding (~150-190 bytes)
+```
+
+El modo `local-slack`:
+- Localiza el string null-terminated que contiene el `offset` del CSV.
+- Reemplaza el texto (con el mapeo español→glifos del juego).
+- Reescribe terminador + ceros **sin pasar del siguiente bloque**.
+- **No mueve estructuras ni toca punteros** → no puede romper el bytecode.
+- Si un texto no cabe en su padding local, lo marca `needs_shift` y **no** lo aplica.
+
+Uso autónomo (genera un `.dec` reconstruido + reporte):
+
+```bash
+# Análisis ligero del .dec (header + strings detectados)
+python tools/script_rebuilder.py --id 7461 --analyze
+
+# Dry-run: valida el CSV y reporta sin escribir nada
+python tools/script_rebuilder.py --id 7461 --csv textos/dialogo.csv --dry-run
+
+# Reconstruir el .dec aplicando el CSV
+python tools/script_rebuilder.py --id 7461 --csv textos/dialogo.csv \
+    --out work/scripts_extraidos/ID_07461_rebuilt.dec
+```
+
+Uso integrado en el pipeline (reconstruye desde CSV, recomprime e inyecta):
+
+```bash
+python tools/patch_dec.py --id 7461 --rebuild --csv textos/dialogo.csv --verify
+python herramientas_tools/build_iso.py
+```
 
 ---
 
@@ -91,13 +202,11 @@ python tools/patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. EXTRACCIÓN                                                │
+│ 1. EXTRACCIÓN (una sola vez)                                 │
 │                                                              │
-│   # Scripts comprimidos (Data.bin)                           │
 │   python tools/extract_all.py --type lz77                    │
 │   → work/scripts_extraidos/ID_*.dec  (997 archivos)          │
 │                                                              │
-│   # Textos a CSV                                             │
 │   python traduccion_tools/extract_dialogue.py                │
 │   python traduccion_tools/extract_dialogue.py --elf          │
 │   → textos/dialogo.csv  (~75,000 textos)                     │
@@ -108,15 +217,23 @@ python tools/patch_dec.py --id 7461 --dec work/scripts_extraidos/ID_07461.dec
 │                                                              │
 │   Editar la columna "translated_text" en el CSV              │
 │   Ayuda: python traduccion_tools/searcher.py "texto"         │
+│   ⚠️ Solo funcionan los scripts tipo SCRIPT_DIALOGUE (48)    │
+│      cuyos textos caben en el padding local (~150-190 B)     │
 ├──────────────────────────────────────────────────────────────┤
-│ 3. APLICACIÓN                                                │
+│ 3. APLICACIÓN (recomendada: --rebuild)                       │
 │                                                              │
-│   # Opción A: Parcheo directo (rápido, limitado)             │
-│   python traduccion_tools/apply_translation.py dialog.csv    │
+│   # Método principal: Script Rebuilder (automático)          │
+│   cp originales/Data.bin work/Data_patched.bin               │
+│   python tools/patch_dec.py --id 7461 --rebuild --csv        │
+│          textos/dialogo.csv --verify                         │
+│   python tools/patch_dec.py --id 8006 --rebuild --csv        │
+│          textos/dialogo.csv --verify                         │
+│   (repetir para cada file_id con traducciones)               │
 │                                                              │
-│   # Opción B: Recompresión (para lo que falle en A)          │
-│   # 1. Modificar el .dec a mano                              │
-│   # 2. python tools/patch_dec.py --id <ID> --dec <archivo>   │
+│   # Fallback si --rebuild marca needs_shift:                 │
+│   #   usar --all-literal para forzar sin matches             │
+│   python tools/patch_dec.py --id <ID> --dec <archivo>        │
+│          --all-literal --verify                              │
 ├──────────────────────────────────────────────────────────────┤
 │ 4. CONSTRUCCIÓN DE ISO                                       │
 │                                                              │
@@ -164,11 +281,13 @@ StrawTraduccion/
 │   ├── SLPS_256.11_translated
 │   └── Strawberry_translated.iso
 ├── tools/                     # Bajo nivel: LZ77, compresión, parcheo
-│   ├── lz77.py                # Decompresor/compresor LZSS de PS2
-│   ├── patch_compressed.py    # Parcheo directo en stream LZSS
-│   ├── patch_dec.py           # Script Rebuilder: recomprime + inyecta
-│   ├── extract_all.py         # Extrae archivos individuales de Data.bin
-│   └── parse_archive.py       # Analiza la FAT de Data.bin
+│   ├── datafat.py              # Parseo canónico de la FAT de Data.bin
+│   ├── lz77.py                 # Decompresor/compresor LZSS de PS2
+│   ├── script_rebuilder.py     # Rebuilder de .dec (modo local-slack)
+│   ├── patch_compressed.py     # Parcheo directo en stream LZSS
+│   ├── patch_dec.py            # Pipeline: reconstruye, recomprime e inyecta
+│   ├── extract_all.py          # Extrae archivos individuales de Data.bin
+│   └── parse_archive.py        # Analiza la FAT de Data.bin
 ├── traduccion_tools/          # Alto nivel: extracción, traducción, ISO
 │   ├── extract_dialogue.py    # Extrae textos JP → CSV (heurística)
 │   ├── apply_translation.py   # Aplica CSV: parcheo directo (ambos tipos)
@@ -238,10 +357,10 @@ machacaba el tamaño del archivo *anterior*.
 
 ## Limitaciones actuales
 
-1. **Bytecode con punteros:** Los `.dec` son scripts con bytecode que referencia posiciones absolutas. Estirar un texto desplaza los datos siguientes y rompe los punteros. Se requiere un *script rebuilder* que actualice referencias internas para traducciones de longitud libre.
-2. **Extracción con heurística:** El extractor usa reglas de idioma japonés para filtrar opcodes, pero no es un parseador de bytecode perfecto. Puede haber falsos positivos.
-3. **Bytes MATCH (solo parcheo directo):** ~15% de los bytes de texto son referencias y no se pueden modificar sin recompresión.
-4. **Fuente:** Requiere texturas de reemplazo en PCSX2 para caracteres españoles (áéíóúñ¡¿).
+1. **Scripts no soportados por el rebuilder:** Solo los 48 scripts tipo `SCRIPT_DIALOGUE` pueden usar `--rebuild`. Los `TEXT_HEAVY`, `DATA_OR_TABLE` y `TIM2_TEXTURE` requieren edición manual del `.dec`.
+2. **Traducciones que no caben en padding:** Si una traducción excede el padding local (~150-190 bytes), el rebuilder la marca `needs_shift` y no la aplica. Para esas se necesita un modo `shift` (Fase 5 del plan, no implementado).
+3. **Extracción con heurística:** El extractor usa reglas de idioma japonés para filtrar opcodes, pero no es un parseador de bytecode perfecto. Puede haber falsos positivos/negativos.
+4. **Fuente:** Requiere texturas de reemplazo en PCSX2 para caracteres españoles (áéíóúñ¡¿). Ver `Replacement/`.
 5. **Métricas de glifo:** El espaciado de caracteres puede verse raro (el ancho del glifo cirílico original no coincide con el español).
 
 ---
