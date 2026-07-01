@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-6">👥 Delegacion</h1>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Export panel -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">📤 Exportar asignacion</h2>
+        <p class="text-gray-400 text-sm mb-4">
+            Selecciona un rango de scripts para exportar como CSV parcial.
+        </p>
+
+        <form id="export-form" class="space-y-3">
+            <div>
+                <label class="text-sm text-gray-300">Desde script ID:</label>
+                <input type="number" name="from_id" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="8005">
+            </div>
+            <div>
+                <label class="text-sm text-gray-300">Hasta script ID:</label>
+                <input type="number" name="to_id" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="8010">
+            </div>
+            <div>
+                <label class="text-sm text-gray-300">Etiqueta (ej: "Traductor A")</label>
+                <input type="text" name="label" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="parcial">
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" name="only_untranslated" id="only_ut" value="1">
+                <label for="only_ut" class="text-sm text-gray-300">Solo sin traducir</label>
+            </div>
+            <button type="button" onclick="exportPartial()"
+                    class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-2 rounded text-sm font-bold">
+                Exportar CSV parcial
+            </button>
+        </form>
+
+        <div id="export-result" class="mt-3 hidden"></div>
+    </div>
+
+    <!-- Import panel -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">📥 Importar traducciones</h2>
+        <p class="text-gray-400 text-sm mb-4">
+            Sube un CSV parcial con traducciones para hacer merge a la base de datos.
+        </p>
+
+        <form id="import-form" enctype="multipart/form-data" class="space-y-3">
+            <input type="file" name="file" accept=".csv"
+                   class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm">
+            <button type="button" onclick="importPartial()"
+                    class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded text-sm font-bold">
+                Importar CSV
+            </button>
+        </form>
+
+        <div id="import-result" class="mt-3 hidden"></div>
+    </div>
+</div>
+
+<!-- Scripts list for quick selection -->
+<div class="mt-8 bg-gray-800 rounded-lg p-6">
+    <h2 class="text-lg font-bold mb-3">📁 Scripts disponibles</h2>
+    <div class="grid grid-cols-6 md:grid-cols-12 gap-1 text-xs">
+        {% for s in scripts %}
+        <a href="/scripts/{{ s.id }}"
+           class="px-2 py-1 rounded text-center
+                  {{ 'bg-green-900 text-green-300' if s.translated_texts and s.translated_texts >= s.total_texts else
+                     'bg-gray-700 text-gray-400' }}">
+            {{ s.id }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+async function exportPartial() {
+    const form = document.getElementById('export-form');
+    const fromId = parseInt(form.from_id.value);
+    const toId = parseInt(form.to_id.value);
+    const label = form.label.value || 'parcial';
+    const onlyUt = form.only_untranslated.checked;
+
+    const ids = [];
+    for (let i = fromId; i <= toId; i++) ids.push(i);
+
+    const resp = await fetch('/api/delegation/export', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({script_ids: ids, label, only_untranslated: onlyUt})
+    });
+
+    if (resp.ok) {
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `parcial_${label.replace(/ /g, '_')}.csv`;
+        a.click();
+        document.getElementById('export-result').classList.remove('hidden');
+        document.getElementById('export-result').innerHTML =
+            `<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">
+                ✓ CSV exportado (${resp.headers.get('X-Total-Count')} textos)
+            </div>`;
+    } else {
+        const data = await resp.json();
+        alert('Error: ' + (data.detail || data.message));
+    }
+}
+
+async function importPartial() {
+    const form = document.getElementById('import-form');
+    const file = form.file.files[0];
+    if (!file) { alert('Selecciona un archivo CSV'); return; }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const resp = await fetch('/api/delegation/import', {
+        method: 'POST',
+        body: formData
+    });
+
+    const data = await resp.json();
+    document.getElementById('import-result').classList.remove('hidden');
+    if (data.status === 'ok') {
+        document.getElementById('import-result').innerHTML =
+            `<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">
+                ✓ Importado: ${data.stats.imported} | Conflictos: ${data.stats.conflicts} | Saltados: ${data.stats.skipped}
+            </div>`;
+    } else {
+        document.getElementById('import-result').innerHTML =
+            `<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">Error: ${data.message}</div>`;
+    }
+}
+</script>
+
+{% endblock %}

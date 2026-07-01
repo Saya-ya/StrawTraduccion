@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-6">🔍 Buscar</h1>
+
+<div class="bg-gray-800 rounded-lg p-4 mb-6">
+    <form id="search-form"
+          hx-get="/api/search"
+          hx-target="#search-results"
+          hx-trigger="submit, keyup delay:400ms changed from #search-input"
+          hx-indicator="#search-spinner"
+          class="flex gap-3">
+        <input type="text" name="q" id="search-input"
+               placeholder="Buscar en japonés o español..."
+               class="flex-1 bg-gray-700 text-white rounded px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500"
+               autofocus value="{{ query }}">
+        <select name="search_type" id="search-type-select"
+                class="bg-gray-700 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500">
+            <option value="both" {% if search_type == 'both' or not search_type %}selected{% endif %}>Ambos</option>
+            <option value="jp" {% if search_type == 'jp' %}selected{% endif %}>Japonés</option>
+            <option value="es" {% if search_type == 'es' %}selected{% endif %}>Español</option>
+        </select>
+        <button type="submit"
+                class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-2 rounded text-sm font-bold transition-colors">
+            Buscar
+        </button>
+        <span id="search-spinner" class="htmx-indicator text-gray-400 text-sm self-center">Buscando...</span>
+    </form>
+</div>
+
+<div id="search-results">
+    {% if query %}
+    <p class="text-gray-500 text-center mt-8">Cargando resultados...</p>
+    {% else %}
+    <p class="text-gray-500 text-center mt-8">Escribe algo para buscar</p>
+    {% endif %}
+</div>
+
+{% if query %}
+<script>
+    // Auto-trigger search if there's an initial query
+    htmx.trigger(document.getElementById('search-form'), 'submit');
+</script>
+{% endif %}
+
+{% endblock %}

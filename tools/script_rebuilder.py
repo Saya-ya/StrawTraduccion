@@ -24,26 +24,10 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 
-# Mismo mapeo que traduccion_tools/apply_translation.py, duplicado aquí para que
-# el rebuilder sea autónomo y no arrastre lógica de parcheo directo.
-SPANISH_TO_GLYPH = {
-    'á': '\u0413',  # Г
-    'é': '\u0414',  # Д
-    'í': '\u0415',  # Е
-    'ó': '\u0416',  # Ж
-    'ú': '\u0417',  # З
-    'ñ': '\u0418',  # И
-    'Ñ': '\u0419',  # Й
-    '¡': '\u041A',  # К
-    '¿': '\u041B',  # Л
-    'Á': '\u0413',
-    'É': '\u0414',
-    'Í': '\u0415',
-    'Ó': '\u0416',
-    'Ú': '\u0417',
-    'Ü': '\u0417',
-    'ü': '\u0417',
-}
+from glyph_map import SPANISH_TO_GLYPH, game_string as _game_string, encode_game_utf16 as _encode_game_utf16
+
+# Re-exportar para compatibilidad con codigo existente
+SPANISH_TO_GLYPH = SPANISH_TO_GLYPH  # noqa: F811
 
 TRAILING_PUNCT = set("…。、，,.!?！？")
 
@@ -83,11 +67,11 @@ class TranslationRow:
 
 def game_string(text: str) -> str:
     """Convierte español legible a los glifos disponibles del juego."""
-    return ''.join(SPANISH_TO_GLYPH.get(ch, ch) for ch in text)
+    return _game_string(text)
 
 
 def encode_game_utf16(text: str) -> bytes:
-    return game_string(text).encode('utf-16-le')
+    return _encode_game_utf16(text)
 
 
 def decode_utf16(data: bytes) -> str:

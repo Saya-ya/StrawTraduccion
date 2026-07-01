@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-4">🔨 Construir ISO</h1>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Build Panel -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">Pipeline</h2>
+        <p class="text-gray-400 text-sm mb-4">
+            Reconstruye los scripts con traducciones, genera la ISO e inyecta el ELF.
+        </p>
+
+        <div class="flex gap-3 mb-4">
+            <button id="build-btn"
+                    class="bg-pink-600 hover:bg-pink-700 disabled:bg-gray-600 text-white px-6 py-3 rounded-lg font-bold"
+                    onclick="triggerBuild()"
+                    {% if running %}disabled{% endif %}>
+                {% if running %}⏳ Build en progreso...{% else %}▶ Construir ISO{% endif %}
+            </button>
+        </div>
+
+        <!-- Progress -->
+        <div id="build-progress" class="{% if not running %}hidden{% endif %}">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-full bg-gray-700 rounded-full h-3">
+                    <div id="progress-bar" class="bg-pink-500 h-3 rounded-full transition-all"
+                         style="width: {{ state.get('progress', 0) }}%"></div>
+                </div>
+                <span id="progress-pct" class="text-sm text-gray-400">{{ state.get('progress', 0) }}%</span>
+            </div>
+            <div id="build-step" class="text-sm text-gray-300 mb-3">{{ state.get('step', '') }}</div>
+            <pre id="build-log" class="bg-gray-900 p-3 rounded text-xs text-gray-400 max-h-64 overflow-y-auto">{{ '\n'.join(state.get('log', [])) }}</pre>
+        </div>
+
+        <!-- Result -->
+        <div id="build-result" class="mt-4 hidden">
+            <div id="build-result-content"></div>
+        </div>
+    </div>
+
+    <!-- Export Panel -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">📥 Exportar CSV</h2>
+        <p class="text-gray-400 text-sm mb-4">
+            Descarga las traducciones en formato CSV compatible con las herramientas CLI.
+        </p>
+
+        <div class="space-y-3">
+            <a href="/build/export/csv/translated"
+               class="block bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-center text-sm">
+                📤 Solo traducidos (para build)
+            </a>
+            <a href="/build/export/csv"
+               class="block bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-center text-sm">
+                📤 CSV completo (backup)
+            </a>
+        </div>
+
+        <div class="mt-4 p-3 bg-gray-700/50 rounded text-xs text-gray-400">
+            <p class="font-bold text-gray-300 mb-1">ℹ️ Formato CLI</p>
+            <p>El CSV usa el mismo formato que <code class="text-pink-400">extract_dialogue.py</code>:</p>
+            <ul class="list-disc pl-4 mt-1 space-y-1">
+                <li>UTF-8-BOM encoding</li>
+                <li>Columnas: source, file_id, offset, original_text, translated_text</li>
+                <li>Compatible con <code class="text-pink-400">patch_dec.py --rebuild</code></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+let pollTimer = null;
+
+async function triggerBuild() {
+    const btn = document.getElementById('build-btn');
+    btn.disabled = true;
+    btn.textContent = 'Iniciando...';
+    
+    document.getElementById('build-progress').classList.remove('hidden');
+    document.getElementById('build-result').classList.add('hidden');
+    document.getElementById('build-log').textContent = 'Iniciando build...';
+    
+    try {
+        const resp = await fetch('/build/run', { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.status === 'started') {
+            btn.textContent = '⏳ Build en progreso...';
+            startPolling();
+        } else {
+            btn.textContent = '❌ Error: ' + data.message;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        btn.textContent = '❌ Error de conexión';
+        btn.disabled = false;
+    }
+}
+
+function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollBuildStatus, 1500);
+}
+
+async function pollBuildStatus() {
+    try {
+        const resp = await fetch('/build/status');
+        const data = await resp.json();
+        
+        document.getElementById('progress-bar').style.width = data.progress + '%';
+        document.getElementById('progress-pct').textContent = data.progress + '%';
+        document.getElementById('build-step').textContent = data.step || '';
+        
+        if (data.log && data.log.length > 0) {
+            document.getElementById('build-log').textContent = data.log.join('\n');
+        }
+        
+        if (data.status === 'success') {
+            clearInterval(pollTimer);
+            document.getElementById('build-btn').textContent = '✓ Completado';
+            document.getElementById('build-btn').className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
+            document.getElementById('build-btn').disabled = false;
+            
+            document.getElementById('build-result').classList.remove('hidden');
+            document.getElementById('build-result-content').innerHTML = 
+                '<div class="bg-green-900/50 p-4 rounded text-green-300">' +
+                '<p class="font-bold">✓ ISO generada correctamente</p>' +
+                (data.iso_path ? '<p class="text-sm mt-1">' + data.iso_path + '</p>' : '') +
+                '</div>';
+        } else if (data.status === 'failed') {
+            clearInterval(pollTimer);
+            document.getElementById('build-btn').textContent = '✗ Falló — Reintentar';
+            document.getElementById('build-btn').className = 'bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold';
+            document.getElementById('build-btn').disabled = false;
+            
+            document.getElementById('build-result').classList.remove('hidden');
+            document.getElementById('build-result-content').innerHTML = 
+                '<div class="bg-red-900/50 p-4 rounded text-red-300">' +
+                '<p class="font-bold">✗ Error en el build</p>' +
+                (data.error ? '<p class="text-sm mt-1">' + data.error + '</p>' : '') +
+                '</div>';
+        } else if (!data.running && data.status !== 'running') {
+            clearInterval(pollTimer);
+        }
+    } catch (e) {
+        console.error('Poll error:', e);
+    }
+}
+
+// Start polling if build was already running on page load
+{% if running %}
+startPolling();
+{% endif %}
+</script>
+
+{% endblock %}

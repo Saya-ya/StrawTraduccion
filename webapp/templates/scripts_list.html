@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="mb-6">
+    <h1 class="text-2xl font-bold mb-2">📁 Scripts</h1>
+    <div class="flex gap-4 text-sm">
+        <span class="bg-gray-800 px-3 py-1 rounded">{{ total_texts }} textos totales</span>
+        <span class="bg-green-900 px-3 py-1 rounded">{{ total_translated }} traducidos</span>
+        <span class="bg-pink-900 px-3 py-1 rounded">{{ pct }}% completado</span>
+    </div>
+
+    <!-- Progress bar global -->
+    <div class="w-full bg-gray-800 rounded-full h-3 mt-3">
+        <div class="bg-pink-500 h-3 rounded-full" style="width: {{ pct }}%"></div>
+    </div>
+
+    <div class="flex gap-3 mt-4">
+        <a href="/scripts?filter_support=all" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'all' else 'bg-gray-700' }}">Todos</a>
+        <a href="/scripts?filter_support=supported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'supported' else 'bg-gray-700' }}">Soportados</a>
+        <a href="/scripts?filter_support=unsupported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'unsupported' else 'bg-gray-700' }}">No soportados</a>
+    </div>
+</div>
+
+<div class="overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-gray-800 text-left">
+                <th class="px-4 py-2">ID</th>
+                <th class="px-4 py-2">Tipo</th>
+                <th class="px-4 py-2">Textos</th>
+                <th class="px-4 py-2">Trad.</th>
+                <th class="px-4 py-2">Progreso</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in scripts %}
+            <tr class="border-b border-gray-700 hover:bg-gray-800 cursor-pointer"
+                onclick="window.location='/scripts/{{ s.id }}'">
+                <td class="px-4 py-2 font-mono">
+                    <a href="/scripts/{{ s.id }}" class="text-pink-400 hover:underline">
+                        {{ s.id }}
+                    </a>
+                </td>
+                <td class="px-4 py-2">
+                    <span class="text-xs px-2 py-0.5 rounded
+                        {{ 'bg-green-900 text-green-300' if s.is_supported else 'bg-gray-700 text-gray-400' }}">
+                        {{ s.script_type or s.source }}
+                    </span>
+                </td>
+                <td class="px-4 py-2">{{ s.total_texts or 0 }}</td>
+                <td class="px-4 py-2">{{ s.translated_texts or 0 }}</td>
+                <td class="px-4 py-2">
+                    {% set p = (s.translated_texts / s.total_texts * 100) if s.total_texts else 0 %}
+                    <div class="flex items-center gap-2">
+                        <div class="w-24 bg-gray-700 rounded-full h-2">
+                            <div class="bg-pink-500 h-2 rounded-full" style="width: {{ p|round(1) }}%"></div>
+                        </div>
+                        <span class="text-xs text-gray-400">{{ p|round(1) }}%</span>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not scripts %}
+<div class="text-center text-gray-500 mt-12">
+    <p class="text-lg">No hay scripts importados.</p>
+    <p class="mt-2">Ve a <a href="/import" class="text-pink-400 underline">Importar</a> para extraer los textos del juego.</p>
+</div>
+{% endif %}
+
+{% endblock %}

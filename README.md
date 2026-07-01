@@ -33,7 +33,7 @@ Al abrir `textos/dialogo.csv`, la columna `source` te dice cómo tratarlo:
 
 ## Guía para traductores
 
-Si solo querés traducir textos sin meterte en detalles técnicos, seguí estos pasos:
+La forma más fácil y recomendada para traducir el juego es utilizando la **Aplicación Web** (Translation Manager) incluida en el proyecto. Esta interfaz gráfica te permite buscar textos, traducirlos, verificar si caben en el espacio (fit-check) y generar la ISO traducida, todo desde el navegador.
 
 ### Requisitos
 
@@ -56,52 +56,40 @@ python traduccion_tools/extract_dialogue.py
 python traduccion_tools/extract_dialogue.py --elf
 ```
 
-Esto genera `textos/dialogo.csv` con ~55,000 líneas de diálogo extraídas.
+Esto extrae los textos del juego y genera el archivo base `textos/dialogo.csv` con ~55,000 líneas de diálogo.
 
-### Paso 2 — Traducir
+### Paso 2 — Importar y Traducir en la Web App
 
-Abrí `textos/dialogo.csv` con **LibreOffice Calc** o **Excel**. Verás 5 columnas:
+1. Iniciá el servidor web ejecutando en tu terminal:
+   ```bash
+   python run_webapp.py
+   ```
+2. Abrí tu navegador y andá a `http://127.0.0.1:8080`.
+3. Andá a la pestaña **Importar** y hacé click en el botón para cargar los textos extraídos en la base de datos de la web app.
+4. Usá las pestañas **Scripts** y **Buscar** para traducir:
+   - Podés buscar textos específicos en japonés o español.
+   - Hacé click en cualquier texto para abrir el editor en línea (guarda automáticamente con `Ctrl+Enter`).
+   - El sistema te mostrará instantáneamente un indicador de ajuste (`🟢 Cabe`, `🟡 Ajustado`, `🔴 No cabe / needs_shift`) para que sepas si tu traducción entra en la memoria del juego. Escribí normalmente con tildes y eñes.
 
-| source | file_id | offset | original_text | translated_text |
-|---|---|---|---|---|
-| SCRIPT | 7461 | 0x02048 | 桜の園の奧深くに | |
-| SCRIPT | 7461 | 0x0205C | 汚れを知らない乙女たちが集う | |
-
-Llená la columna `translated_text` con tu traducción al español. Escribí normalmente con tildes y eñes — las herramientas las convierten automáticamente a los glifos del juego.
-
-Para buscar frases específicas:
-```bash
-python traduccion_tools/searcher.py "texto a buscar"
-```
-
-**Importante**: solo funcionan los textos con `source = SCRIPT` cuyos `file_id` estén en la lista de scripts soportados. Actualmente son **48 scripts** (IDs 7461, 8005-8007, 8010-8043, 8047, 8050-8063). Los textos `source = ELF` (menús) usan otro método.
+**Importante**: solo los textos cuyos scripts estén en la lista de soportados (Soportado ✓) y tengan espacio suficiente podrán ser aplicados sin romper el juego.
 
 ### Paso 3 — Aplicar las traducciones y generar la ISO
 
-```bash
-# Copiar Data.bin virgen como base
-cp originales/Data.bin work/Data_patched.bin
+Desde la misma aplicación web, andá a la pestaña **Build** y hacé click en **Ejecutar Build Completo**. El sistema automáticamente:
+- Exportará tus traducciones de la base de datos.
+- Reconstruirá los archivos comprimidos.
+- Inyectará todo en `Data.bin` y en el `ELF`.
+- Generará la ISO final.
 
-# Aplicar cada script traducido (repetir por cada file_id que tenga traducciones)
-python tools/patch_dec.py --id 7461 --rebuild --csv textos/dialogo.csv --verify
-python tools/patch_dec.py --id 8006 --rebuild --csv textos/dialogo.csv --verify
-
-# Construir la ISO final
-python traduccion_tools/build_iso.py
-python traduccion_tools/inject_elf.py
-```
-
-La ISO traducida queda en `work/Strawberry_translated.iso`.
+La ISO traducida quedará lista en `work/Strawberry_translated.iso`.
 
 ### Paso 4 — Probar en PCSX2
 
 Copiá el archivo PNG de la carpeta `Replacement/` a la carpeta de texturas de PCSX2 (`textures/SLPS-25611/`). Esto es necesario para que los caracteres españoles (á, é, í, ó, ú, ñ, ¡, ¿) se vean correctamente.
 
-### Si algo falla
+### Colaboración y Delegación
 
-- Si el comando dice `needs_shift`: tu traducción es demasiado larga para el espacio disponible. Acortala o dividila.
-- Si no encuentra tu `file_id` en el CSV: verificá que exista en `work/scripts_extraidos/` y que sea de tipo `SCRIPT_DIALOGUE`.
-- Si la ISO no arranca: volvé a copiar `originales/Data.bin` a `work/Data_patched.bin` y re-ejecutá los comandos de parcheo.
+Si trabajás en equipo, podés usar la pestaña **Delegar** para descargar fragmentos del CSV, traducirlos en Excel/LibreOffice y volver a importarlos a la base de datos.
 
 ---
 
@@ -200,46 +188,35 @@ python herramientas_tools/build_iso.py
 
 ## Flujo de trabajo completo
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. EXTRACCIÓN (una sola vez)                                 │
+│ 1. EXTRACCIÓN (una sola vez por terminal)                    │
 │                                                              │
 │   python tools/extract_all.py --type lz77                    │
-│   → work/scripts_extraidos/ID_*.dec  (997 archivos)          │
-│                                                              │
 │   python traduccion_tools/extract_dialogue.py                │
 │   python traduccion_tools/extract_dialogue.py --elf          │
-│   → textos/dialogo.csv  (~55,000 textos)                     │
-│                                                              │
-│   Columnas: [source, file_id, offset, original, translated]  │
 ├──────────────────────────────────────────────────────────────┤
-│ 2. TRADUCCIÓN (MANUAL)                                       │
+│ 2. IMPORTACIÓN Y TRADUCCIÓN (VÍA WEB APP)                    │
 │                                                              │
-│   Editar la columna "translated_text" en el CSV              │
-│   Ayuda: python traduccion_tools/searcher.py "texto"         │
-│   ⚠️ Solo funcionan los scripts tipo SCRIPT_DIALOGUE (48)    │
-│      cuyos textos caben en el padding local (~150-190 B)     │
+│   python run_webapp.py                                       │
+│                                                              │
+│   → Navegar a http://127.0.0.1:8080                          │
+│   → Ir a "Importar" para cargar el CSV en la Base de Datos.  │
+│   → Usar "Scripts" o "Buscar" para editar y traducir.        │
+│   → El guardado es automático y avisa si el texto cabe (🟢)  │
 ├──────────────────────────────────────────────────────────────┤
-│ 3. APLICACIÓN (recomendada: --rebuild)                       │
+│ 3. CONSTRUCCIÓN DE ISO (VÍA WEB APP)                         │
 │                                                              │
-│   # Método principal: Script Rebuilder (automático)          │
-│   cp originales/Data.bin work/Data_patched.bin               │
-│   python tools/patch_dec.py --id 7461 --rebuild --csv        │
-│          textos/dialogo.csv --verify                         │
-│   python tools/patch_dec.py --id 8006 --rebuild --csv        │
-│          textos/dialogo.csv --verify                         │
-│   (repetir para cada file_id con traducciones)               │
+│   → En la app web, ir a la pestaña "Build".                  │
+│   → Click en "Ejecutar Build Completo".                      │
 │                                                              │
-│   # Fallback si --rebuild marca needs_shift:                 │
-│   #   usar --all-literal para forzar sin matches             │
-│   python tools/patch_dec.py --id <ID> --dec <archivo>        │
-│          --all-literal --verify                              │
-├──────────────────────────────────────────────────────────────┤
-│ 4. CONSTRUCCIÓN DE ISO                                       │
+│   El proceso hará automáticamente:                           │
+│   - cp originales/Data.bin work/Data_patched.bin             │
+│   - tools/patch_dec.py --rebuild para los scripts traducidos │
+│   - traduccion_tools/build_iso.py                            │
+│   - traduccion_tools/inject_elf.py                           │
 │                                                              │
-│   python traduccion_tools/build_iso.py                       │
-│   python traduccion_tools/inject_elf.py                      │
-│   → work/Strawberry_translated.iso                           │
+│   → Resultado: work/Strawberry_translated.iso                │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -295,7 +272,6 @@ StrawTraduccion/
 │   ├── inject_elf.py          # Inyecta ELF traducido en la ISO
 │   └── searcher.py            # Busca frases en los CSVs
 ├── pine_*.py                  # Herramientas PINE (RAM patching en vivo)
-├── extract_ram.py             # Extrae RAM de savestates PCSX2
 ├── textos/                    # CSVs de traducción
 │   └── dialogo.csv            # ~55,000 textos (SCRIPTS + ELF)
 ├── Replacement/               # Texturas de fuente (PCSX2)

@@ -1,0 +1,72 @@
+{% if error %}
+<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">Error: {{ error }}</div>
+{% elif results %}
+<div class="text-sm text-gray-400 mb-3">
+    <span class="font-semibold text-white">{{ total }}</span> resultado{{ 's' if total != 1 else '' }}
+    {% if script_id %}<span class="text-gray-500"> en script #{{ script_id }}</span>{% endif %}
+    {% if not script_id and total_pages > 1 %} — Página {{ page }} de {{ total_pages }}{% endif %}
+</div>
+<div class="space-y-2">
+    {% for r in results %}
+    {% if script_id %}
+    {# Modo inline: navegar a la página correcta con highlight #}
+    <a href="?page={{ r.page_num }}&highlight={{ r.id }}"
+       class="block bg-gray-800 rounded p-3 hover:bg-gray-700 border border-gray-700 transition-colors group cursor-pointer">
+    {% else %}
+    <a href="/scripts/{{ r.script_id }}?highlight={{ r.id }}"
+       class="block bg-gray-800 rounded p-3 hover:bg-gray-700 border border-gray-700 transition-colors group">
+    {% endif %}
+        <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
+            {% if not script_id %}
+            <span class="bg-gray-700 group-hover:bg-gray-600 px-2 py-0.5 rounded font-mono">Script #{{ r.script_id }}</span>
+            {% endif %}
+            <span class="font-mono">0x{{ "%05X"|format(r.byte_offset) }}</span>
+            {% if script_id %}
+            <span class="text-gray-600">p.{{ r.page_num }}</span>
+            {% endif %}
+            {% if r.is_translated %}
+            <span class="text-green-400 font-bold">✓ Traducido</span>
+            {% else %}
+            <span class="text-yellow-500">Sin traducir</span>
+            {% endif %}
+            {% if r.needs_shift %}
+            <span class="text-red-400">⚠ needs_shift</span>
+            {% endif %}
+        </div>
+        <div class="text-sm text-gray-200 mb-1">{{ r.original_text[:200] }}</div>
+        {% if r.translated_text %}
+        <div class="text-sm text-pink-300 bg-gray-700/50 rounded p-2 mt-1">{{ r.translated_text[:200] }}</div>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+
+{% if not script_id and total_pages > 1 %}
+<div class="flex justify-center gap-2 mt-6 text-sm flex-wrap">
+    {% if page > 1 %}
+    <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ page - 1 }}"
+            hx-target="#search-results"
+            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">← Anterior</button>
+    {% endif %}
+    {% for p in range([1, page - 2]|max, [total_pages + 1, page + 3]|min) %}
+    <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ p }}"
+            hx-target="#search-results"
+            class="px-3 py-1 rounded {{ 'bg-pink-600 font-bold' if p == page else 'bg-gray-700 hover:bg-gray-600' }}">
+        {{ p }}
+    </button>
+    {% endfor %}
+    {% if page < total_pages %}
+    <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ page + 1 }}"
+            hx-target="#search-results"
+            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">Siguiente →</button>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if script_id and total > 100 %}
+<p class="text-xs text-gray-500 text-center mt-2">Mostrando primeros 100 — refina tu búsqueda.</p>
+{% endif %}
+
+{% else %}
+<p class="text-gray-500 text-center mt-4 text-sm">Sin resultados para "<span class="text-gray-300">{{ query }}</span>"</p>
+{% endif %}

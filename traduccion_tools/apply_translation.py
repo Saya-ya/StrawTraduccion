@@ -25,59 +25,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 from lz77 import decompress
 from patch_compressed import trace_decompression
 from datafat import read_entries, find_row
+from glyph_map import SPANISH_TO_GLYPH, game_string, encode_game_utf16 as _enc_utf16, encode_game_sjis as _enc_sjis
 
+# Re-exportar para compatibilidad
+SPANISH_TO_GLYPH_UTF16 = SPANISH_TO_GLYPH
 
-# ============================================================
-# MAPEO DE FUENTE: español → glifo reusado (vive en código)
-# ============================================================
-SPANISH_TO_GLYPH_UTF16 = {
-    'á': '\u0413',  # Г
-    'é': '\u0414',  # Д
-    'í': '\u0415',  # Е
-    'ó': '\u0416',  # Ж
-    'ú': '\u0417',  # З
-    'ñ': '\u0418',  # И
-    'Ñ': '\u0419',  # Й
-    '¡': '\u041A',  # К
-    '¿': '\u041B',  # Л
-    'Á': '\u0413',  # Г (mismo glifo, sin mayúscula distinta)
-    'É': '\u0414',  # Д
-    'Í': '\u0415',  # Е
-    'Ó': '\u0416',  # Ж
-    'Ú': '\u0417',  # З
-    'Ü': '\u0417',  # З (aproximación)
-    'ü': '\u0417',  # З
-}
-
-# ============================================================
-# MAPEO DE FUENTE: español → glifo reusado
-# Los códigos Shift-JIS se generan automáticamente desde los chars UTF-16.
-# NO se hardcodean bytes — Python conoce la tabla Shift-JIS correcta.
-# ============================================================
 
 def encode_for_game_utf16(text):
     """Convierte texto español a UTF-16LE con mapeo cirílico."""
-    result = []
-    for ch in text:
-        if ch in SPANISH_TO_GLYPH_UTF16:
-            result.append(SPANISH_TO_GLYPH_UTF16[ch])
-        else:
-            result.append(ch)
-    return ''.join(result).encode('utf-16-le')
+    return _enc_utf16(text)
 
 
 def encode_for_game_sjis(text):
-    """Convierte texto español a Shift-JIS con mapeo cirílico.
-    Usa Python para codificar los caracteres cirílicos a Shift-JIS correcto."""
-    # Primero convierto español → cirílico
-    converted = []
-    for ch in text:
-        if ch in SPANISH_TO_GLYPH_UTF16:
-            converted.append(SPANISH_TO_GLYPH_UTF16[ch])
-        else:
-            converted.append(ch)
-    # Luego codifico TODO a Shift-JIS (Python sabe los códigos correctos)
-    return ''.join(converted).encode('shift-jis')
+    """Convierte texto español a Shift-JIS con mapeo cirílico."""
+    return _enc_sjis(text)
 
 
 def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):

@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="mb-4 flex items-center gap-4">
+    <a href="/scripts" class="text-pink-400 hover:underline text-sm">← Volver a scripts</a>
+</div>
+
+<div class="flex items-center justify-between mb-4">
+    <div>
+        <h1 class="text-2xl font-bold">Script #{{ script.id }}</h1>
+        <p class="text-gray-400 text-sm">
+            {{ script.script_type or script.source }}
+            {% if script.is_supported %}<span class="text-green-400 ml-2">✓ Soportado</span>{% endif %}
+        </p>
+    </div>
+    <div class="text-right">
+        {% set p = (script.translated_texts / script.total_texts * 100) if script.total_texts else 0 %}
+        <div class="text-sm text-gray-400">{{ script.translated_texts or 0 }} / {{ script.total_texts or 0 }}</div>
+        <div class="w-32 bg-gray-700 rounded-full h-2 mt-1">
+            <div class="bg-pink-500 h-2 rounded-full" style="width: {{ p|round(1) }}%"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtros + Búsqueda interna -->
+<div class="bg-gray-800 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-3">
+    <!-- Filtros de estado -->
+    <div class="flex gap-2 text-sm flex-wrap">
+        <a href="?page=1" class="px-3 py-1 rounded {{ 'bg-pink-600' if not request.query_params.get('filter') else 'bg-gray-700 hover:bg-gray-600' }}">Todos</a>
+        <a href="?page=1&filter=untranslated" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'untranslated' else 'bg-gray-700 hover:bg-gray-600' }}">Sin traducir</a>
+        <a href="?page=1&filter=translated" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'translated' else 'bg-gray-700 hover:bg-gray-600' }}">Traducidos</a>
+        <a href="?page=1&filter=needs_shift" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'needs_shift' else 'bg-gray-700 hover:bg-gray-600' }}">⚠ Needs Shift</a>
+    </div>
+
+    <!-- Divisor -->
+    <div class="hidden sm:block w-px h-6 bg-gray-600"></div>
+
+    <!-- Búsqueda interna del script -->
+    <form class="flex gap-2 flex-1 min-w-[200px]"
+          hx-get="/api/search"
+          hx-target="#search-inline-results"
+          hx-trigger="submit, keyup delay:400ms changed from #script-search-input"
+          hx-vals='{"script_id": "{{ script.id }}", "search_type": "both", "limit": "100"}'>
+        <input type="text" name="q" id="script-search-input"
+               placeholder="Buscar dentro de este script..."
+               class="flex-1 bg-gray-700 text-white rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 min-w-[180px]"
+               autocomplete="off">
+        <button type="submit"
+                class="bg-pink-600 hover:bg-pink-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+            🔍
+        </button>
+        <button type="button" id="clear-script-search"
+                class="bg-gray-600 hover:bg-gray-500 text-white px-3 py-1.5 rounded text-sm transition-colors hidden">
+            ✕
+        </button>
+    </form>
+</div>
+
+<!-- Resultados búsqueda interna (ocultos por defecto) -->
+<div id="search-inline-results" class="mb-4 hidden"></div>
+
+<!-- Paginacion -->
+<div class="flex justify-between items-center mb-4 text-sm">
+    <span class="text-gray-400">{{ total }} textos — Página {{ page }} de {{ total_pages }}</span>
+    <div class="flex gap-2">
+        {% if page > 1 %}
+        <a href="?page={{ page - 1 }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">← Anterior</a>
+        {% endif %}
+
+        <!-- Páginas numeradas (máx 7 botones) -->
+        {% set start_p = [1, page - 3]|max %}
+        {% set end_p = [total_pages, page + 3]|min %}
+        {% if start_p > 1 %}<a href="?page=1{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">1</a>{% if start_p > 2 %}<span class="text-gray-600 self-center">…</span>{% endif %}{% endif %}
+        {% for pg in range(start_p, end_p + 1) %}
+        <a href="?page={{ pg }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}"
+           class="px-3 py-1 rounded {{ 'bg-pink-600 font-bold' if pg == page else 'bg-gray-700 hover:bg-gray-600' }}">{{ pg }}</a>
+        {% endfor %}
+        {% if end_p < total_pages %}{% if end_p < total_pages - 1 %}<span class="text-gray-600 self-center">…</span>{% endif %}<a href="?page={{ total_pages }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ total_pages }}</a>{% endif %}
+
+        {% if page < total_pages %}
+        <a href="?page={{ page + 1 }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">Siguiente →</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Textos con editor inline HTMX -->
+<div class="space-y-1" id="text-list">
+    {% for text in texts %}
+    {% set ctx = context_map.get(text.byte_offset, ([], [])) %}
+    <div class="text-entry border border-gray-700 rounded p-3 cursor-pointer
+        {{ 'bg-green-900/30' if text.is_translated else 'bg-gray-800' }}"
+        id="entry-{{ text.id }}"
+        hx-get="/api/texts/{{ text.id }}/edit"
+        hx-target="closest .text-entry"
+        hx-swap="outerHTML">
+
+        <!-- Contexto antes -->
+        {% for coff in ctx[0] %}
+        {% set ce = context_entries.get(coff) %}
+        {% if ce %}
+        <div class="text-xs text-gray-500 pl-2 border-l-2 border-gray-700 mb-1">
+            <span class="text-gray-600">0x{{ "%05X"|format(coff) }}</span>
+            {{ ce.original_text[:100] }}
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        <div class="flex gap-3">
+            <div class="flex-1 min-w-0">
+                <div class="text-xs text-gray-500 font-mono mb-1">
+                    0x{{ "%05X"|format(text.byte_offset) }} (#{{ text.id }})
+                    {% if text.is_translated %}
+                    <span class="text-green-400 ml-2">✓</span>
+                    {% endif %}
+                    {% if text.needs_shift %}
+                    <span class="text-red-400 ml-2">⚠ needs_shift</span>
+                    {% endif %}
+                </div>
+                <div class="text-sm text-gray-300 mb-2">{{ text.original_text[:120] }}</div>
+                {% if text.translated_text %}
+                <div class="text-sm text-white bg-gray-700/50 rounded p-2">
+                    {{ text.translated_text[:200] }}
+                </div>
+                {% else %}
+                <div class="text-xs text-gray-600 italic">Click para traducir</div>
+                {% endif %}
+            </div>
+
+            <!-- Fit status -->
+            <div class="text-xs flex-shrink-0">
+                {% if text.fit_status == 'ok' %}
+                <span class="text-green-400" title="Cabe: {{ text.segment_capacity - ((text.translated_text|length) if text.translated_text else 0) }} bytes libres">🟢</span>
+                {% elif text.fit_status == 'tight' %}
+                <span class="text-yellow-400" title="Ajustado">🟡</span>
+                {% elif text.fit_status == 'needs_shift' %}
+                <span class="text-red-400" title="No cabe">🔴</span>
+                {% else %}
+                <span class="text-gray-500" title="Sin verificar">⚪</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Contexto despues -->
+        {% for coff in ctx[1] %}
+        {% set ce = context_entries.get(coff) %}
+        {% if ce %}
+        <div class="text-xs text-gray-500 pl-2 border-l-2 border-gray-700 mt-1">
+            <span class="text-gray-600">0x{{ "%05X"|format(coff) }}</span>
+            {{ ce.original_text[:100] }}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+
+{% if not texts %}
+<div class="text-center text-gray-500 mt-12">
+    <p>No hay textos que mostrar con este filtro.</p>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    // Mostrar/ocultar resultados de búsqueda interna
+    var searchInput = document.getElementById('script-search-input');
+    var searchResults = document.getElementById('search-inline-results');
+    var clearBtn = document.getElementById('clear-script-search');
+
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', function() {
+        if (this.value.trim()) {
+            clearBtn.classList.remove('hidden');
+        } else {
+            clearBtn.classList.add('hidden');
+            searchResults.classList.add('hidden');
+            searchResults.innerHTML = '';
+        }
+    });
+
+    clearBtn.addEventListener('click', function() {
+        searchInput.value = '';
+        searchResults.classList.add('hidden');
+        searchResults.innerHTML = '';
+        clearBtn.classList.add('hidden');
+        searchInput.focus();
+    });
+
+    // Cuando llegan resultados de búsqueda, mostrar el panel
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (e.detail.target === searchResults) {
+            if (searchInput.value.trim()) {
+                searchResults.classList.remove('hidden');
+            }
+        }
+    });
+
+    // Highlight y scroll al entry desde búsqueda global (?highlight=id)
+    var params = new URLSearchParams(window.location.search);
+    var highlightId = params.get('highlight');
+    if (highlightId) {
+        var el = document.getElementById('entry-' + highlightId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('ring-2', 'ring-pink-500');
+            setTimeout(function() { if(el) el.classList.remove('ring-2', 'ring-pink-500'); }, 2500);
+            setTimeout(function() {
+                htmx.ajax('GET', '/api/texts/' + highlightId + '/edit', {
+                    target: '#entry-' + highlightId,
+                    swap: 'outerHTML'
+                });
+            }, 400);
+        }
+    }
+})();
+</script>
+
+{% endblock %}

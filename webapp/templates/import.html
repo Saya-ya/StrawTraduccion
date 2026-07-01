@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-4">📥 Importar textos del juego</h1>
+
+<div class="bg-gray-800 rounded-lg p-6 mb-6">
+    <p class="text-gray-300 mb-4">
+        Esto ejecutará <code class="text-pink-400">extract_dialogue.py</code> sobre los archivos en
+        <code class="text-pink-400">originales/</code> y poblará la base de datos.
+    </p>
+    <p class="text-gray-500 text-sm mb-4">
+        Requiere que <code>Data.bin</code> y <code>SLPS_256.11</code> existan en la carpeta <code>originales/</code>.
+    </p>
+    
+    <button id="import-btn"
+            class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-lg font-bold"
+            onclick="runImport()">
+        Extraer e Importar
+    </button>
+    
+    <div id="import-status" class="mt-4 hidden">
+        <div id="import-progress" class="text-sm text-gray-300"></div>
+        <pre id="import-result" class="mt-2 bg-gray-900 p-3 rounded text-xs text-gray-400 hidden"></pre>
+    </div>
+</div>
+
+<div class="bg-gray-800 rounded-lg p-6">
+    <h2 class="text-lg font-bold mb-2">¿Ya tenías traducciones en el CSV?</h2>
+    <p class="text-gray-400 text-sm">
+        La importación preserva automáticamente las traducciones existentes haciendo matching por
+        <code>script_id + offset + original_text</code>. Si el extractor cambió algún offset, 
+        se usa fallback por contenido.
+    </p>
+</div>
+
+<script>
+async function runImport() {
+    const btn = document.getElementById('import-btn');
+    const status = document.getElementById('import-status');
+    const progress = document.getElementById('import-progress');
+    const result = document.getElementById('import-result');
+    
+    btn.disabled = true;
+    btn.textContent = 'Extrayendo...';
+    status.classList.remove('hidden');
+    progress.textContent = 'Ejecutando extract_dialogue.py... (puede tardar ~30s)';
+    
+    try {
+        const resp = await fetch('/import/run', { method: 'POST' });
+        const data = await resp.json();
+        
+        result.classList.remove('hidden');
+        if (data.status === 'ok') {
+            progress.textContent = '✅ Importación completada';
+            result.textContent = JSON.stringify(data.stats, null, 2);
+            btn.textContent = '✓ Completado — Recargar página';
+            btn.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
+            btn.onclick = () => location.reload();
+        } else {
+            progress.textContent = '❌ Error: ' + data.message;
+            result.textContent = data.message;
+            btn.disabled = false;
+            btn.textContent = 'Reintentar';
+        }
+    } catch (e) {
+        progress.textContent = '❌ Error de conexión: ' + e.message;
+        btn.disabled = false;
+        btn.textContent = 'Reintentar';
+    }
+}
+</script>
+
+{% endblock %}
