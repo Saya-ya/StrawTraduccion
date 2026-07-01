@@ -56,7 +56,7 @@ python traduccion_tools/extract_dialogue.py
 python traduccion_tools/extract_dialogue.py --elf
 ```
 
-Esto genera `textos/dialogo.csv` con ~75,000 líneas de diálogo extraídas.
+Esto genera `textos/dialogo.csv` con ~55,000 líneas de diálogo extraídas.
 
 ### Paso 2 — Traducir
 
@@ -209,7 +209,7 @@ python herramientas_tools/build_iso.py
 │                                                              │
 │   python traduccion_tools/extract_dialogue.py                │
 │   python traduccion_tools/extract_dialogue.py --elf          │
-│   → textos/dialogo.csv  (~75,000 textos)                     │
+│   → textos/dialogo.csv  (~55,000 textos)                     │
 │                                                              │
 │   Columnas: [source, file_id, offset, original, translated]  │
 ├──────────────────────────────────────────────────────────────┤
@@ -289,7 +289,7 @@ StrawTraduccion/
 │   ├── extract_all.py          # Extrae archivos individuales de Data.bin
 │   └── parse_archive.py        # Analiza la FAT de Data.bin
 ├── traduccion_tools/          # Alto nivel: extracción, traducción, ISO
-│   ├── extract_dialogue.py    # Extrae textos JP → CSV (heurística)
+│   ├── extract_dialogue.py    # Extrae textos JP → CSV (heurística 8 rangos Unicode)
 │   ├── apply_translation.py   # Aplica CSV: parcheo directo (ambos tipos)
 │   ├── build_iso.py           # Reconstruye ISO con Data.bin modificado
 │   ├── inject_elf.py          # Inyecta ELF traducido en la ISO
@@ -297,7 +297,7 @@ StrawTraduccion/
 ├── pine_*.py                  # Herramientas PINE (RAM patching en vivo)
 ├── extract_ram.py             # Extrae RAM de savestates PCSX2
 ├── textos/                    # CSVs de traducción
-│   └── dialogo.csv            # 75,924 textos (SCRIPTS + ELF)
+│   └── dialogo.csv            # ~55,000 textos (SCRIPTS + ELF)
 ├── Replacement/               # Texturas de fuente (PCSX2)
 └── README.md
 ```
@@ -362,6 +362,8 @@ machacaba el tamaño del archivo *anterior*.
 3. **Extracción con heurística:** El extractor usa reglas de idioma japonés para filtrar opcodes, pero no es un parseador de bytecode perfecto. Puede haber falsos positivos/negativos.
 4. **Fuente:** Requiere texturas de reemplazo en PCSX2 para caracteres españoles (áéíóúñ¡¿). Ver `Replacement/`.
 5. **Métricas de glifo:** El espaciado de caracteres puede verse raro (el ancho del glifo cirílico original no coincide con el español).
+6. **Bios y descripciones en ELF:** Las descripciones de personajes y modos de juego en el ELF tienen espacio limitado (~112-128 bytes). Las traducciones deben ser concisas para caber.
+
 
 ---
 
