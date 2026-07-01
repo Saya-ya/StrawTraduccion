@@ -44,11 +44,11 @@ La forma más fácil y recomendada para traducir el juego es utilizando la **Apl
 
 ### Paso 1 — Preparar los archivos (una sola vez)
 
-Abrí la ISO con WinRAR o 7-Zip y extraé estos archivos a la carpeta `originales/`:
+Abre la ISO con WinRAR o 7-Zip y extrae estos archivos a la carpeta `originales/`:
 - `Data.bin`
 - `SLPS_256.11`
 
-Después ejecutá en la terminal:
+Después ejecuta en la terminal:
 
 ```bash
 python tools/extract_all.py --type lz77
@@ -60,22 +60,22 @@ Esto extrae los textos del juego y genera el archivo base `textos/dialogo.csv` c
 
 ### Paso 2 — Importar y Traducir en la Web App
 
-1. Iniciá el servidor web ejecutando en tu terminal:
+1. Inicia el servidor web ejecutando en tu terminal:
    ```bash
    python run_webapp.py
    ```
-2. Abrí tu navegador y andá a `http://127.0.0.1:8080`.
-3. Andá a la pestaña **Importar** y hacé click en el botón para cargar los textos extraídos en la base de datos de la web app.
-4. Usá las pestañas **Scripts** y **Buscar** para traducir:
-   - Podés buscar textos específicos en japonés o español.
-   - Hacé click en cualquier texto para abrir el editor en línea (guarda automáticamente con `Ctrl+Enter`).
-   - El sistema te mostrará instantáneamente un indicador de ajuste (`🟢 Cabe`, `🟡 Ajustado`, `🔴 No cabe / needs_shift`) para que sepas si tu traducción entra en la memoria del juego. Escribí normalmente con tildes y eñes.
+2. Abre tu navegador y ve a `http://127.0.0.1:8080`.
+3. Ve a la pestaña **Importar** y haz clic en el botón para cargar los textos extraídos en la base de datos de la aplicación web.
+4. Usa las pestañas **Scripts** y **Buscar** para traducir:
+   - Puedes buscar textos específicos en japonés o español.
+   - Haz clic en cualquier texto para abrir el editor en línea (se guarda automáticamente con `Ctrl+Enter`).
+   - El sistema te mostrará instantáneamente un indicador de ajuste (`🟢 Cabe`, `🟡 Ajustado`, `🔴 No cabe / needs_shift`) para que sepas si tu traducción entra en la memoria del juego. Escribe normalmente con tildes y eñes.
 
 **Importante**: solo los textos cuyos scripts estén en la lista de soportados (Soportado ✓) y tengan espacio suficiente podrán ser aplicados sin romper el juego.
 
 ### Paso 3 — Aplicar las traducciones y generar la ISO
 
-Desde la misma aplicación web, andá a la pestaña **Build** y hacé click en **Ejecutar Build Completo**. El sistema automáticamente:
+Desde la misma aplicación web, ve a la pestaña **Build** y haz clic en **Ejecutar Build Completo**. El sistema automáticamente:
 - Exportará tus traducciones de la base de datos.
 - Reconstruirá los archivos comprimidos.
 - Inyectará todo en `Data.bin` y en el `ELF`.
@@ -85,11 +85,11 @@ La ISO traducida quedará lista en `work/Strawberry_translated.iso`.
 
 ### Paso 4 — Probar en PCSX2
 
-Copiá el archivo PNG de la carpeta `Replacement/` a la carpeta de texturas de PCSX2 (`textures/SLPS-25611/`). Esto es necesario para que los caracteres españoles (á, é, í, ó, ú, ñ, ¡, ¿) se vean correctamente.
+Copia el archivo PNG de la carpeta `Replacement/` a la carpeta de texturas de PCSX2 (`textures/SLPS-25611/`). Esto es necesario para que los caracteres españoles (á, é, í, ó, ú, ñ, ¡, ¿) se vean correctamente.
 
 ### Colaboración y Delegación
 
-Si trabajás en equipo, podés usar la pestaña **Delegar** para descargar fragmentos del CSV, traducirlos en Excel/LibreOffice y volver a importarlos a la base de datos.
+Si trabajas en equipo, puedes usar la pestaña **Delegar** para descargar fragmentos del CSV, traducirlos en Excel/LibreOffice y volver a importarlos a la base de datos.
 
 ---
 
@@ -122,11 +122,11 @@ Salida típica:
 
 ## Método 2: Recompresión manual (`patch_dec.py`)
 
-**Usar cuando:** el script NO es de tipo SCRIPT_DIALOGUE, o necesitás forzar
+**Usar cuando:** el script NO es de tipo SCRIPT_DIALOGUE, o necesitas forzar
 compresión sin matches (`--all-literal`).
 
 Flujo:
-1. Modificas el texto **directamente en el `.dec`** (con editor hex o script)
+1. Modifica el texto **directamente en el `.dec`** (con editor hex o script)
 2. Recomprime e inyecta en `Data.bin`
 
 ```bash
