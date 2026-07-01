@@ -21,6 +21,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 from lz77 import decompress
 from datafat import read_entries
 
+def _is_jp_codepoint(cp: int) -> bool:
+    """Un code point Unicode que puede aparecer en texto japonés."""
+    return (
+        0x3040 <= cp <= 0x309F   # Hiragana
+        or 0x30A0 <= cp <= 0x30FF  # Katakana
+        or 0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs (Kanji)
+        or 0x3000 <= cp <= 0x303F  # CJK Symbols and Punctuation
+        or 0xFF00 <= cp <= 0xFFEF  # Fullwidth Forms (digits, letters, punctuation)
+        or 0xFF5F <= cp <= 0xFF9F  # Halfwidth Katakana
+        or 0x2000 <= cp <= 0x206F  # General Punctuation (dashes, ellipsis … etc.)
+    )
+
+
+def _is_jp_or_punct(cp: int) -> bool:
+    """Character that can appear adjacent to Japanese text (prefix/suffix)."""
+    return _is_jp_codepoint(cp)
+
+
 def is_valid_japanese_text(text):
     if len(text) < 4:
         return False
@@ -61,45 +79,52 @@ def is_valid_japanese_text(text):
 
 def extract_utf16_strings(data, min_len=4):
     strings = []
-    
+
     for offset_parity in [0, 1]:
         i = offset_parity
         while i < len(data) - 4:
             word = struct.unpack_from('<H', data, i)[0]
-            
-            is_jp = (0x3040 <= word <= 0x309F or 0x30A0 <= word <= 0x30FF or
-                     0x4E00 <= word <= 0x9FFF or 0x3000 <= word <= 0x303F)
-            
-            if is_jp:
+
+            if _is_jp_codepoint(word):
                 start = i
                 end = i + 2
-                
+
                 while end < len(data) - 1:
                     w = struct.unpack_from('<H', data, end)[0]
                     if w == 0x0000:
                         break
-                    jp2 = (0x3040 <= w <= 0x309F or 0x30A0 <= w <= 0x30FF or
-                           0x4E00 <= w <= 0x9FFF or 0x3000 <= w <= 0x303F)
                     ascii2 = (0x20 <= w <= 0x7E)
-                    if jp2 or ascii2 or w in (0x000A, 0x000D):
+                    if _is_jp_codepoint(w) or ascii2 or w in (0x000A, 0x000D):
                         end += 2
                         continue
                     break
-                
+
                 raw = bytes(data[start:end])
                 try:
                     text = raw.decode('utf-16-le').rstrip('\x00').strip('\r\n')
                 except:
                     i = end
                     continue
-                
+
                 if is_valid_japanese_text(text):
+                    # Walk back to include leading fullwidth/CJK characters
+                    # (e.g. ３ before 校 in "３校の中で…") that the scanner missed
+                    # because they are not in the traditional JP detection ranges.
+                    orig_start = start
+                    while start >= 2 and data[start - 2:start] != b'\x00\x00':
+                        prev_cp = struct.unpack_from('<H', data, start - 2)[0]
+                        if _is_jp_or_punct(prev_cp) or prev_cp == 0x0000:
+                            start -= 2
+                            continue
+                        break
+                    if start != orig_start:
+                        text = data[start:end].decode('utf-16-le').rstrip('\x00').strip('\r\n')
                     strings.append((start, text))
-                
+
                 i = end
                 continue
             i += 2
-    
+
     return strings
 
 def extract_elf_strings(elf_path):
