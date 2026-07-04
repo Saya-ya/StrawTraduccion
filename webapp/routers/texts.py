@@ -1,19 +1,21 @@
 """API REST para textos: editar, lock, fit-check."""
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Form
 from fastapi.responses import JSONResponse, HTMLResponse
-from pydantic import BaseModel
 
 from ..database import get_session, TextEntry
 from ..services.fit_checker import check_fit
 
+# Importar el corrector de saltos de linea
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from docs.legado.fix_linebreaks import find_break_proportions, insert_breaks_at_proportions
+
 router = APIRouter(prefix="/api/texts", tags=["texts"])
-
-
-class TranslationUpdate(BaseModel):
-    translated_text: str
-    username: str = "anonymous"
 
 
 def _get_username(request: Request) -> str:
@@ -40,17 +42,32 @@ def get_editor(entry_id: int):
             lock_age = (datetime.utcnow() - stored).total_seconds()
         except Exception:
             lock_age = 999  # Si falla la comparacion, ignorar el lock
-        if lock_age < 300:  # 5 min TTL
+        if lock_age < 60:  # 1 min TTL
             session.close()
             return HTMLResponse(
                 f'<div class="text-yellow-400 text-sm">'
                 f'Bloqueado por {entry.locked_by}</div>'
             )
 
-    # Adquirir lock (guardar como naive UTC para consistencia con la DB)
+    # Adquirir lock y auto-insertar saltos de linea en una sola transaccion
     entry.locked_by = "user"
     entry.locked_at = datetime.utcnow()
+
+    translated = entry.translated_text or ''
+    original = entry.original_text or ''
+    if translated and original and '\r\n' in original and '\r\n' not in translated:
+        proportions = find_break_proportions(original)
+        if proportions:
+            fixed_text = insert_breaks_at_proportions(translated, proportions)
+            if fixed_text != translated:
+                translated = fixed_text
+                entry.translated_text = fixed_text
+
     session.commit()
+
+    line_count = max(3, translated.count('\n') + 1)
+    row_height = min(max(line_count, 3), 20)
+    capacity = entry.segment_capacity or 999
 
     html = f'''<div class="text-entry border border-gray-700 rounded p-3 bg-gray-700/40"
                  id="entry-{entry_id}">
@@ -62,10 +79,16 @@ def get_editor(entry_id: int):
         <div class="text-xs text-gray-500 font-mono mb-1">
             [{entry.section_id}:{entry.section_order}] 0x{entry.byte_offset:05X} (#{entry_id})
         </div>
-        <div class="text-sm text-gray-400 mb-1">{entry.original_text[:200]}</div>
+        <div class="text-sm text-gray-400 mb-1 whitespace-pre-wrap">{entry.original_text[:300]}</div>
         <textarea name="translated_text"
-                  class="w-full bg-gray-800 text-white rounded p-2 text-sm min-h-[80px] focus:outline-none focus:ring-2 focus:ring-pink-500"
-                  id="editor-ta-{entry_id}">{entry.translated_text or ''}</textarea>
+                  class="w-full bg-gray-800 text-white rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500"
+                  id="editor-ta-{entry_id}"
+                  rows="{row_height}">{translated}</textarea>
+        <div class="flex gap-2 text-xs items-center">
+            <span id="byte-counter-{entry_id}" class="text-gray-400 font-mono">
+                bytes: --
+            </span>
+        </div>
         <div class="flex gap-2 text-xs">
             <button type="submit" class="bg-pink-600 px-3 py-1 rounded hover:bg-pink-700 font-bold">
                 💾 Guardar (Ctrl+Enter)
@@ -84,7 +107,22 @@ def get_editor(entry_id: int):
         (function() {{
             var ta = document.getElementById('editor-ta-{entry_id}');
             var cancelBtn = document.getElementById('cancel-btn-{entry_id}');
+            var counter = document.getElementById('byte-counter-{entry_id}');
+            var capacity = {capacity};
             if (!ta) return;
+            
+            function updateCounter() {{
+                var bytes = ta.value.length * 2 + 2;  // UTF-16LE + null
+                var remaining = capacity - bytes;
+                var color, label;
+                if (remaining >= 20) {{ color = '#4ade80'; label = 'libres'; }}
+                else if (remaining >= 0) {{ color = '#facc15'; label = 'ajustado'; }}
+                else {{ color = '#f87171'; label = 'excedidos'; }}
+                counter.style.color = color;
+                counter.textContent = bytes + ' / ' + capacity + ' bytes (' + (remaining > 0 ? '+' : '') + remaining + ' ' + label + ')';
+            }}
+            updateCounter();
+            ta.addEventListener('input', updateCounter);
             ta.addEventListener('keydown', function(e) {{
                 if (e.ctrlKey && e.key === 'Enter') {{
                     e.preventDefault();
@@ -94,12 +132,6 @@ def get_editor(entry_id: int):
                     e.preventDefault();
                     htmx.trigger(cancelBtn, 'click');
                 }}
-            }});
-            // Auto-save debounced
-            var timer;
-            ta.addEventListener('input', function() {{
-                clearTimeout(timer);
-                timer = setTimeout(() => this.form.requestSubmit(), 2000);
             }});
             ta.focus();
             ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -111,7 +143,7 @@ def get_editor(entry_id: int):
 
 
 @router.put("/{entry_id}")
-def update_text(entry_id: int, data: TranslationUpdate):
+def update_text(entry_id: int, translated_text: str = Form(...)):
     """Actualiza la traduccion, hace fit-check, devuelve la fila actualizada."""
     session = get_session()
     entry = session.query(TextEntry).filter(TextEntry.id == entry_id).first()
@@ -119,14 +151,14 @@ def update_text(entry_id: int, data: TranslationUpdate):
         session.close()
         raise HTTPException(404, "Texto no encontrado")
 
-    entry.translated_text = data.translated_text
-    entry.is_translated = bool(data.translated_text.strip())
+    entry.translated_text = translated_text
+    entry.is_translated = bool(translated_text.strip())
     entry.updated_at = datetime.now(timezone.utc)
     entry.locked_by = ""
     entry.locked_at = None
 
     capacity = entry.segment_capacity or entry.original_bytes or 999
-    fit = check_fit(data.translated_text, entry.source, capacity)
+    fit = check_fit(translated_text, entry.source, capacity)
     entry.fit_status = fit['status']
     entry.needs_shift = (fit['status'] == 'needs_shift')
 
