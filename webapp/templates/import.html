@@ -5,11 +5,15 @@
 
 <div class="bg-gray-800 rounded-lg p-6 mb-6">
     <p class="text-gray-300 mb-4">
-        Esto ejecutará <code class="text-pink-400">extract_dialogue.py</code> sobre los archivos en
-        <code class="text-pink-400">originales/</code> y poblará la base de datos.
+        Esto ejecutara la extraccion completa desde <code class="text-pink-400">Data.bin</code> y <code class="text-pink-400">SLPS_256.11</code>:
     </p>
+    <ol class="text-gray-400 text-sm mb-4 list-decimal list-inside space-y-1">
+        <li><code class="text-pink-400">extract_all.py</code> — descomprime los scripts .dec</li>
+        <li><code class="text-pink-400">dialogue_order.py</code> — extrae dialogos con secciones</li>
+        <li><code class="text-pink-400">extract_dialogue.py --elf</code> — extrae menus y sistema</li>
+    </ol>
     <p class="text-gray-500 text-sm mb-4">
-        Requiere que <code>Data.bin</code> y <code>SLPS_256.11</code> existan en la carpeta <code>originales/</code>.
+        Requiere que <code>Data.bin</code> y <code>SLPS_256.11</code> existan en <code>originales/</code>.
     </p>
     
     <button id="import-btn"
@@ -25,11 +29,17 @@
 </div>
 
 <div class="bg-gray-800 rounded-lg p-6">
-    <h2 class="text-lg font-bold mb-2">¿Ya tenías traducciones en el CSV?</h2>
+    <h2 class="text-lg font-bold mb-2">¿Ya tenías traducciones?</h2>
     <p class="text-gray-400 text-sm">
-        La importación preserva automáticamente las traducciones existentes haciendo matching por
-        <code>script_id + offset + original_text</code>. Si el extractor cambió algún offset, 
-        se usa fallback por contenido.
+        La importacion preserva automaticamente las traducciones existentes:
+    </p>
+    <ul class="text-gray-500 text-sm mt-2 list-disc list-inside space-y-1">
+        <li><strong>Desde la base de datos:</strong> matching por <code>script_id + offset + original_text</code></li>
+        <li><strong>Desde el CSV previo:</strong> se respaldan antes de la extraccion y se usan como fuente adicional</li>
+        <li><strong>Fallback por contenido:</strong> si el extractor cambio algun offset, se usa contenido >95% similar</li>
+    </ul>
+    <p class="text-gray-600 text-xs mt-3">
+        Esto permite compartir traducciones: solo comparte <code>textos/dialogo.csv</code> o <code>work/translation_manager.db</code>.
     </p>
 </div>
 
@@ -43,7 +53,7 @@ async function runImport() {
     btn.disabled = true;
     btn.textContent = 'Extrayendo...';
     status.classList.remove('hidden');
-    progress.textContent = 'Ejecutando extract_dialogue.py... (puede tardar ~30s)';
+    progress.textContent = 'Ejecutando extraccion e importacion... (puede tardar ~1-2 min la primera vez)';
     
     try {
         const resp = await fetch('/import/run', { method: 'POST' });

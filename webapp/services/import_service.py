@@ -1,7 +1,7 @@
 """
-Import service — runs dialogue_order.py for SCRIPT_DIALOGUE scripts,
-extract_dialogue.py for remaining scripts, parses enriched CSV,
-populates DB with section/order info.
+Import service — runs extract_all.py (setup), dialogue_order.py for
+SCRIPT_DIALOGUE scripts, extract_dialogue.py --elf for menus,
+parses enriched CSV, populates DB with section/order info.
 """
 import csv
 import json
@@ -19,6 +19,52 @@ from ..config import TIMEOUT_EXTRACT, WORK, TEXTOS, ORIGINALES
 from ..database import Script, TextEntry, get_session
 from .capacity import compute_capacity
 from .fit_checker import check_fit
+
+
+def _load_csv_translations(csv_path: Path) -> dict:
+    """Carga traducciones existentes del CSV como respaldo antes de sobrescribirlo."""
+    translations = {}
+    if not csv_path.exists():
+        return translations
+    with open(csv_path, encoding='utf-8-sig', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            translated = (row.get('translated_text') or '').strip()
+            if not translated:
+                continue
+            source = (row.get('source') or 'SCRIPT').strip()
+            file_id = (row.get('file_id') or '0').strip()
+            offset = (row.get('offset') or '0x0').strip()
+            original = row.get('original_text') or ''
+            try:
+                sid = int(file_id) if file_id != 'ELF' else -1
+                off = int(offset, 16)
+            except ValueError:
+                continue
+            key = (sid, off, original)
+            if key not in translations:
+                translations[key] = translated
+    return translations
+
+
+def run_extract_all() -> dict:
+    """Ejecuta extract_all.py para descomprimir .dec desde Data.bin (si no existen)."""
+    dec_dir = PROJECT_ROOT / 'work' / 'scripts_extraidos'
+    if dec_dir.exists() and any(dec_dir.iterdir()):
+        return {"success": True, "stdout": ".dec ya existentes, omitiendo extraccion", "stderr": ""}
+
+    extract_all = PROJECT_ROOT / 'tools' / 'extract_all.py'
+
+    result = subprocess.run(
+        ["python3", str(extract_all), "--type", "lz77"],
+        capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        timeout=TIMEOUT_EXTRACT
+    )
+    return {
+        "success": result.returncode == 0,
+        "stdout": result.stdout,
+        "stderr": result.stderr[-500:],
+    }
 
 
 def run_dialogue_order(output_csv: Path, output_json: Path) -> dict:
@@ -219,15 +265,13 @@ def _load_json_script_metadata(json_path: Path) -> dict:
 def import_csv_to_db(csv_path: Path = None) -> dict:
     """
     Pipeline de importacion:
-    1. Ejecuta dialogue_order.py -> CSV enriquecido + JSON
-    2. Parsea CSV con columnas section/section_order
-    3. Matching contra DB existente
-    4. Upsert en DB con metadatos de JSON
-    
-    NOTA: El ELF (textos de menus/sistema) no se extrae automaticamente
-    porque la heuristica Shift-JIS produce ~50% falsos positivos sobre
-    codigo binario. Si se necesita, ejecutar manualmente:
-      python traduccion_tools/extract_dialogue.py --elf
+    0.  Ejecuta extract_all.py --type lz77 (solo si no hay .dec)
+    0.5 Respalda traducciones del CSV previo antes de sobrescribir
+    1.  Ejecuta dialogue_order.py -> CSV enriquecido + JSON
+    2.  Ejecuta extract_dialogue.py --elf -> ELF mergeado al CSV
+    3.  Parsea CSV con columnas section/section_order
+    4.  Matching contra DB existente + CSV previo
+    5.  Upsert en DB con metadatos de JSON
     """
     if csv_path is None:
         csv_path = TEXTOS / 'dialogo.csv'
@@ -246,6 +290,14 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
 
     json_path = WORK / 'dialogue_order.json'
     elftemp_csv = WORK / 'build_temp' / '_elf_temp.csv'
+
+    # 0. Extraer .dec de Data.bin si no existen
+    extract_result = run_extract_all()
+    if not extract_result['success']:
+        stats['errors'].append(f"extract_all.py failed: {extract_result['stderr'][-200:]}")
+
+    # 0.5 Respaldo de traducciones del CSV actual (antes de sobrescribirlo)
+    csv_translations = _load_csv_translations(csv_path)
 
     # 1. Ejecutar dialogue_order.py -> CSV enriquecido + JSON
     result = run_dialogue_order(csv_path, json_path)
@@ -268,11 +320,23 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
     new_rows = parse_csv(csv_path)
     stats['total'] = len(new_rows)
 
-    # 5. Cargar traducciones existentes
+    # 5. Cargar traducciones existentes (DB + CSV previo)
     existing_db = session.query(TextEntry).filter(
         TextEntry.translated_text != ''
     ).all()
     exact_map, by_script = _group_translations_by_script(existing_db)
+
+    # Merge traducciones del CSV previo (no pisan las de DB)
+    csv_new_count = 0
+    for key, trans in csv_translations.items():
+        if key not in exact_map:
+            exact_map[key] = trans
+            sid = key[0]
+            if sid not in by_script:
+                by_script[sid] = []
+            by_script[sid].append((key[1], key[2], trans))
+            csv_new_count += 1
+    stats['csv_preserved'] = csv_new_count
 
     # 6. Cargar entries existentes para upsert
     existing_map = {}

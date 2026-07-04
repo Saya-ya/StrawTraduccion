@@ -75,6 +75,9 @@ def run_apply_translation(csv_path: Path) -> dict:
         "stdout": result.stdout[-300:],
         "stderr": result.stderr[-300:],
     }
+
+
+def run_build_iso() -> dict:
     """Ejecuta build_iso.py."""
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "traduccion_tools" / "build_iso.py")],

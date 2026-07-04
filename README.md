@@ -53,7 +53,7 @@ Abre la ISO con WinRAR o 7-Zip y extrae estos archivos a la carpeta `originales/
 Después ejecuta en la terminal:
 
 ```bash
-python tools/extract_all.py --type lz77
+python tools/extract_all.py --type lz77   # solo la primera vez
 python tools/dialogue_order.py
 ```
 
@@ -88,7 +88,16 @@ Copia `Replacement/adcbf16a55dddc9c-aafc910d2a31cd93-00002214.png` a la carpeta 
 
 ---
 
-## Mejoras implementadas (v2)
+## Mejoras implementadas
+
+### v3 — Limpieza de código (2026-07-03)
+
+- **6 herramientas legacy movidas a `docs/legado/`:** `parse_archive.py`, `split_csv.py`, `searcher.py`, `search_decompressed.py`, `extract_ram.py`, `pine_test.py`. No son usadas por el pipeline activo. `extract_all.py` permanece en `tools/` como paso de setup inicial.
+- **`extract_dialogue.py` simplificado:** La extracción de scripts LZ77 fue reemplazada por `dialogue_order.py`. Solo queda la extracción de ELF (`--elf`).
+- **Bug fix en `builder.py`:** `run_build_iso()` no existía como función (su cuerpo estaba como código muerto después de un `return` en `run_apply_translation`). Se extrajo a su propia función.
+- **Import no usado:** `BackgroundTasks` removido de `routers/import_.py`.
+
+### v2 — Sistema de orden narrativo
 
 ### Sistema de orden narrativo
 
@@ -118,7 +127,7 @@ Copia `Replacement/adcbf16a55dddc9c-aafc910d2a31cd93-00002214.png` a la carpeta 
 | Highlight redirect automático al entrar a un script | `webapp/routers/scripts.py` |
 | Builder incluye paso de `apply_translation.py` para ELF | `webapp/services/builder.py` |
 | Timeouts ajustados: rebuild 300s, pipeline 2h | `webapp/config.py` |
-| CSV splitter con modo `--by-section` | `tools/split_csv.py` |
+| CSV splitter con modo `--by-section` | `docs/legado/split_csv.py` |
 
 ### Correcciones de bugs
 
@@ -239,56 +248,58 @@ StrawTraduccion/
 │   ├── dialogue_order.json         # Orden narrativo (JSON estructural)
 │   ├── SLPS_256.11_translated
 │   └── Strawberry_translated.iso
-├── tools/                          # Bajo nivel: LZ77, compresión, parcheo
+├── tools/                          # Pipeline activo: LZ77, compresión, parcheo, extracción
 │   ├── datafat.py                  # Parseo canónico de la FAT de Data.bin
 │   ├── lz77.py                     # Decompresor/compresor LZSS de PS2
 │   ├── script_rebuilder.py         # Rebuilder de .dec (modo local-slack)
-│   ├── dialogue_order.py           # ★ NUEVO: Extracción por firma de opcode + secciones
-│   ├── patch_compressed.py         # Parcheo directo en stream LZSS
+│   ├── dialogue_order.py           # Extracción por firma de opcode + secciones
+│   ├── patch_compressed.py         # Traza LZSS (trace_decompression)
 │   ├── patch_dec.py                # Pipeline: reconstruye, recomprime e inyecta
-│   ├── extract_all.py              # Extrae archivos individuales de Data.bin
-│   ├── split_csv.py                # ★ ACTUALIZADO: Divide CSV por script o sección
-│   ├── parse_archive.py            # Analiza la FAT de Data.bin
+│   ├── extract_all.py              # Extrae archivos .dec de Data.bin (setup inicial)
 │   └── glyph_map.py                # Mapa de caracteres español → cirílico
-├── traduccion_tools/               # Alto nivel: extracción, traducción, ISO
-│   ├── extract_dialogue.py         # ★ ACTUALIZADO: Extrae textos JP con filtro ELF mejorado
-│   ├── apply_translation.py        # Aplica CSV: parcheo directo (ambos tipos)
+├── traduccion_tools/               # Alto nivel: extracción ELF, build ISO
+│   ├── extract_dialogue.py         # Extrae textos ELF (Shift-JIS) con filtro estricto
+│   ├── apply_translation.py        # Aplica traducciones al ELF vía parcheo directo
 │   ├── build_iso.py                # Reconstruye ISO con Data.bin modificado
-│   ├── inject_elf.py               # Inyecta ELF traducido en la ISO
-│   └── searcher.py                 # Busca frases en los CSVs
-├── webapp/                         # ★ ACTUALIZADO: FastAPI + SQLite + FTS5
+│   └── inject_elf.py               # Inyecta ELF traducido en la ISO
+├── webapp/                         # FastAPI + SQLite + FTS5 + HTMX
 │   ├── main.py
-│   ├── config.py                   # ★ Timeouts ajustados
-│   ├── database.py                 # ★ Nuevos campos: section_id, section_order, variant
+│   ├── config.py
+│   ├── database.py
 │   ├── routers/
-│   │   ├── scripts.py              # ★ Navegación por secciones + highlight redirect
-│   │   ├── texts.py                # ★ Editor muestra [sección:orden]
+│   │   ├── scripts.py              # Navegación por secciones + highlight redirect
+│   │   ├── texts.py                # Editor inline con fit status
 │   │   ├── import_.py
 │   │   ├── build.py
-│   │   └── tools.py                # ★ Búsqueda con section_id en links
+│   │   └── tools.py                # Dashboard, búsqueda FTS5, delegación
 │   ├── services/
-│   │   ├── builder.py              # ★ Incluye apply_translation.py en el pipeline
-│   │   ├── import_service.py       # ★ Usa dialogue_order.py + ELF con filtro
+│   │   ├── builder.py              # Pipeline completo: export → rebuild → ISO → ELF
+│   │   ├── import_service.py       # Usa dialogue_order.py + extract_dialogue.py --elf
 │   │   ├── fit_checker.py
 │   │   ├── capacity.py
 │   │   └── build_lock.py
 │   └── templates/
 │       ├── base.html
-│       ├── script_detail.html      # ★ Barra de secciones con progreso
-│       ├── scripts_list.html       # ★ Columnas: Secc., Var
+│       ├── script_detail.html
+│       ├── scripts_list.html
 │       ├── search.html
-│       ├── components/
-│       │   └── search_results.html # ★ Muestra [sección:orden] + links corregidos
-│       └── ...
-├── textos/
-│   ├── dialogo.csv                 # CSV enriquecido (source, file_id, offset, section, section_order, original, translated)
-│   └── por_script/                 # CSVs divididos por script/sección
-├── Replacement/                    # Texturas de fuente (PCSX2)
+│       └── components/
+│           └── search_results.html
 ├── docs/
-│   └── DIALOGUE_ORDER.md           # ★ Documento de diseño del sistema de orden
+│   └── legado/                     # Herramientas legacy (no usadas por el pipeline activo)
+│       ├── parse_archive.py        # Análisis de la FAT de Data.bin
+│       ├── split_csv.py            # Divide CSV por script o sección
+│       ├── searcher.py             # Búsqueda CLI en CSVs
+│       ├── search_decompressed.py  # Búsqueda binaria en .dec
+│       ├── extract_ram.py          # Extrae RAM de savestates PCSX2
+│       └── pine_test.py            # Diagnóstico de API PINE de PCSX2
+├── textos/
+│   ├── dialogo.csv                 # CSV enriquecido
+│   └── por_script/                 # CSVs divididos por script
+├── Replacement/                    # Texturas de fuente (PCSX2)
 ├── build_worker.py
 ├── run_webapp.py
-└── README.md                       # ★ ACTUALIZADO
+└── README.md
 ```
 
 ---
@@ -333,5 +344,5 @@ El PS2 nativo inicializa la ventana LZ77 con `0x00` en sus 4096 bytes. El decomp
 1. **Solo 58 scripts son SCRIPT_DIALOGUE.** Los ~939 scripts restantes (TEXT_HEAVY, DATA_OR_TABLE, TIM2_TEXTURE) no están soportados por el rebuilder y requieren edición manual del `.dec`.
 2. **Fuente:** Requiere texturas de reemplazo en PCSX2 para caracteres españoles (áéíóúñ¡¿). Ver `Replacement/`.
 3. **Traducciones que no caben en padding:** Si una traducción excede el padding local (~150-230 bytes), el rebuilder la marca `needs_shift` y no la aplica.
-4. **Branching no resuelto:** El juego tiene diálogos alternativos según decisiones del jugador. La pointer table de la Variante B indexa estas rutas pero no se ha implementado la extracción de branching.
+4. **Branching detectado pero no aplicado en rebuild:** `dialogue_order.py` detecta branching (ramas narrativas alternativas) pero el rebuilder no lo maneja al reconstruir.
 5. **ELF parcial:** Solo 23/240 textos del ELF están traducidos (menús, descripciones, modos de juego).
