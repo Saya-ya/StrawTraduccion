@@ -291,10 +291,17 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
     json_path = WORK / 'dialogue_order.json'
     elftemp_csv = WORK / 'build_temp' / '_elf_temp.csv'
 
+    # Asegurar directorios base
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    WORK.mkdir(parents=True, exist_ok=True)
+    elftemp_csv.parent.mkdir(parents=True, exist_ok=True)
+
     # 0. Extraer .dec de Data.bin si no existen
     extract_result = run_extract_all()
     if not extract_result['success']:
         stats['errors'].append(f"extract_all.py failed: {extract_result['stderr'][-200:]}")
+        session.close()
+        return stats
 
     # 0.5 Respaldo de traducciones del CSV actual (antes de sobrescribirlo)
     csv_translations = _load_csv_translations(csv_path)
@@ -303,9 +310,14 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
     result = run_dialogue_order(csv_path, json_path)
     if not result['success']:
         stats['errors'].append(f"dialogue_order.py failed: {result['stderr'][-200:]}")
+        session.close()
+        return stats
+    if not csv_path.exists():
+        stats['errors'].append("dialogue_order.py no genero el CSV")
+        session.close()
+        return stats
 
     # 2. Ejecutar extract_dialogue.py --elf con filtro mejorado a temp
-    elftemp_csv.parent.mkdir(parents=True, exist_ok=True)
     elf_result = run_elf_extraction(elftemp_csv)
     if elf_result['success']:
         elf_count = elf_result.get('stdout', '')
