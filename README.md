@@ -50,14 +50,6 @@ Abre la ISO con WinRAR o 7-Zip y extrae estos archivos a la carpeta `originales/
 - `Data.bin`
 - `SLPS_256.11`
 
-Después ejecuta en la terminal:
-
-```bash
-python tools/extract_all.py --type lz77   # solo la primera vez
-python tools/dialogue_order.py
-```
-
-Esto extrae los 997 scripts LZ77 y genera `textos/dialogo.csv` con los textos enriquecidos con secciones y orden narrativo (~54,000 líneas de diálogo).
 
 ### Paso 2 — Traducir en la Web App
 
@@ -65,8 +57,9 @@ Esto extrae los 997 scripts LZ77 y genera `textos/dialogo.csv` con los textos en
    ```bash
    python run_webapp.py
    ```
-2. Abre `http://127.0.0.1:8080`
+2. Abre `http://127.0.0.1:8080` en el navegador
 3. Ve a **Importar** y haz clic para cargar los textos en la base de datos
+   - si alguien te paso un csv o un .db puedes ponerlo en work/ el sistema soporta la carga de los mismos al dar en importar hara todo por ti, extraccion de lz y el orden de dialogos para evitar que trabajes con lineas de codigo si no es lo tuyo
 4. Usa las pestañas **Scripts** y **Buscar** para traducir:
    - Los scripts ahora muestran **secciones numeradas** — cada sección es una escena narrativa completa
    - Haz clic en cualquier texto para abrir el editor inline (guarda con `Ctrl+Enter`)
@@ -80,6 +73,8 @@ Desde la pestaña **Build** → **Ejecutar Build Completo**. El sistema:
 3. Reconstruye la ISO con `Data.bin` modificado
 4. Aplica traducciones al ELF y lo inyecta en la ISO
 
+Mucho ojo dependiendo tu pc esto puede tomar varios minutos
+
 La ISO traducida queda en `work/Strawberry_translated.iso`.
 
 ### Paso 4 — Probar en PCSX2
@@ -88,16 +83,27 @@ Copia `Replacement/adcbf16a55dddc9c-aafc910d2a31cd93-00002214.png` a la carpeta 
 
 ---
 
-## Mejoras implementadas
+### Scripts traducidos
 
-### v3 — Limpieza de código (2026-07-03)
+| Script | Textos | Tipo |
+|---|---|---|
+| 8010 | 1,721 | SCRIPT_DIALOGUE (0x0200000B) |
+| 8011 | 2,268 | SCRIPT_DIALOGUE (0x0200000C) |
+| 8012 | 1,724 | SCRIPT_DIALOGUE (0x0200000D) |
+| 8013 | 1,756 | SCRIPT_DIALOGUE (0x0200000E) | 
+| 8014 | 2,017 | SCRIPT_DIALOGUE (0x0200000F) |
+| 8015 | 1,673 | SCRIPT_DIALOGUE (0x02000010) |
+| 8016 | 1,388 | SCRIPT_DIALOGUE (0x02000011) |
+| 8017 | 1,479 | SCRIPT_DIALOGUE (0x02000012) |
+| 8018 | 30 | SCRIPT_DIALOGUE (0x02000013) |
+| 8019 | 32 | SCRIPT_DIALOGUE (0x02000014) | 
+| 8020 | 94 | SCRIPT_DIALOGUE (0x02000015) |
+| 8021 | 47 | SCRIPT_DIALOGUE (0x02000016) |
+| 8022 | 110 | SCRIPT_DIALOGUE (0x02000017) |
+| 8023 | 482 | SCRIPT_DIALOGUE (0x02000018) | 
+| 8027 | 1,834 | SCRIPT_DIALOGUE (0x0200001E) |
 
-- **6 herramientas legacy movidas a `docs/legado/`:** `parse_archive.py`, `split_csv.py`, `searcher.py`, `search_decompressed.py`, `extract_ram.py`, `pine_test.py`. No son usadas por el pipeline activo. `extract_all.py` permanece en `tools/` como paso de setup inicial.
-- **`extract_dialogue.py` simplificado:** La extracción de scripts LZ77 fue reemplazada por `dialogue_order.py`. Solo queda la extracción de ELF (`--elf`).
-- **Bug fix en `builder.py`:** `run_build_iso()` no existía como función (su cuerpo estaba como código muerto después de un `return` en `run_apply_translation`). Se extrajo a su propia función.
-- **Import no usado:** `BackgroundTasks` removido de `routers/import_.py`.
-
-### v2 — Sistema de orden narrativo
+**Scripts con tipo especial (no diálogo):** 8024 (cartas, 28 textos), 8025 (texto fragmentado, 539), 8026 (narración larga, 167). Requieren revision mas cuidadosa por tener capacidades muy grandes (>400 bytes) y estructura diferente.
 
 ### Sistema de orden narrativo
 
@@ -119,7 +125,7 @@ Copia `Replacement/adcbf16a55dddc9c-aafc910d2a31cd93-00002214.png` a la carpeta 
 ### Webapp actualizada
 
 | Cambio | Archivo |
-|--------|---------|
+|---|---|
 | Modelo DB con `section_id`, `section_order`, `variant` (A/B) | `webapp/database.py` |
 | Import pipeline usa `dialogue_order.py` + ELF con filtro mejorado | `webapp/services/import_service.py` |
 | Navegación por secciones en vista de script | `webapp/routers/scripts.py`, `script_detail.html` |
@@ -128,33 +134,16 @@ Copia `Replacement/adcbf16a55dddc9c-aafc910d2a31cd93-00002214.png` a la carpeta 
 | Builder incluye paso de `apply_translation.py` para ELF | `webapp/services/builder.py` |
 | Timeouts ajustados: rebuild 300s, pipeline 2h | `webapp/config.py` |
 | CSV splitter con modo `--by-section` | `docs/legado/split_csv.py` |
-
-### Correcciones de bugs
-
-| Bug | Fix |
-|-----|-----|
-| Textos basura `ｄ$-0` del ELF (1,170 falsos positivos) | Filtro `is_valid_elf_text()` + eliminados del pipeline |
-| Búsqueda llevaba a página equivocada (orden viejo por byte_offset) | Paginación recalcula posición por `section_order` |
-| Highlight no encontraba el texto en la página actual | Redirect automático a `?section=X&page=Y&highlight=ID` |
-| ELF no se inyectaba (`SLPS_256.11_translated` no existía) | Añadido `apply_translation.py` al pipeline del builder |
-| `build_worker.py` timeout a 60s (script 8007 tarda ~2m15s) | Subido a 300s por script, pipeline total a 2h |
-| `º` (ordinal) y `—` (em dash) mostraban `?` negro en el juego | Reemplazados por `o` y `-` en todas las traducciones |
-
-### Estado de la traducción
-
-| Fuente | Traducido | Total |
-|--------|-----------|-------|
-| 8007 — Historia principal (Nagisa x Shizuma) | 2,349 | 2,349 (100%) |
-| 7461 — Narración de apertura | 40 | 40 |
-| 8006 — Narración de apertura (dup) | 40 | 40 |
-| ELF — Menús, descripciones, modos | 23 | 240 |
-| **Total textos traducidos** | **2,475** | — |
-
-Los 53 scripts restantes (~51,600 textos) contienen diálogos de otras rutas (modo hermano, otras protagonistas, escenas alternativas) y están pendientes de traducción.
+| Editor: auto-insert de saltos de línea proporcionales al original | `webapp/routers/texts.py` |
+| Editor: contador de bytes en vivo (UTF-16LE + null) | `webapp/routers/texts.py` |
+| Editor: textarea con rows automático según líneas del texto | `webapp/routers/texts.py` |
+| Editor: lock TTL reducido a 1 min (antes 5 min) | `webapp/routers/texts.py` |
+| Fix: endpoint PUT usa Form fields (HTMX envía form-urlencoded) | `webapp/routers/texts.py` |
+| Fix: removido auto-save que echaba del editor a los 2s | `webapp/routers/texts.py` |
 
 ---
 
-## Guía técnica (detalles de bajo nivel)
+## Guía técnica (detalles de bajo nivel por si usaran alguna herramienta cli como codex o opencode para la traduccion)
 
 ### Método 1: Parcheo directo (`apply_translation.py`)
 
@@ -286,13 +275,14 @@ StrawTraduccion/
 │       └── components/
 │           └── search_results.html
 ├── docs/
-│   └── legado/                     # Herramientas legacy (no usadas por el pipeline activo)
+│   └── legado/                     # Herramientas legacy y utilidades post-traducción
 │       ├── parse_archive.py        # Análisis de la FAT de Data.bin
 │       ├── split_csv.py            # Divide CSV por script o sección
 │       ├── searcher.py             # Búsqueda CLI en CSVs
 │       ├── search_decompressed.py  # Búsqueda binaria en .dec
 │       ├── extract_ram.py          # Extrae RAM de savestates PCSX2
-│       └── pine_test.py            # Diagnóstico de API PINE de PCSX2
+│       ├── pine_test.py            # Diagnóstico de API PINE de PCSX2
+│       └── fix_linebreaks.py       # Corrector de saltos de línea (\r\n) post-traducción
 ├── textos/
 │   ├── dialogo.csv                 # CSV enriquecido
 │   └── por_script/                 # CSVs divididos por script
@@ -324,9 +314,21 @@ SPANISH_TO_GLYPH_UTF16 = {
 
 El traductor **escribe español normal** (`á`, `é`, `ñ`). El script de parcheo hace la sustitución automáticamente. **Importante**: caracteres como `º` (ordinal) y `—` (em dash) no están en la fuente — se reemplazan por `o` y `-`.
 
+
+## Extra
+
+Si tu idioma no requiere simbologia extra o comparte el mismo o similar abecedario con español puedes traducir a tu idioma sin problemas ya que el sistema no esta limitado a español
+
+
 ---
 
 ## Notas técnicas
+
+### Sistema de saltos de línea (`\r\n`)
+El juego usa `\r\n` (CRLF) para marcar saltos de línea dentro de las cajas de diálogo. Cada `\r\n` ocupa 4 bytes en UTF-16LE. `fix_linebreaks.py` inserta automáticamente estos saltos en las traducciones usando las posiciones proporcionales del texto japonés original, buscando espacios o puntuación cercanos para no partir palabras. El editor web también aplica esta lógica al abrir una entrada sin saltos, y el contador de bytes incluye los `\r\n` en el cómputo.
+
+### Marcadores `@` / `＠`
+El carácter `@` (y su versión fullwidth `＠`) es una **pausa de click** del motor del juego: el texto se detiene y espera a que el jugador presione un botón para continuar. No es un adorno — es un carácter de control que debe conservarse en las mismas posiciones.
 
 ### Fix del header LZ77 (2026-06-28)
 El decompressor nativo del PS2 procesa el header LZ77 con 12 bytes (no 16). Nuestro Python original usaba 16 bytes y empezaba a descomprimir 4 bytes después que el PS2, produciendo una salida diferente (6,905 bytes de diferencia) y causando pantalla negra. **Fix:** header de 12 bytes.
