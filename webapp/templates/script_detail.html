@@ -10,32 +10,51 @@
         <h1 class="text-2xl font-bold">Script #{{ script.id }}</h1>
         <p class="text-gray-400 text-sm">
             {{ script.script_type or script.source }}
+            {% if script.variant %}
+            <span class="text-xs bg-gray-700 px-2 py-0.5 rounded ml-2">Var {{ script.variant }}</span>
+            {% endif %}
             {% if script.is_supported %}<span class="text-green-400 ml-2">✓ Soportado</span>{% endif %}
         </p>
     </div>
     <div class="text-right">
         {% set p = (script.translated_texts / script.total_texts * 100) if script.total_texts else 0 %}
-        <div class="text-sm text-gray-400">{{ script.translated_texts or 0 }} / {{ script.total_texts or 0 }}</div>
+        <div class="text-sm text-gray-400">{{ script.translated_texts or 0 }} / {{ script.total_texts or 0 }} textos</div>
         <div class="w-32 bg-gray-700 rounded-full h-2 mt-1">
             <div class="bg-pink-500 h-2 rounded-full" style="width: {{ p|round(1) }}%"></div>
         </div>
     </div>
 </div>
 
-<!-- Filtros + Búsqueda interna -->
+<!-- Navegacion de secciones -->
+{% if section_ids %}
+<div class="bg-gray-800 rounded-lg p-3 mb-4">
+    <div class="text-xs text-gray-500 mb-2">Secciones ({{ section_ids|length }})</div>
+    <div class="flex flex-wrap gap-1">
+        {% for sec_id in section_ids %}
+        {% set st = section_stats.get(sec_id, (0, 0)) %}
+        {% set sp = (st[1] / st[0] * 100) if st[0] else 0 %}
+        <a href="?section={{ sec_id }}{% if filter %}&filter={{ filter }}{% endif %}"
+           class="px-2 py-1 text-xs rounded {{ 'bg-pink-600 font-bold' if sec_id == current_section else 'bg-gray-700 hover:bg-gray-600' }}"
+           title="Sec {{ sec_id }}: {{ st[1] }}/{{ st[0] }} ({{ sp|round(0) }}%)">
+            {{ sec_id }}
+            {% if sp >= 100 %}<span class="text-green-400">✓</span>{% endif %}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Filtros + Busqueda interna -->
 <div class="bg-gray-800 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-3">
-    <!-- Filtros de estado -->
     <div class="flex gap-2 text-sm flex-wrap">
-        <a href="?page=1" class="px-3 py-1 rounded {{ 'bg-pink-600' if not request.query_params.get('filter') else 'bg-gray-700 hover:bg-gray-600' }}">Todos</a>
-        <a href="?page=1&filter=untranslated" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'untranslated' else 'bg-gray-700 hover:bg-gray-600' }}">Sin traducir</a>
-        <a href="?page=1&filter=translated" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'translated' else 'bg-gray-700 hover:bg-gray-600' }}">Traducidos</a>
-        <a href="?page=1&filter=needs_shift" class="px-3 py-1 rounded {{ 'bg-pink-600' if request.query_params.get('filter') == 'needs_shift' else 'bg-gray-700 hover:bg-gray-600' }}">⚠ Needs Shift</a>
+        <a href="?section={{ current_section }}&page=1" class="px-3 py-1 rounded {{ 'bg-pink-600' if not filter else 'bg-gray-700 hover:bg-gray-600' }}">Todos</a>
+        <a href="?section={{ current_section }}&page=1&filter=untranslated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'untranslated' else 'bg-gray-700 hover:bg-gray-600' }}">Sin traducir</a>
+        <a href="?section={{ current_section }}&page=1&filter=translated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'translated' else 'bg-gray-700 hover:bg-gray-600' }}">Traducidos</a>
+        <a href="?section={{ current_section }}&page=1&filter=needs_shift" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'needs_shift' else 'bg-gray-700 hover:bg-gray-600' }}">⚠ Needs Shift</a>
     </div>
 
-    <!-- Divisor -->
     <div class="hidden sm:block w-px h-6 bg-gray-600"></div>
 
-    <!-- Búsqueda interna del script -->
     <form class="flex gap-2 flex-1 min-w-[200px]"
           hx-get="/api/search"
           hx-target="#search-inline-results"
@@ -56,29 +75,31 @@
     </form>
 </div>
 
-<!-- Resultados búsqueda interna (ocultos por defecto) -->
 <div id="search-inline-results" class="mb-4 hidden"></div>
+
+<!-- Section header -->
+<div class="text-sm text-gray-400 mb-2">
+    Seccion {{ current_section }} — {{ total }} textos (pagina {{ page }} de {{ total_pages }})
+</div>
 
 <!-- Paginacion -->
 <div class="flex justify-between items-center mb-4 text-sm">
-    <span class="text-gray-400">{{ total }} textos — Página {{ page }} de {{ total_pages }}</span>
     <div class="flex gap-2">
         {% if page > 1 %}
-        <a href="?page={{ page - 1 }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">← Anterior</a>
+        <a href="?section={{ current_section }}&page={{ page - 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">← Anterior</a>
         {% endif %}
 
-        <!-- Páginas numeradas (máx 7 botones) -->
         {% set start_p = [1, page - 3]|max %}
         {% set end_p = [total_pages, page + 3]|min %}
-        {% if start_p > 1 %}<a href="?page=1{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">1</a>{% if start_p > 2 %}<span class="text-gray-600 self-center">…</span>{% endif %}{% endif %}
+        {% if start_p > 1 %}<a href="?section={{ current_section }}&page=1{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">1</a>{% if start_p > 2 %}<span class="text-gray-600 self-center">…</span>{% endif %}{% endif %}
         {% for pg in range(start_p, end_p + 1) %}
-        <a href="?page={{ pg }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}"
+        <a href="?section={{ current_section }}&page={{ pg }}{% if filter %}&filter={{ filter }}{% endif %}"
            class="px-3 py-1 rounded {{ 'bg-pink-600 font-bold' if pg == page else 'bg-gray-700 hover:bg-gray-600' }}">{{ pg }}</a>
         {% endfor %}
-        {% if end_p < total_pages %}{% if end_p < total_pages - 1 %}<span class="text-gray-600 self-center">…</span>{% endif %}<a href="?page={{ total_pages }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ total_pages }}</a>{% endif %}
+        {% if end_p < total_pages %}{% if end_p < total_pages - 1 %}<span class="text-gray-600 self-center">…</span>{% endif %}<a href="?section={{ current_section }}&page={{ total_pages }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ total_pages }}</a>{% endif %}
 
         {% if page < total_pages %}
-        <a href="?page={{ page + 1 }}{% if request.query_params.get('filter') %}&filter={{ request.query_params.get('filter') }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">Siguiente →</a>
+        <a href="?section={{ current_section }}&page={{ page + 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">Siguiente →</a>
         {% endif %}
     </div>
 </div>
@@ -108,6 +129,7 @@
         <div class="flex gap-3">
             <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 font-mono mb-1">
+                    <span class="text-gray-600">[{{ current_section }}:{{ text.section_order }}]</span>
                     0x{{ "%05X"|format(text.byte_offset) }} (#{{ text.id }})
                     {% if text.is_translated %}
                     <span class="text-green-400 ml-2">✓</span>
@@ -126,10 +148,9 @@
                 {% endif %}
             </div>
 
-            <!-- Fit status -->
             <div class="text-xs flex-shrink-0">
                 {% if text.fit_status == 'ok' %}
-                <span class="text-green-400" title="Cabe: {{ text.segment_capacity - ((text.translated_text|length) if text.translated_text else 0) }} bytes libres">🟢</span>
+                <span class="text-green-400" title="Cabe">🟢</span>
                 {% elif text.fit_status == 'tight' %}
                 <span class="text-yellow-400" title="Ajustado">🟡</span>
                 {% elif text.fit_status == 'needs_shift' %}
@@ -156,13 +177,12 @@
 
 {% if not texts %}
 <div class="text-center text-gray-500 mt-12">
-    <p>No hay textos que mostrar con este filtro.</p>
+    <p>No hay textos en esta seccion con el filtro actual.</p>
 </div>
 {% endif %}
 
 <script>
 (function() {
-    // Mostrar/ocultar resultados de búsqueda interna
     var searchInput = document.getElementById('script-search-input');
     var searchResults = document.getElementById('search-inline-results');
     var clearBtn = document.getElementById('clear-script-search');
@@ -187,7 +207,6 @@
         searchInput.focus();
     });
 
-    // Cuando llegan resultados de búsqueda, mostrar el panel
     document.body.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail.target === searchResults) {
             if (searchInput.value.trim()) {
@@ -196,7 +215,6 @@
         }
     });
 
-    // Highlight y scroll al entry desde búsqueda global (?highlight=id)
     var params = new URLSearchParams(window.location.search);
     var highlightId = params.get('highlight');
     if (highlightId) {

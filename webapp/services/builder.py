@@ -21,7 +21,7 @@ def export_csv_for_build(csv_path: Path, only_translated: bool = True) -> int:
     import csv
     session = get_session()
 
-    query = session.query(TextEntry).order_by(TextEntry.script_id, TextEntry.byte_offset)
+    query = session.query(TextEntry).order_by(TextEntry.script_id, TextEntry.section_id, TextEntry.section_order)
     if only_translated:
         query = query.filter(TextEntry.is_translated == True)
 
@@ -61,7 +61,20 @@ def run_rebuild(script_id: int, csv_path: Path) -> dict:
     }
 
 
-def run_build_iso() -> dict:
+def run_apply_translation(csv_path: Path) -> dict:
+    """Ejecuta apply_translation.py para generar SLPS_256.11_translated."""
+    result = subprocess.run(
+        ["python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
+         str(csv_path)],
+        capture_output=True, text=True,
+        cwd=str(PROJECT_ROOT),
+        timeout=TIMEOUT_BUILD_ISO
+    )
+    return {
+        "success": result.returncode == 0,
+        "stdout": result.stdout[-300:],
+        "stderr": result.stderr[-300:],
+    }
     """Ejecuta build_iso.py."""
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "traduccion_tools" / "build_iso.py")],
@@ -151,9 +164,21 @@ def run_full_build(build_id: str):
                 state["log"].append(f"  ⚠ {result['stderr'][:100]}")
                 # Continuar con otros scripts aunque uno falle
 
-        # 4. Reconstruir ISO
+        # 4. Aplicar traducciones al ELF
+        state["step"] = "Aplicando traducciones ELF"
+        state["progress"] = 70
+        state["log"].append("Ejecutando apply_translation.py...")
+        save()
+
+        elf_apply = run_apply_translation(csv_path)
+        if elf_apply["success"]:
+            state["log"].append("  ✓ ELF procesado")
+        else:
+            state["log"].append(f"  ⚠ ELF: {elf_apply['stderr'][:100]}")
+
+        # 5. Reconstruir ISO
         state["step"] = "Generando ISO"
-        state["progress"] = 75
+        state["progress"] = 80
         state["log"].append("Ejecutando build_iso.py...")
         save()
 
@@ -163,9 +188,9 @@ def run_full_build(build_id: str):
         else:
             state["log"].append(f"  ✗ Error: {iso_result['stderr'][:100]}")
 
-        # 5. Inyectar ELF
+        # 6. Inyectar ELF
         state["step"] = "Inyectando ELF"
-        state["progress"] = 90
+        state["progress"] = 95
         state["log"].append("Ejecutando inject_elf.py...")
         save()
 

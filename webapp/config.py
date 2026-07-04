@@ -22,10 +22,10 @@ BUILD_TEMP_DIR = WORK / 'build_temp'
 
 # Subprocess timeouts (segundos)
 TIMEOUT_EXTRACT = 600       # extract_dialogue.py full (997 scripts)
-TIMEOUT_REBUILD = 60        # patch_dec.py --rebuild (1 script)
+TIMEOUT_REBUILD = 300       # patch_dec.py --rebuild (1 script, hasta 3 min para scripts grandes)
 TIMEOUT_BUILD_ISO = 600     # build_iso.py
 TIMEOUT_INJECT_ELF = 30     # inject_elf.py
-TIMEOUT_PIPELINE = 900      # pipeline completo (15 min)
+TIMEOUT_PIPELINE = 7200      # pipeline completo (2h max)
 
 # Server
 HOST = "127.0.0.1"

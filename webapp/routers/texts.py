@@ -60,7 +60,7 @@ def get_editor(entry_id: int):
           class="space-y-2"
           id="editor-form-{entry_id}">
         <div class="text-xs text-gray-500 font-mono mb-1">
-            0x{entry.byte_offset:05X} (#{entry_id})
+            [{entry.section_id}:{entry.section_order}] 0x{entry.byte_offset:05X} (#{entry_id})
         </div>
         <div class="text-sm text-gray-400 mb-1">{entry.original_text[:200]}</div>
         <textarea name="translated_text"
@@ -158,6 +158,8 @@ def _render_entry_row(entry, fit: dict) -> HTMLResponse:
             f'{entry.translated_text[:200]}</div>'
         )
 
+    sec_info = f'[{entry.section_id}:{entry.section_order}] '
+
     html = f'''<div class="text-entry border border-gray-700 rounded p-3 cursor-pointer {bg}"
         id="entry-{entry.id}"
         hx-get="/api/texts/{entry.id}/edit"
@@ -166,7 +168,7 @@ def _render_entry_row(entry, fit: dict) -> HTMLResponse:
     <div class="flex gap-3">
         <div class="flex-1 min-w-0">
             <div class="text-xs text-gray-500 font-mono mb-1">
-                0x{entry.byte_offset:05X} (#{entry.id})
+                {sec_info}0x{entry.byte_offset:05X} (#{entry.id})
                 {f'<span class="text-green-400 ml-2">✓</span>' if entry.is_translated else ''}
                 {f'<span class="text-red-400 ml-2">⚠</span>' if fit['status'] == 'needs_shift' else ''}
             </div>
@@ -198,6 +200,7 @@ def get_row(entry_id: int):
     if entry.translated_text:
         translated_html = f'<div class="text-sm text-white bg-gray-700/50 rounded p-2">{entry.translated_text[:200]}</div>'
 
+    sec_info = f'[{entry.section_id}:{entry.section_order}] '
     bg = 'bg-green-900/30' if entry.is_translated else 'bg-gray-800'
     html = f'''<div class="text-entry border border-gray-700 rounded p-3 {bg} cursor-pointer"
                   id="entry-{entry_id}"
@@ -207,7 +210,7 @@ def get_row(entry_id: int):
         <div class="flex gap-3">
             <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 font-mono mb-1">
-                    0x{entry.byte_offset:05X} (#{entry_id})
+                    {sec_info}0x{entry.byte_offset:05X} (#{entry_id})
                     {f'<span class="text-green-400 ml-2">✓</span>' if entry.is_translated else ''}
                     {f'<span class="text-red-400 ml-2">⚠</span>' if entry.needs_shift else ''}
                 </div>

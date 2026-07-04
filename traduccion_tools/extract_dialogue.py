@@ -127,7 +127,59 @@ def extract_utf16_strings(data, min_len=4):
 
     return strings
 
-def extract_elf_strings(elf_path):
+import re
+
+# Rangos Unicode para caracteres japoneses
+_JP_RE = re.compile(
+    r'[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u2000-\u206f]'
+)
+_HIRAGANA_RE = re.compile(r'[\u3040-\u309f]')
+_KATAKANA_RE = re.compile(r'[\u30a0-\u30ff\uff65-\uff9f]')
+
+
+def is_valid_elf_text(text: str) -> bool:
+    """Filtro estricto para textos extraidos del ELF (Shift-JIS).
+
+    Requiere:
+      - >=4 caracteres japoneses
+      - >50% del texto son caracteres japoneses
+      - >=4 caracteres japoneses consecutivos (evita kanji aislado entre ASCII)
+      - Contiene hiragana (gramatica) O es todo katakana (menus/UI)
+    """
+    jp_chars = _JP_RE.findall(text)
+    if len(jp_chars) < 4:
+        return False
+    if len(jp_chars) / len(text) < 0.5:
+        return False
+
+    # Maximo de caracteres JP consecutivos
+    max_cons = 0
+    cur = 0
+    for ch in text:
+        if _JP_RE.match(ch):
+            cur += 1
+            max_cons = max(max_cons, cur)
+        else:
+            cur = 0
+    if max_cons < 4:
+        return False
+
+    # Tiene hiragana? => es texto real con gramatica
+    if _HIRAGANA_RE.search(text):
+        return True
+
+    # Si no tiene hiragana, verificar que todo lo no-ASCII sea katakana (menus)
+    non_ascii = [
+        ch for ch in text
+        if ord(ch) > 127 and ch not in '\u3000\u3001\u3002\uff01\uff1f\u2026\u300c\u300d\uff08\uff09'
+    ]
+    if non_ascii and all(_KATAKANA_RE.match(ch) for ch in non_ascii):
+        return True
+
+    return False
+
+
+def extract_elf_strings(elf_path, filter_garbage=True):
     data = Path(elf_path).read_bytes()
     strings = []
     i = 0
@@ -149,7 +201,8 @@ def extract_elf_strings(elf_path):
                 try:
                     text = raw.decode('shift-jis').strip()
                     if text and not all(c.isascii() for c in text):
-                        strings.append((start, text))
+                        if not filter_garbage or is_valid_elf_text(text):
+                            strings.append((start, text))
                 except:
                     pass
             continue
@@ -172,15 +225,15 @@ def main():
     if args.elf:
         print(f"Extrayendo textos del ELF ({args.elf_path})...")
         strings = extract_elf_strings(args.elf_path)
-        # Si el CSV ya existe (ej: scripts), hacemos append
         file_exists = csv_path.exists()
         mode = 'a' if file_exists else 'w'
         with open(csv_path, mode, encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['source', 'file_id', 'offset', 'original_text', 'translated_text'])
+                writer.writerow(['source', 'file_id', 'offset', 'section', 'section_order',
+                                 'original_text', 'translated_text'])
             for offset, text in strings:
-                writer.writerow(['ELF', 'ELF', f"0x{offset:06X}", text, ''])
+                writer.writerow(['ELF', 'ELF', f"0x{offset:06X}", '0', '0', text, ''])
         print(f"Guardado en {csv_path} ({len(strings)} strings)")
         return
         

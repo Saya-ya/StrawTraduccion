@@ -10,17 +10,17 @@
     {% for r in results %}
     {% if script_id %}
     {# Modo inline: navegar a la página correcta con highlight #}
-    <a href="?page={{ r.page_num }}&highlight={{ r.id }}"
+     <a href="?section={{ r.section_id }}&page={{ r.page_num }}&highlight={{ r.id }}"
        class="block bg-gray-800 rounded p-3 hover:bg-gray-700 border border-gray-700 transition-colors group cursor-pointer">
     {% else %}
-    <a href="/scripts/{{ r.script_id }}?highlight={{ r.id }}"
+    <a href="/scripts/{{ r.script_id }}?section={{ r.section_id }}&highlight={{ r.id }}"
        class="block bg-gray-800 rounded p-3 hover:bg-gray-700 border border-gray-700 transition-colors group">
     {% endif %}
         <div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
             {% if not script_id %}
             <span class="bg-gray-700 group-hover:bg-gray-600 px-2 py-0.5 rounded font-mono">Script #{{ r.script_id }}</span>
             {% endif %}
-            <span class="font-mono">0x{{ "%05X"|format(r.byte_offset) }}</span>
+            <span class="font-mono">[{{ r.section_id }}:{{ r.section_order }}] 0x{{ "%05X"|format(r.byte_offset) }}</span>
             {% if script_id %}
             <span class="text-gray-600">p.{{ r.page_num }}</span>
             {% endif %}

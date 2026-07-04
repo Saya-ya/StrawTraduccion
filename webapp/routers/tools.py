@@ -118,6 +118,8 @@ def search_texts(request: Request, q: str = Query(""), script_id: int = Query(No
         results.append({
             "id": entry.id, "script_id": entry.script_id,
             "byte_offset": entry.byte_offset,
+            "section_id": entry.section_id,
+            "section_order": entry.section_order,
             "original_text": entry.original_text[:200],
             "translated_text": entry.translated_text[:200] if entry.translated_text else "",
             "is_translated": entry.is_translated,
@@ -125,18 +127,27 @@ def search_texts(request: Request, q: str = Query(""), script_id: int = Query(No
             "fit_status": entry.fit_status or "unchecked",
         })
 
-    # Si es búsqueda dentro de un script, calcular en qué página está cada resultado
-    page_size = 50  # debe coincidir con el default de script_detail
+    # Si es busqueda dentro de un script, calcular seccion y pagina
+    page_size = 50
     if script_id is not None:
-        # Obtener todos los byte_offsets ordenados del script para calcular posición
-        all_offsets = [
-            row[0] for row in session.query(TextEntry.byte_offset).filter(
-                TextEntry.script_id == script_id
-            ).order_by(TextEntry.byte_offset).all()
-        ]
-        offset_to_pos = {off: i for i, off in enumerate(all_offsets)}
+        # Obtener posicion por section_order dentro de cada seccion
+        section_orders = (
+            session.query(TextEntry.section_id, TextEntry.section_order, TextEntry.byte_offset)
+            .filter(TextEntry.script_id == script_id)
+            .order_by(TextEntry.section_id, TextEntry.section_order)
+            .all()
+        )
+        # Mapa: byte_offset -> (section_id, position_in_section)
+        sec_positions = {}
+        sec_counters = {}
+        for sec_id, sec_order, boff in section_orders:
+            idx = sec_counters.get(sec_id, 0)
+            sec_positions[boff] = (sec_id, idx)
+            sec_counters[sec_id] = idx + 1
+
         for r in results:
-            pos = offset_to_pos.get(r['byte_offset'], 0)
+            sec_id, pos = sec_positions.get(r['byte_offset'], (r['section_id'], 0))
+            r['section_id'] = sec_id
             r['page_num'] = pos // page_size + 1
     else:
         for r in results:
@@ -185,7 +196,7 @@ def export_partial(request: Request):
     query = session.query(TextEntry).filter(TextEntry.script_id.in_(script_ids))
     if only_untranslated:
         query = query.filter(TextEntry.is_translated == False)
-    entries = query.order_by(TextEntry.script_id, TextEntry.byte_offset).all()
+    entries = query.order_by(TextEntry.script_id, TextEntry.section_id, TextEntry.section_order).all()
     session.close()
 
     BUILD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -195,12 +206,14 @@ def export_partial(request: Request):
     import csv as csv_mod
     with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv_mod.writer(f, lineterminator='\r\n')
-        writer.writerow(['source', 'file_id', 'offset', 'original_text', 'translated_text'])
+        writer.writerow(['source', 'file_id', 'offset', 'section', 'section_order',
+                         'original_text', 'translated_text'])
         for entry in entries:
             source = entry.source
             fid = str(entry.script_id) if entry.script_id != -1 else 'ELF'
             off = f"0x{entry.byte_offset:05X}" if source == 'SCRIPT' else f"0x{entry.byte_offset:06X}"
-            writer.writerow([source, fid, off, entry.original_text, entry.translated_text or ''])
+            writer.writerow([source, fid, off, entry.section_id, entry.section_order,
+                             entry.original_text, entry.translated_text or ''])
 
     return FileResponse(
         csv_path, media_type="text/csv",

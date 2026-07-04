@@ -20,15 +20,17 @@ class Script(Base):
     id = Column(Integer, primary_key=True)          # file_id
     source = Column(String(10), default="SCRIPT")    # SCRIPT or ELF
     script_type = Column(String(30), default="")
+    variant = Column(String(1), default="")           # A (gap zeros) or B (pointer table)
     offset_in_bin = Column(Integer, default=0)
     size_in_bin = Column(Integer, default=0)
     slot_capacity = Column(Integer, default=0)
     is_supported = Column(Boolean, default=False)
     total_texts = Column(Integer, default=0)
     translated_texts = Column(Integer, default=0)
+    total_sections = Column(Integer, default=0)
 
     texts = relationship("TextEntry", back_populates="script",
-                         order_by="TextEntry.byte_offset")
+                         order_by="TextEntry.section_id, TextEntry.section_order")
 
 
 class TextEntry(Base):
@@ -38,6 +40,8 @@ class TextEntry(Base):
     script_id = Column(Integer, ForeignKey("scripts.id"), nullable=False)
     source = Column(String(10), default="SCRIPT")
     byte_offset = Column(Integer, nullable=False)
+    section_id = Column(Integer, default=0)
+    section_order = Column(Integer, default=0)
     original_text = Column(Text, nullable=False)
     translated_text = Column(Text, default="")
     original_bytes = Column(Integer, default=0)
@@ -54,6 +58,7 @@ class TextEntry(Base):
 
     __table_args__ = (
         Index("ix_script_offset", "script_id", "byte_offset"),
+        Index("ix_script_section", "script_id", "section_id", "section_order"),
         Index("ix_translated", "is_translated"),
     )
 
