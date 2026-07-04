@@ -80,6 +80,8 @@ class BuildHistory(Base):
 
 def init_db():
     """Create all tables and FTS5 index."""
+    from .config import DB_PATH
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
 
     # FTS5 virtual table for full-text search
