@@ -55,7 +55,7 @@ def get_editor(entry_id: int):
 
     translated = entry.translated_text or ''
     original = entry.original_text or ''
-    if translated and original and '\r\n' in original and '\r\n' not in translated:
+    if translated and original and '\r\n' in original and '\n' not in translated:
         proportions = find_break_proportions(original)
         if proportions:
             fixed_text = insert_breaks_at_proportions(translated, proportions)

@@ -30,6 +30,7 @@
                 <th class="px-4 py-2">Secc.</th>
                 <th class="px-4 py-2">Textos</th>
                 <th class="px-4 py-2">Trad.</th>
+                <th class="px-4 py-2">⚠ Shift</th>
                 <th class="px-4 py-2">Progreso</th>
             </tr>
         </thead>
@@ -54,6 +55,14 @@
                 <td class="px-4 py-2 text-gray-400">{{ s.total_sections or '-' }}</td>
                 <td class="px-4 py-2">{{ s.total_texts or 0 }}</td>
                 <td class="px-4 py-2">{{ s.translated_texts or 0 }}</td>
+                <td class="px-4 py-2">
+                    {% set ns = shift_counts.get(s.id, 0) %}
+                    {% if ns > 0 %}
+                    <span class="text-red-400 font-bold" title="Textos que no caben en el slot">⚠ {{ ns }}</span>
+                    {% else %}
+                    <span class="text-gray-600">-</span>
+                    {% endif %}
+                </td>
                 <td class="px-4 py-2">
                     {% set p = (s.translated_texts / s.total_texts * 100) if s.total_texts else 0 %}
                     <div class="flex items-center gap-2">

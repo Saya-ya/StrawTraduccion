@@ -31,13 +31,14 @@
     <div class="text-xs text-gray-500 mb-2">Secciones ({{ section_ids|length }})</div>
     <div class="flex flex-wrap gap-1">
         {% for sec_id in section_ids %}
-        {% set st = section_stats.get(sec_id, (0, 0)) %}
+        {% set st = section_stats.get(sec_id, (0, 0, 0)) %}
         {% set sp = (st[1] / st[0] * 100) if st[0] else 0 %}
         <a href="?section={{ sec_id }}{% if filter %}&filter={{ filter }}{% endif %}"
            class="px-2 py-1 text-xs rounded {{ 'bg-pink-600 font-bold' if sec_id == current_section else 'bg-gray-700 hover:bg-gray-600' }}"
-           title="Sec {{ sec_id }}: {{ st[1] }}/{{ st[0] }} ({{ sp|round(0) }}%)">
+           title="Sec {{ sec_id }}: {{ st[1] }}/{{ st[0] }} ({{ sp|round(0) }}%){% if st[2] %} — ⚠ {{ st[2] }} no caben{% endif %}">
             {{ sec_id }}
             {% if sp >= 100 %}<span class="text-green-400">✓</span>{% endif %}
+            {% if st[2] %}<span class="text-red-400" title="{{ st[2] }} fuera de capacidad">⚠</span>{% endif %}
         </a>
         {% endfor %}
     </div>
@@ -79,7 +80,12 @@
 
 <!-- Section header -->
 <div class="text-sm text-gray-400 mb-2">
-    Seccion {{ current_section }} — {{ total }} textos (pagina {{ page }} de {{ total_pages }})
+    {% if cross_section %}
+    <span class="text-red-400 font-bold">⚠ Needs Shift — Todas las secciones</span>
+    {% else %}
+    Seccion {{ current_section }}
+    {% endif %}
+    — {{ total }} textos (pagina {{ page }} de {{ total_pages }})
 </div>
 
 <!-- Paginacion -->

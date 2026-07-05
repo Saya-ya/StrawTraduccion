@@ -28,6 +28,15 @@ def list_scripts(request: Request, filter_support: str = Query("all")):
 
     all_scripts = query.all()
 
+    shift_counts = {}
+    if all_scripts:
+        from sqlalchemy import func
+        rows = session.query(TextEntry.script_id, func.count()).filter(
+            TextEntry.script_id.in_([s.id for s in all_scripts]),
+            TextEntry.needs_shift == True
+        ).group_by(TextEntry.script_id).all()
+        shift_counts = {row[0]: row[1] for row in rows}
+
     total_texts = sum(s.total_texts or 0 for s in all_scripts)
     total_translated = sum(s.translated_texts or 0 for s in all_scripts)
     pct = round(total_translated / total_texts * 100, 1) if total_texts else 0
@@ -35,6 +44,7 @@ def list_scripts(request: Request, filter_support: str = Query("all")):
     session.close()
     return render("scripts_list.html", request,
         scripts=all_scripts,
+        shift_counts=shift_counts,
         total_texts=total_texts,
         total_translated=total_translated,
         pct=pct,
@@ -93,11 +103,15 @@ def script_detail(
                     url += f"&filter={filter}"
                 return RedirectResponse(url=url)
 
-    # Base query filtrada por seccion
+    # Si el filtro es needs_shift, buscar en TODAS las secciones
+    cross_section = (filter == "needs_shift")
+
     base_q = session.query(TextEntry).filter(
         TextEntry.script_id == script_id,
-        TextEntry.section_id == current_section,
     )
+    if not cross_section:
+        base_q = base_q.filter(TextEntry.section_id == current_section)
+
     if filter == "untranslated":
         base_q = base_q.filter(TextEntry.is_translated == False)
     elif filter == "translated":
@@ -145,7 +159,7 @@ def script_detail(
 
     total_pages = max(1, (total + limit - 1) // limit)
 
-    # Stats por seccion
+    # Stats por seccion (incluye needs_shift)
     section_stats = {}
     for sec_id in section_ids:
         sec_total = session.query(TextEntry).filter(
@@ -157,7 +171,12 @@ def script_detail(
             TextEntry.section_id == sec_id,
             TextEntry.is_translated == True,
         ).count()
-        section_stats[sec_id] = (sec_total, sec_trans)
+        sec_shift = session.query(TextEntry).filter(
+            TextEntry.script_id == script_id,
+            TextEntry.section_id == sec_id,
+            TextEntry.needs_shift == True,
+        ).count()
+        section_stats[sec_id] = (sec_total, sec_trans, sec_shift)
 
     session.close()
     return render("script_detail.html", request,
@@ -172,6 +191,7 @@ def script_detail(
         highlight=highlight,
         section_ids=section_ids,
         current_section=current_section,
+        cross_section=cross_section,
         section_stats=section_stats,
         filter=filter,
     )

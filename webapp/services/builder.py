@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 
 from ..config import (
-    TIMEOUT_REBUILD, TIMEOUT_BUILD_ISO, TIMEOUT_INJECT_ELF,
+    TIMEOUT_REBUILD, TIMEOUT_APPLY_ELF, TIMEOUT_BUILD_ISO, TIMEOUT_INJECT_ELF,
     BUILD_TEMP_DIR, BUILD_STATE_FILE, WORK
 )
 from ..database import get_session, TextEntry, Script, BuildHistory
@@ -63,18 +63,25 @@ def run_rebuild(script_id: int, csv_path: Path) -> dict:
 
 def run_apply_translation(csv_path: Path) -> dict:
     """Ejecuta apply_translation.py para generar SLPS_256.11_translated."""
-    result = subprocess.run(
-        ["python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
-         str(csv_path)],
-        capture_output=True, text=True,
-        cwd=str(PROJECT_ROOT),
-        timeout=TIMEOUT_BUILD_ISO
-    )
-    return {
-        "success": result.returncode == 0,
-        "stdout": result.stdout[-300:],
-        "stderr": result.stderr[-300:],
-    }
+    try:
+        result = subprocess.run(
+            ["python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
+             str(csv_path)],
+            capture_output=True, text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=TIMEOUT_APPLY_ELF
+        )
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout[-300:],
+            "stderr": result.stderr[-300:],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": f"Timeout tras {TIMEOUT_APPLY_ELF}s",
+        }
 
 
 def run_build_iso() -> dict:
@@ -164,7 +171,8 @@ def run_full_build(build_id: str):
             if result["success"]:
                 state["log"].append(f"  ✓ OK")
             else:
-                state["log"].append(f"  ⚠ {result['stderr'][:100]}")
+                detail = (result["stdout"] + result["stderr"]).strip()
+                state["log"].append(f"  ⚠ {sid}: {detail[:200]}")
                 # Continuar con otros scripts aunque uno falle
 
         # 4. Aplicar traducciones al ELF
