@@ -1,6 +1,7 @@
 """Rutas de busqueda, dashboard y delegacion."""
 import csv
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,12 @@ from sqlalchemy import text, func
 
 from ..config import TEMPLATES as TEMPLATES_DIR, BUILD_TEMP_DIR, TEXTOS
 from ..database import get_session, TextEntry, Script
+
+_POS_REF_RE = re.compile(
+    r'\[(\d+):(\d+)\]'       # [section_id:section_order]
+    r'|0x([0-9A-Fa-f]+)'     # 0x{byte_offset}
+    r'|\(#(\d+)\)'           # (#entry_id)
+)
 
 router = APIRouter(tags=["tools"])
 env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
@@ -79,31 +86,88 @@ def search_page(request: Request, q: str = Query(""), search_type: str = Query("
     return render("search.html", request, results=None, query=q, search_type=search_type)
 
 
+def _parse_position_ref(q: str) -> tuple[dict, str]:
+    """Extrae referencias posicionales y devuelve (ref, texto_limpio)."""
+    ref = {'section_id': None, 'section_order': None, 'byte_offset': None, 'entry_id': None}
+    text_part = _POS_REF_RE.sub('', q).strip()
+    for m in _POS_REF_RE.finditer(q):
+        if m.group(1):       # [section:order]
+            ref['section_id'] = int(m.group(1))
+            ref['section_order'] = int(m.group(2))
+        elif m.group(3):     # 0xHEX
+            ref['byte_offset'] = int(m.group(3), 16)
+        elif m.group(4):     # (#id)
+            ref['entry_id'] = int(m.group(4))
+    return ref, text_part
+
+
 @router.get("/api/search")
 def search_texts(request: Request, q: str = Query(""), script_id: int = Query(None),
                  search_type: str = Query("both"), page: int = Query(1), limit: int = Query(50)):
-    """Busqueda con LIKE (compatible con CJK)."""
+    """Busqueda con LIKE (compatible con CJK). Soporta referencias posicionales."""
     if not q.strip():
         return render("components/search_results.html", request,
                        results=[], total=0, query=q, error=None)
 
     session = get_session()
     offset = (page - 1) * limit
-    like_q = f"%{q}%"
+
+    pos_ref, text_part = _parse_position_ref(q)
+
+    if pos_ref['entry_id'] is not None:
+        base = session.query(TextEntry).filter(TextEntry.id == pos_ref['entry_id'])
+    elif text_part:
+        like_q = f"%{text_part}%"
+        try:
+            if search_type == "jp":
+                base = session.query(TextEntry).filter(TextEntry.original_text.like(like_q))
+            elif search_type == "es":
+                base = session.query(TextEntry).filter(TextEntry.translated_text.like(like_q))
+            else:
+                base = session.query(TextEntry).filter(
+                    (TextEntry.original_text.like(like_q)) |
+                    (TextEntry.translated_text.like(like_q))
+                )
+        except Exception as e:
+            session.close()
+            return render("components/search_results.html", request,
+                           results=[], total=0, query=q, error=str(e)[:100])
+
+        if pos_ref['byte_offset'] is not None:
+            base = base.filter(TextEntry.byte_offset == pos_ref['byte_offset'])
+        if pos_ref['section_id'] is not None:
+            base = base.filter(TextEntry.section_id == pos_ref['section_id'])
+        if pos_ref['section_order'] is not None:
+            base = base.filter(TextEntry.section_order == pos_ref['section_order'])
+    elif any(v is not None for v in pos_ref.values()):
+        base = session.query(TextEntry)
+        if pos_ref['byte_offset'] is not None:
+            base = base.filter(TextEntry.byte_offset == pos_ref['byte_offset'])
+        if pos_ref['section_id'] is not None:
+            base = base.filter(TextEntry.section_id == pos_ref['section_id'])
+        if pos_ref['section_order'] is not None:
+            base = base.filter(TextEntry.section_order == pos_ref['section_order'])
+    else:
+        like_q = f"%{q}%"
+        try:
+            if search_type == "jp":
+                base = session.query(TextEntry).filter(TextEntry.original_text.like(like_q))
+            elif search_type == "es":
+                base = session.query(TextEntry).filter(TextEntry.translated_text.like(like_q))
+            else:
+                base = session.query(TextEntry).filter(
+                    (TextEntry.original_text.like(like_q)) |
+                    (TextEntry.translated_text.like(like_q))
+                )
+        except Exception as e:
+            session.close()
+            return render("components/search_results.html", request,
+                           results=[], total=0, query=q, error=str(e)[:100])
+
+    if script_id:
+        base = base.filter(TextEntry.script_id == script_id)
 
     try:
-        if search_type == "jp":
-            base = session.query(TextEntry).filter(TextEntry.original_text.like(like_q))
-        elif search_type == "es":
-            base = session.query(TextEntry).filter(TextEntry.translated_text.like(like_q))
-        else:
-            base = session.query(TextEntry).filter(
-                (TextEntry.original_text.like(like_q)) |
-                (TextEntry.translated_text.like(like_q))
-            )
-
-        if script_id:
-            base = base.filter(TextEntry.script_id == script_id)
 
         total = base.count()
         rows = base.order_by(TextEntry.script_id, TextEntry.byte_offset).offset(offset).limit(limit).all()

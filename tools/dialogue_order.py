@@ -31,14 +31,16 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
+# Firma unificada: [ANY 8 bytes][0x03][0x0100][8 zeros] = texto en +24
+# Los primeros 8 bytes pueden ser ceros, 0x060X010E, o prefijo variable.
 TEXT_BLOCK_SIG = bytes(
-    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]   # 8 zeros
-    + [0x03, 0x00, 0x00, 0x00]                            # opcode 0x03
+    [0x03, 0x00, 0x00, 0x00]                            # opcode 0x03
     + [0x00, 0x01, 0x00, 0x00]                            # param 0x0100
     + [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]  # 8 zeros
 )
+TEXT_BLOCK_HEADER_BEFORE_SIG = 8  # bytes antes de la firma (primera mitad del bloque)
 
-TEXT_START_OFFSET = len(TEXT_BLOCK_SIG)  # 24
+TEXT_START_OFFSET = TEXT_BLOCK_HEADER_BEFORE_SIG + len(TEXT_BLOCK_SIG)  # 24 (bloque completo)
 
 # 16 bytes before a text block that indicate CONTINUATION (same scene)
 CONTINUATION_MARKER = bytes(
@@ -97,30 +99,47 @@ class ScriptAnalysis:
 # ---------------------------------------------------------------------------
 
 def find_text_blocks(data: bytes) -> list[TextBlock]:
-    """Busca bloques de texto usando la firma exacta de 24 bytes del opcode 0x03."""
+    """Busca bloques de texto usando firma [ANY 8 bytes][0x03][0x0100][8 zeros]."""
     blocks: list[TextBlock] = []
+    seen_text_offsets: set[int] = set()
+
     pos = 0
     while True:
         pos = data.find(TEXT_BLOCK_SIG, pos)
         if pos == -1:
             break
-        text_start = pos + TEXT_START_OFFSET
+        
+        # La firma empieza a 8 bytes del inicio del bloque (primera mitad variable)
+        block_start = pos - TEXT_BLOCK_HEADER_BEFORE_SIG
+        if block_start < 0:
+            pos += 1
+            continue
+            
+        text_start = block_start + TEXT_START_OFFSET
+        if text_start in seen_text_offsets or text_start >= len(data):
+            pos += 1
+            continue
+            
         null_pos = data.find(b'\x00\x00', text_start)
         if null_pos == -1 or null_pos == text_start:
             pos += 1
             continue
+            
         try:
             text = data[text_start:null_pos].decode('utf-16-le')
         except UnicodeDecodeError:
             pos = null_pos + 2
             continue
+            
         blocks.append(TextBlock(
-            block_offset=pos,
+            block_offset=block_start,
             text_offset=text_start,
             text=text,
             char_count=len(text),
         ))
+        seen_text_offsets.add(text_start)
         pos = null_pos + 2
+        
     return blocks
 
 
@@ -468,12 +487,20 @@ def analyze_script(dec_path: Path) -> ScriptAnalysis | None:
     bytecode_ptr = struct.unpack_from('<I', data, 0x10)[0]
     count_field = struct.unpack_from('<I', data, 0x14)[0]
 
-    # Fase 1: detectar text blocks (firma exacta primero, fallback heuristica)
-    text_blocks = find_text_blocks(data)
-    extraction_method = 'opcode'
-    if not text_blocks:
-        text_blocks = find_text_blocks_fallback(data)
-        extraction_method = 'heuristic'
+    # Fase 1: detectar text blocks (firma exacta + fallback heuristica fusionados)
+    opcode_blocks = find_text_blocks(data)
+    fb_blocks = find_text_blocks_fallback(data)
+
+    # Merge: opcode-based tiene preferencia, fallback rellena lo que falta
+    seen_offsets = {b.text_offset for b in opcode_blocks}
+    text_blocks = list(opcode_blocks)
+    for fb in fb_blocks:
+        if fb.text_offset not in seen_offsets and fb.text_offset % 2 == 0:
+            text_blocks.append(fb)
+            seen_offsets.add(fb.text_offset)
+
+    text_blocks.sort(key=lambda b: b.text_offset)
+    extraction_method = 'merged'
 
     # Determinar variante
     gap = data[0x20:bytecode_ptr]
@@ -644,6 +671,8 @@ def main() -> int:
     else:
         scripts = []
         for dec_path in sorted(dec_dir.glob('ID_*.dec')):
+            if '_rebuilt' in dec_path.stem:
+                continue
             sa = analyze_script(dec_path)
             if sa is not None:
                 scripts.append(sa)

@@ -20,7 +20,7 @@
             {% if not script_id %}
             <span class="bg-gray-700 group-hover:bg-gray-600 px-2 py-0.5 rounded font-mono">Script #{{ r.script_id }}</span>
             {% endif %}
-            <span class="font-mono">[{{ r.section_id }}:{{ r.section_order }}] 0x{{ "%05X"|format(r.byte_offset) }}</span>
+            <span class="font-mono">[{{ r.section_id }}:{{ r.section_order }}] 0x{{ "%05X"|format(r.byte_offset) }} (#{{ r.id }})</span>
             {% if script_id %}
             <span class="text-gray-600">p.{{ r.page_num }}</span>
             {% endif %}
