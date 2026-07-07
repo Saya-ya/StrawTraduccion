@@ -1,11 +1,12 @@
 """Build pipeline — orquesta patch_dec.py + build_iso.py + inject_elf.py."""
 import json
+import os
 import shutil
 import struct
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from ..database import get_session, TextEntry, Script, BuildHistory
 from .build_lock import acquire_build_lock, release_build_lock, write_build_state
 
 # ── Número de workers para compresión paralela ───────────────────────────────
-COMPRESS_WORKERS = 4
+COMPRESS_WORKERS = min(os.cpu_count() or 4, 8)  # usar hasta 8 núcleos reales
 
 
 def export_csv_for_build(csv_path: Path, only_translated: bool = True) -> int:
@@ -69,14 +70,12 @@ def _rebuild_one_script(script_id: int, csv_path: Path, bin_path: Path, verify: 
     }
 
 
-def _compress_only(script_id: int, csv_path: Path) -> dict:
-    """
-    Reconstruye .dec y comprime LZ77 sin inyectar en Data.bin.
-    Retorna los bytes comprimidos + metadatos para la fase de inyección.
-    Se ejecuta en un thread del pool (paralelizable).
-    """
-    # Importar aquí para no cargar en el proceso principal
-    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+def _compress_worker(args: tuple) -> dict:
+    """Worker para ProcessPoolExecutor: recibe (script_id, csv_path, project_root)."""
+    script_id, csv_path, project_root_str = args
+    project_root = Path(project_root_str)
+
+    sys.path.insert(0, str(project_root / "tools"))
     from script_rebuilder import default_dec_path, load_csv_rows, rebuild_local_slack
     from lz77 import compress, decompress
 
@@ -107,7 +106,6 @@ def _compress_only(script_id: int, csv_path: Path) -> dict:
             "report": report,
         }
 
-    # Verify round-trip
     comp_data = compress(rebuilt)
     redec = decompress(comp_data)
     diffs = sum(a != b for a, b in zip(rebuilt, redec))
@@ -274,7 +272,7 @@ def run_full_build(build_id: str):
 
         # 4. Compresión paralela (Fase 1: solo CPU, sin escribir a Data.bin)
         total_scripts = len(script_ids)
-        state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} workers)"
+        state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} procesos)"
         state["progress"] = 10
         state["log"].append(f"Comprimiendo {total_scripts} scripts en paralelo...")
         save()
@@ -283,8 +281,11 @@ def run_full_build(build_id: str):
         errors: list[str] = []
 
         t_start = time.time()
-        with ThreadPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
-            futures = {pool.submit(_compress_only, sid, csv_path): sid for sid in script_ids}
+        project_root_str = str(PROJECT_ROOT)
+        work_items = [(sid, csv_path, project_root_str) for sid in script_ids]
+
+        with ProcessPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
+            futures = {pool.submit(_compress_worker, item): item[0] for item in work_items}
             done = 0
             for future in as_completed(futures):
                 sid = futures[future]
