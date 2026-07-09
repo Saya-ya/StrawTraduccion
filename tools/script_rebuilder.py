@@ -1,18 +1,16 @@
-#!/usr/bin/env python3
 """
-script_rebuilder.py — Rebuilder conservador de scripts .dec (modo local-slack).
+script_rebuilder.py — Conservative .dec script rebuilder (local-slack mode).
 
-MVP seguro:
-  - NO mueve estructuras.
-  - NO actualiza punteros.
-  - Solo reemplaza texto dentro del string UTF-16LE null-terminated que contiene
-    el offset del CSV.
-  - Usa el padding de ceros posterior al terminador para permitir traducciones
-    más largas.
+Safe MVP:
+  - Does NOT move structures.
+  - Does NOT update pointers.
+  - Only replaces text within the null-terminated UTF-16LE string containing
+    the CSV offset.
+  - Uses the zero-padding after the terminator to allow longer translations.
 
-Esto cubre la familia SCRIPT_DIALOGUE con header 0x020000XX y tabla en 0x2010,
-según los datos de work/analysis/*.json. Si un texto no cabe en su slack local,
-se reporta como "needs_shift" y no se aplica.
+This covers the SCRIPT_DIALOGUE family with header 0x020000XX and table at 0x2010,
+per work/analysis/*.json. If a text doesn't fit in its local slack, it is
+reported as "needs_shift" and not applied.
 """
 
 import argparse
@@ -24,9 +22,9 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 
-from glyph_map import SPANISH_TO_GLYPH, game_string as _game_string, encode_game_utf16 as _encode_game_utf16
+from glyph_map import SPANISH_TO_GLYPH, game_string as _game_string, encode_game_utf16 as _encode_game_utf16, get_glyph_map
 
-# Re-exportar para compatibilidad con codigo existente
+# Re-export for compatibility with existing code
 SPANISH_TO_GLYPH = SPANISH_TO_GLYPH  # noqa: F811
 
 TRAILING_PUNCT = set("…。、，,.!?！？")
@@ -36,7 +34,7 @@ TRAILING_PUNCT = set("…。、，,.!?！？")
 class TextSegment:
     start: int
     text_end: int          # offset del terminador 00 00
-    slack_end: int         # primer byte no-cero después del padding, o EOF
+    slack_end: int         # first non-zero byte after padding, or EOF
     text: str
     has_length_prefix: bool = False
     length_prefix_offset: int | None = None
@@ -65,13 +63,16 @@ class TranslationRow:
     csv_line: int
 
 
-def game_string(text: str) -> str:
-    """Convierte español legible a los glifos disponibles del juego."""
-    return _game_string(text)
+def game_string(text: str, glyph_map: dict | None = None) -> str:
+    if glyph_map is None:
+        return _game_string(text)
+    return _game_string(text, glyph_map)
 
 
-def encode_game_utf16(text: str) -> bytes:
-    return _encode_game_utf16(text)
+def encode_game_utf16(text: str, glyph_map: dict | None = None) -> bytes:
+    if glyph_map is None:
+        return _encode_game_utf16(text)
+    return _encode_game_utf16(text, glyph_map)
 
 
 def decode_utf16(data: bytes) -> str:
@@ -96,7 +97,6 @@ def is_probably_script_dialogue(data: bytes) -> bool:
 
 
 def find_utf16_null(data: bytes, start: int) -> int | None:
-    """Busca terminador UTF-16LE 00 00 avanzando en pasos de 2."""
     pos = start
     while pos + 1 < len(data):
         if data[pos:pos + 2] == b'\x00\x00':
@@ -106,7 +106,6 @@ def find_utf16_null(data: bytes, start: int) -> int | None:
 
 
 def find_slack_end(data: bytes, null_at: int) -> int:
-    """Devuelve el primer byte no-cero tras el terminador, o EOF."""
     pos = null_at + 2
     while pos < len(data) and data[pos] == 0:
         pos += 1
@@ -114,10 +113,6 @@ def find_slack_end(data: bytes, null_at: int) -> int:
 
 
 def detect_length_prefix(data: bytes, start: int, text: str) -> tuple[bool, int | None]:
-    """
-    Detecta prefijo u16 simple justo antes del texto. Conservador: solo si el
-    valor coincide exactamente con la longitud del string contenedor.
-    """
     if start < 2:
         return False, None
     val = struct.unpack_from('<H', data, start - 2)[0]
@@ -127,13 +122,6 @@ def detect_length_prefix(data: bytes, start: int, text: str) -> tuple[bool, int 
 
 
 def find_segment_containing(data: bytes, offset: int, original_text: str = "") -> TextSegment:
-    """
-    Encuentra el string UTF-16LE null-terminated que contiene `offset`.
-    Soporta dos casos:
-      1) String normal: [00 padding] [texto] [00 00] [padding]
-      2) String con prefijo u16 inmediatamente antes del texto:
-         [len:u16] [texto] [00 00]
-    """
     if offset < 0 or offset + 1 >= len(data) or offset % 2:
         raise ValueError(f"Offset UTF-16 inválido: 0x{offset:X}")
 
@@ -150,7 +138,6 @@ def find_segment_containing(data: bytes, offset: int, original_text: str = "") -
             slack_end = find_slack_end(data, null_at)
             return TextSegment(start, null_at, slack_end, text, True, offset - 2)
 
-    # Caso normal: caminar atrás hasta que el word anterior sea 0000.
     start = offset
     while start >= 2 and data[start - 2:start] != b'\x00\x00':
         start -= 2
@@ -189,11 +176,6 @@ def load_csv_rows(csv_path: Path, file_id: int) -> list[TranslationRow]:
 
 
 def maybe_consume_trailing_punctuation(segment_text: str, end_char: int, translated: str) -> int:
-    """
-    El CSV a veces separa una frase sin incluir puntuación final japonesa.
-    Si la traducción ya termina en puntuación y justo después del original hay
-    puntuación japonesa, consumirla evita duplicados tipo "………".
-    """
     if not translated or translated[-1] not in TRAILING_PUNCT:
         return end_char
     pos = end_char
@@ -203,11 +185,8 @@ def maybe_consume_trailing_punctuation(segment_text: str, end_char: int, transla
 
 
 def apply_rows_to_segment(segment: TextSegment, rows: list[TranslationRow],
-                          consume_punctuation: bool = True) -> tuple[str, list[dict]]:
-    """
-    Aplica reemplazos al texto decodificado del segmento, de derecha a izquierda
-    para que los offsets originales no se desplacen.
-    """
+                          consume_punctuation: bool = True,
+                          glyph_map: dict | None = None) -> tuple[str, list[dict]]:
     text = segment.text
     events = []
     replacements = []
@@ -230,7 +209,7 @@ def apply_rows_to_segment(segment: TextSegment, rows: list[TranslationRow],
         if consume_punctuation:
             replace_end = maybe_consume_trailing_punctuation(text, end_char, row.translated_text)
 
-        replacements.append((start_char, replace_end, game_string(row.translated_text), row))
+        replacements.append((start_char, replace_end, game_string(row.translated_text, glyph_map), row))
         events.append({
             'csv_line': row.csv_line,
             'offset': row.offset,
@@ -241,7 +220,7 @@ def apply_rows_to_segment(segment: TextSegment, rows: list[TranslationRow],
             'consumed_chars': replace_end - end_char,
         })
 
-    # Evitar solapamientos contradictorios.
+    # Avoid conflicting overlaps.
     replacements.sort(key=lambda x: x[0])
     for a, b in zip(replacements, replacements[1:]):
         if a[1] > b[0]:
@@ -258,10 +237,8 @@ def apply_rows_to_segment(segment: TextSegment, rows: list[TranslationRow],
 
 
 def rebuild_local_slack(dec_data: bytes, rows: list[TranslationRow],
-                        consume_punctuation: bool = True) -> tuple[bytes, dict]:
-    """
-    Aplica traducciones usando padding local. Devuelve (nuevo_dec, reporte).
-    """
+                        consume_punctuation: bool = True,
+                        glyph_map: dict | None = None) -> tuple[bytes, dict]:
     out = bytearray(dec_data)
     report = {
         'mode': 'local-slack',
@@ -286,7 +263,7 @@ def rebuild_local_slack(dec_data: bytes, rows: list[TranslationRow],
 
     for seg_start in sorted(groups):
         segment, seg_rows = groups[seg_start]
-        new_text, events = apply_rows_to_segment(segment, seg_rows, consume_punctuation)
+        new_text, events = apply_rows_to_segment(segment, seg_rows, consume_punctuation, glyph_map)
         new_bytes = new_text.encode('utf-16-le')
         required = len(new_bytes) + 2
 
@@ -330,7 +307,6 @@ def rebuild_local_slack(dec_data: bytes, rows: list[TranslationRow],
 
 
 def analyze_dec(dec_data: bytes, max_segments: int = 20) -> dict:
-    """Análisis ligero: header + strings UTF-16 detectables desde offsets no-cero."""
     header = []
     if len(dec_data) >= 0x20:
         header = [f"0x{struct.unpack_from('<I', dec_data, i)[0]:X}" for i in range(0, 0x20, 4)]
@@ -338,14 +314,14 @@ def analyze_dec(dec_data: bytes, max_segments: int = 20) -> dict:
     segments = []
     pos = 0
     while pos + 1 < len(dec_data):
-        # Inicio candidato: word no-cero y word anterior cero o inicio.
+        # Candidate start: non-zero word with zero word before or start.
         if dec_data[pos:pos + 2] != b'\x00\x00' and (pos == 0 or dec_data[pos - 2:pos] == b'\x00\x00'):
             try:
                 null_at = find_utf16_null(dec_data, pos)
                 if null_at is not None and null_at > pos:
                     raw = dec_data[pos:null_at]
                     text = decode_utf16(raw)
-                    # Filtro simple: al menos 3 chars y algún JP.
+                    # Filter: at least 3 chars, some JP.
                     jp = sum(1 for ch in text if '\u3000' <= ch <= '\u9fff')
                     if len(text) >= 3 and jp > 0:
                         slack_end = find_slack_end(dec_data, null_at)

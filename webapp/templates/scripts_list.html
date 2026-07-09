@@ -2,11 +2,11 @@
 {% block content %}
 
 <div class="mb-6">
-    <h1 class="text-2xl font-bold mb-2">📁 Scripts</h1>
+    <h1 class="text-2xl font-bold mb-2">{{ _('scripts.title') }}</h1>
     <div class="flex gap-4 text-sm">
-        <span class="bg-gray-800 px-3 py-1 rounded">{{ total_texts }} textos totales</span>
-        <span class="bg-green-900 px-3 py-1 rounded">{{ total_translated }} traducidos</span>
-        <span class="bg-pink-900 px-3 py-1 rounded">{{ pct }}% completado</span>
+        <span class="bg-gray-800 px-3 py-1 rounded">{{ total_texts }} {{ _('scripts.total_texts') }}</span>
+        <span class="bg-green-900 px-3 py-1 rounded">{{ total_translated }} {{ _('scripts.translated') }}</span>
+        <span class="bg-pink-900 px-3 py-1 rounded">{{ pct }}% {{ _('scripts.completed_pct') }}</span>
     </div>
 
     <!-- Progress bar global -->
@@ -15,9 +15,9 @@
     </div>
 
     <div class="flex gap-3 mt-4">
-        <a href="/scripts?filter_support=all" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'all' else 'bg-gray-700' }}">Todos</a>
-        <a href="/scripts?filter_support=supported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'supported' else 'bg-gray-700' }}">Soportados</a>
-        <a href="/scripts?filter_support=unsupported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'unsupported' else 'bg-gray-700' }}">No soportados</a>
+        <a href="/scripts?filter_support=all" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'all' else 'bg-gray-700' }}">{{ _('scripts.filter_all') }}</a>
+        <a href="/scripts?filter_support=supported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'supported' else 'bg-gray-700' }}">{{ _('scripts.filter_supported') }}</a>
+        <a href="/scripts?filter_support=unsupported" class="text-sm px-3 py-1 rounded {{ 'bg-pink-600' if filter_support == 'unsupported' else 'bg-gray-700' }}">{{ _('scripts.filter_unsupported') }}</a>
     </div>
 </div>
 
@@ -25,13 +25,13 @@
     <table class="w-full text-sm">
         <thead>
             <tr class="bg-gray-800 text-left">
-                <th class="px-4 py-2">ID</th>
-                <th class="px-4 py-2">Tipo / Var</th>
-                <th class="px-4 py-2">Secc.</th>
-                <th class="px-4 py-2">Textos</th>
-                <th class="px-4 py-2">Trad.</th>
-                <th class="px-4 py-2">⚠ Shift</th>
-                <th class="px-4 py-2">Progreso</th>
+                <th class="px-4 py-2">{{ _('scripts.th_id') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_type') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_sections') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_texts') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_translated') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_shift') }}</th>
+                <th class="px-4 py-2">{{ _('scripts.th_progress') }}</th>
             </tr>
         </thead>
         <tbody>
@@ -80,8 +80,8 @@
 
 {% if not scripts %}
 <div class="text-center text-gray-500 mt-12">
-    <p class="text-lg">No hay scripts importados.</p>
-    <p class="mt-2">Ve a <a href="/import" class="text-pink-400 underline">Importar</a> para extraer los textos del juego.</p>
+    <p class="text-lg">{{ _('scripts.empty') }}</p>
+    <p class="mt-2">{{ _('scripts.go_import') | replace('Importar', _('nav.import')) }}</p>
 </div>
 {% endif %}
 

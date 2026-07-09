@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 lz77.py — Descompresor LZSS de PS2 (verificado contra MIPS en SLPS_256.11).
 
@@ -32,16 +31,9 @@ MAX_MATCH = 18
 
 
 def decompress(compressed_data, expected_size=None, strict=True):
-    """
-    Descomprime datos en formato LZSS de PS2.
-    Si expected_size es None, lo lee del header.
-    Si hay header LZ77, respeta comp_size y descarta padding posterior.
-    En modo strict, falla si el stream está truncado y no produce decomp_size.
-    """
     data = compressed_data
     pos = 0
 
-    # Verificar/parsear header de 12 bytes (NO 16)
     if data[:4] == MAGIC:
         if len(data) < 12:
             raise ValueError("Header LZ77 truncado")
@@ -116,14 +108,6 @@ def decompress(compressed_data, expected_size=None, strict=True):
 
 
 def compress(uncompressed_data, all_literal=False):
-    """
-    Comprime usando LZSS de PS2 con búsqueda greedy de ventana completa.
-
-    El header es de 12 bytes. El stream comprimido empieza en el byte 12.
-    Los primeros 4 bytes del stream son lo que históricamente se llamó "metadata"
-    — el compresor genera un stream continuo y lo que caiga en bytes 12-15 es
-    el valor real.
-    """
 
     data_len = len(uncompressed_data)
     compressed = bytearray()
@@ -210,7 +194,6 @@ def compress(uncompressed_data, all_literal=False):
 
 
 def decompress_file(input_path, output_path=None):
-    """Descomprime un archivo LZ77 a disco."""
     from pathlib import Path
     data = Path(input_path).read_bytes()
     decomp = decompress(data)
@@ -221,7 +204,6 @@ def decompress_file(input_path, output_path=None):
 
 
 def compress_file(input_path, output_path=None, all_literal=False):
-    """Comprime un archivo crudo a formato LZ77 de 12 bytes de header."""
     from pathlib import Path
     data = Path(input_path).read_bytes()
     comp = compress(data, all_literal=all_literal)

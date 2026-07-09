@@ -1,27 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h1 class="text-2xl font-bold mb-4">📥 Importar textos del juego</h1>
+<h1 class="text-2xl font-bold mb-4">{{ _('import.title') }}</h1>
 
 <div class="bg-gray-800 rounded-lg p-6 mb-6">
     <p class="text-gray-300 mb-4">
-        Esto ejecutara la extraccion completa desde <code class="text-pink-400">Data.bin</code> y <code class="text-pink-400">SLPS_256.11</code>:
+        {{ _('import.description') }} <code class="text-pink-400">Data.bin</code> y <code class="text-pink-400">SLPS_256.11</code>:
     </p>
     <ol class="text-gray-400 text-sm mb-4 list-decimal list-inside space-y-1">
-        <li><code class="text-pink-400">extract_all.py</code> — descomprime los scripts .dec</li>
-        <li><code class="text-pink-400">dialogue_order.py</code> — extrae dialogos con secciones</li>
-        <li><code class="text-pink-400">extract_dialogue.py --elf</code> — extrae menus y sistema</li>
+        <li><code class="text-pink-400">extract_all.py</code> — {{ _('import.steps')[0] }}</li>
+        <li><code class="text-pink-400">dialogue_order.py</code> — {{ _('import.steps')[1] }}</li>
+        <li><code class="text-pink-400">extract_dialogue.py --elf</code> — {{ _('import.steps')[2] }}</li>
     </ol>
-    <p class="text-gray-500 text-sm mb-4">
-        Requiere que <code>Data.bin</code> y <code>SLPS_256.11</code> existan en <code>originales/</code>.
-    </p>
-    
+    <p class="text-gray-500 text-sm mb-4">{{ _('import.requirement') }}</p>
+
     <button id="import-btn"
             class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-lg font-bold"
             onclick="runImport()">
-        Extraer e Importar
+        {{ _('import.btn_extract') }}
     </button>
-    
+
     <div id="import-status" class="mt-4 hidden">
         <div id="import-progress" class="text-sm text-gray-300"></div>
         <pre id="import-result" class="mt-2 bg-gray-900 p-3 rounded text-xs text-gray-400 hidden"></pre>
@@ -29,18 +27,14 @@
 </div>
 
 <div class="bg-gray-800 rounded-lg p-6">
-    <h2 class="text-lg font-bold mb-2">¿Ya tenías traducciones?</h2>
-    <p class="text-gray-400 text-sm">
-        La importacion preserva automaticamente las traducciones existentes:
-    </p>
+    <h2 class="text-lg font-bold mb-2">{{ _('import.existing_title') }}</h2>
+    <p class="text-gray-400 text-sm">{{ _('import.existing_desc') }}</p>
     <ul class="text-gray-500 text-sm mt-2 list-disc list-inside space-y-1">
-        <li><strong>Desde la base de datos:</strong> matching por <code>script_id + offset + original_text</code></li>
-        <li><strong>Desde el CSV previo:</strong> se respaldan antes de la extraccion y se usan como fuente adicional</li>
-        <li><strong>Fallback por contenido:</strong> si el extractor cambio algun offset, se usa contenido >95% similar</li>
+        <li><strong>{{ _('import.existing_db') }}</strong> matching por <code>script_id + offset + original_text</code></li>
+        <li><strong>{{ _('import.existing_csv') }}</strong> se respaldan antes de la extraccion y se usan como fuente adicional</li>
+        <li><strong>{{ _('import.existing_fallback') }}</strong> si el extractor cambio algun offset, se usa contenido >95% similar</li>
     </ul>
-    <p class="text-gray-600 text-xs mt-3">
-        Esto permite compartir traducciones: solo comparte <code>textos/dialogo.csv</code> o <code>work/translation_manager.db</code>.
-    </p>
+    <p class="text-gray-600 text-xs mt-3">{{ _('import.share_info') }}</p>
 </div>
 
 <script>
@@ -49,33 +43,33 @@ async function runImport() {
     const status = document.getElementById('import-status');
     const progress = document.getElementById('import-progress');
     const result = document.getElementById('import-result');
-    
+
     btn.disabled = true;
     btn.textContent = 'Extrayendo...';
     status.classList.remove('hidden');
-    progress.textContent = 'Ejecutando extraccion e importacion... (puede tardar ~1-2 min la primera vez)';
-    
+    progress.textContent = '{{ _('import.status_extracting') }}';
+
     try {
         const resp = await fetch('/import/run', { method: 'POST' });
         const data = await resp.json();
-        
+
         result.classList.remove('hidden');
         if (data.status === 'ok') {
-            progress.textContent = '✅ Importación completada';
+            progress.textContent = '{{ _('import.status_done') }}';
             result.textContent = JSON.stringify(data.stats, null, 2);
-            btn.textContent = '✓ Completado — Recargar página';
+            btn.textContent = '{{ _('import.status_done_btn') }}';
             btn.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
             btn.onclick = () => location.reload();
         } else {
-            progress.textContent = '❌ Error: ' + data.message;
+            progress.textContent = '{{ _('import.status_error') }}' + data.message;
             result.textContent = data.message;
             btn.disabled = false;
-            btn.textContent = 'Reintentar';
+            btn.textContent = '{{ _('import.retry') }}';
         }
     } catch (e) {
-        progress.textContent = '❌ Error de conexión: ' + e.message;
+        progress.textContent = '{{ _('import.status_conn_error') }}' + e.message;
         btn.disabled = false;
-        btn.textContent = 'Reintentar';
+        btn.textContent = '{{ _('import.retry') }}';
     }
 }
 </script>

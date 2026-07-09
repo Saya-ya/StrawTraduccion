@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 extract_all.py — Extrae archivos de Data.bin usando la FAT correcta.
 
@@ -26,7 +25,6 @@ OUT_BASE = Path("work")
 
 
 def parse_fat(data):
-    """Parse FAT from raw Data.bin bytes."""
     return [
         {
             "index": r["row"],
@@ -112,7 +110,6 @@ def main():
             print(f"  [{e['index']:5d}] ID={e['id']:6d}  size={e['size']:>10,d}  off=0x{e['offset']:08X}  type={ftype}")
         return
 
-    # Filtrar
     to_extract = []
     if args.id:
         for e in entries:

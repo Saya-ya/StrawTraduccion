@@ -1,33 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h1 class="text-2xl font-bold mb-6">📊 Dashboard</h1>
+<h1 class="text-2xl font-bold mb-6">{{ _('dashboard.title') }}</h1>
 
 <!-- Stats cards -->
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
     <div class="bg-gray-800 rounded-lg p-4">
         <div class="text-3xl font-bold text-pink-400">{{ total_scripts }}</div>
-        <div class="text-sm text-gray-400">Scripts</div>
+        <div class="text-sm text-gray-400">{{ _('dashboard.stat_scripts') }}</div>
     </div>
     <div class="bg-gray-800 rounded-lg p-4">
         <div class="text-3xl font-bold text-blue-400">{{ total_texts }}</div>
-        <div class="text-sm text-gray-400">Textos totales</div>
+        <div class="text-sm text-gray-400">{{ _('dashboard.stat_texts') }}</div>
     </div>
     <div class="bg-gray-800 rounded-lg p-4">
         <div class="text-3xl font-bold text-green-400">{{ translated }}</div>
-        <div class="text-sm text-gray-400">Traducidos ({{ pct }}%)</div>
+        <div class="text-sm text-gray-400">{{ _('dashboard.stat_translated') }} ({{ pct }}%)</div>
     </div>
     <div class="bg-gray-800 rounded-lg p-4">
         <div class="text-3xl font-bold {{ 'text-red-400' if needs_shift else 'text-gray-400' }}">{{ needs_shift }}</div>
-        <div class="text-sm text-gray-400">Needs shift</div>
+        <div class="text-sm text-gray-400">{{ _('dashboard.stat_shift') }}</div>
     </div>
 </div>
 
 <!-- Progress bar -->
 <div class="bg-gray-800 rounded-lg p-4 mb-8">
     <div class="flex justify-between text-sm mb-2">
-        <span>Progreso global</span>
-        <span>{{ pct }}% ({{ completed }} scripts completos)</span>
+        <span>{{ _('dashboard.progress_label') }}</span>
+        <span>{{ pct }}% ({{ completed }} {{ _('dashboard.complete_scripts') }})</span>
     </div>
     <div class="w-full bg-gray-700 rounded-full h-4">
         <div class="bg-pink-500 h-4 rounded-full" style="width: {{ pct }}%"></div>
@@ -37,7 +37,7 @@
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Top scripts -->
     <div class="bg-gray-800 rounded-lg p-4">
-        <h2 class="text-lg font-bold mb-3">🏆 Scripts mas avanzados</h2>
+        <h2 class="text-lg font-bold mb-3">{{ _('dashboard.top_scripts') }}</h2>
         <div class="space-y-2">
             {% for s in top_scripts %}
             <a href="/scripts/{{ s.id }}" class="flex items-center justify-between p-2 rounded hover:bg-gray-700">
@@ -56,7 +56,7 @@
 
     <!-- Recent activity -->
     <div class="bg-gray-800 rounded-lg p-4">
-        <h2 class="text-lg font-bold mb-3">🕐 Actividad reciente</h2>
+        <h2 class="text-lg font-bold mb-3">{{ _('dashboard.recent_activity') }}</h2>
         {% if recent %}
         <div class="space-y-2">
             {% for r in recent %}
@@ -68,7 +68,7 @@
             {% endfor %}
         </div>
         {% else %}
-        <p class="text-gray-500 text-sm">Sin actividad reciente</p>
+        <p class="text-gray-500 text-sm">{{ _('dashboard.no_activity') }}</p>
         {% endif %}
     </div>
 </div>

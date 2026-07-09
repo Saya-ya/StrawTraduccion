@@ -2,23 +2,23 @@
 {% block content %}
 
 <div class="mb-4 flex items-center gap-4">
-    <a href="/scripts" class="text-pink-400 hover:underline text-sm">← Volver a scripts</a>
+    <a href="/scripts" class="text-pink-400 hover:underline text-sm">{{ _('script.back') }}</a>
 </div>
 
 <div class="flex items-center justify-between mb-4">
     <div>
-        <h1 class="text-2xl font-bold">Script #{{ script.id }}</h1>
+        <h1 class="text-2xl font-bold">{{ _('script.script_num') }}{{ script.id }}</h1>
         <p class="text-gray-400 text-sm">
             {{ script.script_type or script.source }}
             {% if script.variant %}
-            <span class="text-xs bg-gray-700 px-2 py-0.5 rounded ml-2">Var {{ script.variant }}</span>
+            <span class="text-xs bg-gray-700 px-2 py-0.5 rounded ml-2">{{ _('script.var_label') }} {{ script.variant }}</span>
             {% endif %}
-            {% if script.is_supported %}<span class="text-green-400 ml-2">✓ Soportado</span>{% endif %}
+            {% if script.is_supported %}<span class="text-green-400 ml-2">{{ _('scripts.supported') }}</span>{% endif %}
         </p>
     </div>
     <div class="text-right">
         {% set p = (script.translated_texts / script.total_texts * 100) if script.total_texts else 0 %}
-        <div class="text-sm text-gray-400">{{ script.translated_texts or 0 }} / {{ script.total_texts or 0 }} textos</div>
+        <div class="text-sm text-gray-400">{{ script.translated_texts or 0 }} / {{ script.total_texts or 0 }} {{ _('script.texts_label') }}</div>
         <div class="w-32 bg-gray-700 rounded-full h-2 mt-1">
             <div class="bg-pink-500 h-2 rounded-full" style="width: {{ p|round(1) }}%"></div>
         </div>
@@ -28,7 +28,7 @@
 <!-- Navegacion de secciones -->
 {% if section_ids %}
 <div class="bg-gray-800 rounded-lg p-3 mb-4">
-    <div class="text-xs text-gray-500 mb-2">Secciones ({{ section_ids|length }})</div>
+    <div class="text-xs text-gray-500 mb-2">{{ _('script.sections') }} ({{ section_ids|length }})</div>
     <div class="flex flex-wrap gap-1">
         {% for sec_id in section_ids %}
         {% set st = section_stats.get(sec_id, (0, 0, 0)) %}
@@ -48,10 +48,10 @@
 <!-- Filtros + Busqueda interna -->
 <div class="bg-gray-800 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-3">
     <div class="flex gap-2 text-sm flex-wrap">
-        <a href="?section={{ current_section }}&page=1" class="px-3 py-1 rounded {{ 'bg-pink-600' if not filter else 'bg-gray-700 hover:bg-gray-600' }}">Todos</a>
-        <a href="?section={{ current_section }}&page=1&filter=untranslated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'untranslated' else 'bg-gray-700 hover:bg-gray-600' }}">Sin traducir</a>
-        <a href="?section={{ current_section }}&page=1&filter=translated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'translated' else 'bg-gray-700 hover:bg-gray-600' }}">Traducidos</a>
-        <a href="?section={{ current_section }}&page=1&filter=needs_shift" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'needs_shift' else 'bg-gray-700 hover:bg-gray-600' }}">⚠ Needs Shift</a>
+        <a href="?section={{ current_section }}&page=1" class="px-3 py-1 rounded {{ 'bg-pink-600' if not filter else 'bg-gray-700 hover:bg-gray-600' }}">{{ _('script.filter_all') }}</a>
+        <a href="?section={{ current_section }}&page=1&filter=untranslated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'untranslated' else 'bg-gray-700 hover:bg-gray-600' }}">{{ _('script.filter_untranslated') }}</a>
+        <a href="?section={{ current_section }}&page=1&filter=translated" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'translated' else 'bg-gray-700 hover:bg-gray-600' }}">{{ _('script.filter_translated') }}</a>
+        <a href="?section={{ current_section }}&page=1&filter=needs_shift" class="px-3 py-1 rounded {{ 'bg-pink-600' if filter == 'needs_shift' else 'bg-gray-700 hover:bg-gray-600' }}">{{ _('script.filter_shift') }}</a>
     </div>
 
     <div class="hidden sm:block w-px h-6 bg-gray-600"></div>
@@ -62,7 +62,7 @@
           hx-trigger="submit, keyup delay:400ms changed from #script-search-input"
           hx-vals='{"script_id": "{{ script.id }}", "search_type": "both", "limit": "100"}'>
         <input type="text" name="q" id="script-search-input"
-               placeholder="Buscar dentro de este script..."
+               placeholder="{{ _('script.search_placeholder') }}"
                class="flex-1 bg-gray-700 text-white rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 min-w-[180px]"
                autocomplete="off">
         <button type="submit"
@@ -81,18 +81,18 @@
 <!-- Section header -->
 <div class="text-sm text-gray-400 mb-2">
     {% if cross_section %}
-    <span class="text-red-400 font-bold">⚠ Needs Shift — Todas las secciones</span>
+    <span class="text-red-400 font-bold">{{ _('script.cross_section') }}</span>
     {% else %}
-    Seccion {{ current_section }}
+    {{ _('script.section_label') }} {{ current_section }}
     {% endif %}
-    — {{ total }} textos (pagina {{ page }} de {{ total_pages }})
+    — {{ total }} {{ _('script.page_info', page=page, total=total_pages) }}
 </div>
 
 <!-- Paginacion -->
 <div class="flex justify-between items-center mb-4 text-sm">
     <div class="flex gap-2">
         {% if page > 1 %}
-        <a href="?section={{ current_section }}&page={{ page - 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">← Anterior</a>
+        <a href="?section={{ current_section }}&page={{ page - 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ _('script.prev') }}</a>
         {% endif %}
 
         {% set start_p = [1, page - 3]|max %}
@@ -105,7 +105,7 @@
         {% if end_p < total_pages %}{% if end_p < total_pages - 1 %}<span class="text-gray-600 self-center">…</span>{% endif %}<a href="?section={{ current_section }}&page={{ total_pages }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ total_pages }}</a>{% endif %}
 
         {% if page < total_pages %}
-        <a href="?section={{ current_section }}&page={{ page + 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">Siguiente →</a>
+        <a href="?section={{ current_section }}&page={{ page + 1 }}{% if filter %}&filter={{ filter }}{% endif %}" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ _('script.next') }}</a>
         {% endif %}
     </div>
 </div>
@@ -141,7 +141,7 @@
                     <span class="text-green-400 ml-2">✓</span>
                     {% endif %}
                     {% if text.needs_shift %}
-                    <span class="text-red-400 ml-2">⚠ needs_shift</span>
+                    <span class="text-red-400 ml-2">{{ _('script.needs_shift') }}</span>
                     {% endif %}
                 </div>
                 <div class="text-sm text-gray-300 mb-2">{{ text.original_text[:120] }}</div>
@@ -150,19 +150,19 @@
                     {{ text.translated_text[:200] }}
                 </div>
                 {% else %}
-                <div class="text-xs text-gray-600 italic">Click para traducir</div>
+                <div class="text-xs text-gray-600 italic">{{ _('script.click_to_translate') }}</div>
                 {% endif %}
             </div>
 
             <div class="text-xs flex-shrink-0">
                 {% if text.fit_status == 'ok' %}
-                <span class="text-green-400" title="Cabe">🟢</span>
+                <span class="text-green-400" title="{{ _('editor.fit_ok') }}">🟢</span>
                 {% elif text.fit_status == 'tight' %}
-                <span class="text-yellow-400" title="Ajustado">🟡</span>
+                <span class="text-yellow-400" title="{{ _('editor.fit_tight') }}">🟡</span>
                 {% elif text.fit_status == 'needs_shift' %}
-                <span class="text-red-400" title="No cabe">🔴</span>
+                <span class="text-red-400" title="{{ _('editor.fit_overflow') }}">🔴</span>
                 {% else %}
-                <span class="text-gray-500" title="Sin verificar">⚪</span>
+                <span class="text-gray-500" title="{{ _('editor.fit_unchecked') }}">⚪</span>
                 {% endif %}
             </div>
         </div>

@@ -1,22 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h1 class="text-2xl font-bold mb-4">🔨 Construir ISO</h1>
+<h1 class="text-2xl font-bold mb-4">{{ _('build.title') }}</h1>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Build Panel -->
     <div class="bg-gray-800 rounded-lg p-6">
-        <h2 class="text-lg font-bold mb-3">Pipeline</h2>
-        <p class="text-gray-400 text-sm mb-4">
-            Reconstruye los scripts con traducciones, genera la ISO e inyecta el ELF.
-        </p>
+        <h2 class="text-lg font-bold mb-3">{{ _('build.pipeline_title') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('build.pipeline_desc') }}</p>
 
         <div class="flex gap-3 mb-4">
             <button id="build-btn"
                     class="bg-pink-600 hover:bg-pink-700 disabled:bg-gray-600 text-white px-6 py-3 rounded-lg font-bold"
                     onclick="triggerBuild()"
                     {% if running %}disabled{% endif %}>
-                {% if running %}⏳ Build en progreso...{% else %}▶ Construir ISO{% endif %}
+                {% if running %}{{ _('build.btn_running') }}{% else %}{{ _('build.btn_start') }}{% endif %}
             </button>
         </div>
 
@@ -41,29 +39,27 @@
 
     <!-- Export Panel -->
     <div class="bg-gray-800 rounded-lg p-6">
-        <h2 class="text-lg font-bold mb-3">📥 Exportar CSV</h2>
-        <p class="text-gray-400 text-sm mb-4">
-            Descarga las traducciones en formato CSV compatible con las herramientas CLI.
-        </p>
+        <h2 class="text-lg font-bold mb-3">{{ _('build.export_title') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('build.export_desc') }}</p>
 
         <div class="space-y-3">
             <a href="/build/export/csv/translated"
                class="block bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-center text-sm">
-                📤 Solo traducidos (para build)
+                {{ _('build.export_translated') }}
             </a>
             <a href="/build/export/csv"
                class="block bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-center text-sm">
-                📤 CSV completo (backup)
+                {{ _('build.export_full') }}
             </a>
         </div>
 
         <div class="mt-4 p-3 bg-gray-700/50 rounded text-xs text-gray-400">
-            <p class="font-bold text-gray-300 mb-1">ℹ️ Formato CLI</p>
+            <p class="font-bold text-gray-300 mb-1">{{ _('build.info_title') }}</p>
             <p>El CSV usa el mismo formato que <code class="text-pink-400">extract_dialogue.py</code>:</p>
             <ul class="list-disc pl-4 mt-1 space-y-1">
-                <li>UTF-8-BOM encoding</li>
+                <li>{{ _('build.info_encoding') }}</li>
                 <li>Columnas: source, file_id, offset, original_text, translated_text</li>
-                <li>Compatible con <code class="text-pink-400">patch_dec.py --rebuild</code></li>
+                <li>{{ _('build.info_compat') }}</li>
             </ul>
         </div>
     </div>
@@ -76,24 +72,24 @@ async function triggerBuild() {
     const btn = document.getElementById('build-btn');
     btn.disabled = true;
     btn.textContent = 'Iniciando...';
-    
+
     document.getElementById('build-progress').classList.remove('hidden');
     document.getElementById('build-result').classList.add('hidden');
-    document.getElementById('build-log').textContent = 'Iniciando build...';
-    
+    document.getElementById('build-log').textContent = '{{ _('build.progress_init') }}';
+
     try {
         const resp = await fetch('/build/run', { method: 'POST' });
         const data = await resp.json();
-        
+
         if (data.status === 'started') {
-            btn.textContent = '⏳ Build en progreso...';
+            btn.textContent = '{{ _('build.btn_running') }}';
             startPolling();
         } else {
-            btn.textContent = '❌ Error: ' + data.message;
+            btn.textContent = '{{ _('build.btn_error') }}' + data.message;
             btn.disabled = false;
         }
     } catch (e) {
-        btn.textContent = '❌ Error de conexión';
+        btn.textContent = '{{ _('build.btn_conn_error') }}';
         btn.disabled = false;
     }
 }
@@ -107,37 +103,37 @@ async function pollBuildStatus() {
     try {
         const resp = await fetch('/build/status');
         const data = await resp.json();
-        
+
         document.getElementById('progress-bar').style.width = data.progress + '%';
         document.getElementById('progress-pct').textContent = data.progress + '%';
         document.getElementById('build-step').textContent = data.step || '';
-        
+
         if (data.log && data.log.length > 0) {
             document.getElementById('build-log').textContent = data.log.join('\n');
         }
-        
+
         if (data.status === 'success') {
             clearInterval(pollTimer);
-            document.getElementById('build-btn').textContent = '✓ Completado';
+            document.getElementById('build-btn').textContent = '{{ _('build.btn_done') }}';
             document.getElementById('build-btn').className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
             document.getElementById('build-btn').disabled = false;
-            
+
             document.getElementById('build-result').classList.remove('hidden');
-            document.getElementById('build-result-content').innerHTML = 
+            document.getElementById('build-result-content').innerHTML =
                 '<div class="bg-green-900/50 p-4 rounded text-green-300">' +
-                '<p class="font-bold">✓ ISO generada correctamente</p>' +
+                '<p class="font-bold">{{ _('build.result_success') }}</p>' +
                 (data.iso_path ? '<p class="text-sm mt-1">' + data.iso_path + '</p>' : '') +
                 '</div>';
         } else if (data.status === 'failed') {
             clearInterval(pollTimer);
-            document.getElementById('build-btn').textContent = '✗ Falló — Reintentar';
+            document.getElementById('build-btn').textContent = '{{ _('build.btn_failed') }}';
             document.getElementById('build-btn').className = 'bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold';
             document.getElementById('build-btn').disabled = false;
-            
+
             document.getElementById('build-result').classList.remove('hidden');
-            document.getElementById('build-result-content').innerHTML = 
+            document.getElementById('build-result-content').innerHTML =
                 '<div class="bg-red-900/50 p-4 rounded text-red-300">' +
-                '<p class="font-bold">✗ Error en el build</p>' +
+                '<p class="font-bold">{{ _('build.result_failed') }}</p>' +
                 (data.error ? '<p class="text-sm mt-1">' + data.error + '</p>' : '') +
                 '</div>';
         } else if (!data.running && data.status !== 'running') {

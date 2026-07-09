@@ -1,8 +1,3 @@
-"""
-Import service — runs extract_all.py (setup), dialogue_order.py for
-SCRIPT_DIALOGUE scripts, extract_dialogue.py --elf for menus,
-parses enriched CSV, populates DB with section/order info.
-"""
 import csv
 import json
 import subprocess
@@ -22,7 +17,6 @@ from .fit_checker import check_fit
 
 
 def _load_csv_translations(csv_path: Path) -> dict:
-    """Carga traducciones existentes del CSV como respaldo antes de sobrescribirlo."""
     translations = {}
     if not csv_path.exists():
         return translations
@@ -48,7 +42,6 @@ def _load_csv_translations(csv_path: Path) -> dict:
 
 
 def run_extract_all() -> dict:
-    """Ejecuta extract_all.py para descomprimir .dec desde Data.bin (si no existen)."""
     dec_dir = PROJECT_ROOT / 'work' / 'scripts_extraidos'
     if dec_dir.exists() and any(dec_dir.iterdir()):
         return {"success": True, "stdout": ".dec ya existentes, omitiendo extraccion", "stderr": ""}
@@ -68,7 +61,6 @@ def run_extract_all() -> dict:
 
 
 def run_dialogue_order(output_csv: Path, output_json: Path) -> dict:
-    """Ejecuta dialogue_order.py para extraer textos con secciones."""
     dialogue_order = PROJECT_ROOT / 'tools' / 'dialogue_order.py'
 
     result = subprocess.run(
@@ -84,7 +76,6 @@ def run_dialogue_order(output_csv: Path, output_json: Path) -> dict:
 
 
 def run_elf_extraction(output_csv: Path) -> dict:
-    """Extrae textos del ELF via extract_dialogue.py con filtro mejorado."""
     extract_scripts = PROJECT_ROOT / 'traduccion_tools' / 'extract_dialogue.py'
 
     result = subprocess.run(
@@ -101,7 +92,6 @@ def run_elf_extraction(output_csv: Path) -> dict:
 
 
 def _merge_elf_to_csv(elf_csv: Path, target_csv: Path):
-    """Append ELF entries al CSV principal con formato enriquecido."""
     if not elf_csv.exists():
         return
     import csv as csv_mod
@@ -125,7 +115,6 @@ def _merge_elf_to_csv(elf_csv: Path, target_csv: Path):
 
 
 def parse_csv(csv_path: Path) -> list[dict]:
-    """Lee el CSV enriquecido (con section/section_order) y devuelve lista de dicts."""
     rows = []
     with open(csv_path, encoding='utf-8-sig', newline='') as f:
         reader = csv.DictReader(f)
@@ -138,7 +127,6 @@ def parse_csv(csv_path: Path) -> list[dict]:
             original = row.get('original_text') or ''
             translated = (row.get('translated_text') or '').strip()
 
-            # Section info (may be None for ELF rows from old format extractor)
             section_val = (row.get('section') or '0').strip()
             section = int(section_val) if section_val and section_val != 'None' else 0
             order_val = (row.get('section_order') or '0').strip()
@@ -172,7 +160,6 @@ def parse_csv(csv_path: Path) -> list[dict]:
 def _group_translations_by_script(
     existing_entries: list[TextEntry]
 ) -> tuple[dict, dict]:
-    """Pre-agrupa traducciones existentes por script_id."""
     exact = {}
     by_script = {}
 
@@ -203,7 +190,6 @@ def match_translation(
     by_script: dict,
     stats: dict
 ) -> Optional[str]:
-    """Empareja una entrada con traducciones existentes."""
     sid = new_entry['script_id']
     off = new_entry['byte_offset']
     orig = new_entry['original_text']
@@ -229,7 +215,6 @@ def match_translation(
 
 
 def _compute_script_capacities(script_id: int, entries: list[dict]) -> dict:
-    """Calcula segment capacity para entries de un script."""
     dec_path = PROJECT_ROOT / 'work' / 'scripts_extraidos' / f'ID_{script_id:05d}.dec'
     if not dec_path.exists():
         return {}
@@ -247,7 +232,6 @@ def _compute_script_capacities(script_id: int, entries: list[dict]) -> dict:
 
 
 def _load_json_script_metadata(json_path: Path) -> dict:
-    """Carga metadatos de scripts desde el JSON de dialogue_order.py."""
     if not json_path.exists():
         return {}
     data = json.loads(json_path.read_text(encoding='utf-8'))
@@ -263,16 +247,6 @@ def _load_json_script_metadata(json_path: Path) -> dict:
 
 
 def import_csv_to_db(csv_path: Path = None) -> dict:
-    """
-    Pipeline de importacion:
-    0.  Ejecuta extract_all.py --type lz77 (solo si no hay .dec)
-    0.5 Respalda traducciones del CSV previo antes de sobrescribir
-    1.  Ejecuta dialogue_order.py -> CSV enriquecido + JSON
-    2.  Ejecuta extract_dialogue.py --elf -> ELF mergeado al CSV
-    3.  Parsea CSV con columnas section/section_order
-    4.  Matching contra DB existente + CSV previo
-    5.  Upsert en DB con metadatos de JSON
-    """
     if csv_path is None:
         csv_path = TEXTOS / 'dialogo.csv'
 
@@ -291,22 +265,18 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
     json_path = WORK / 'dialogue_order.json'
     elftemp_csv = WORK / 'build_temp' / '_elf_temp.csv'
 
-    # Asegurar directorios base
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
     elftemp_csv.parent.mkdir(parents=True, exist_ok=True)
 
-    # 0. Extraer .dec de Data.bin si no existen
     extract_result = run_extract_all()
     if not extract_result['success']:
         stats['errors'].append(f"extract_all.py failed: {extract_result['stderr'][-200:]}")
         session.close()
         return stats
 
-    # 0.5 Respaldo de traducciones del CSV actual (antes de sobrescribirlo)
     csv_translations = _load_csv_translations(csv_path)
 
-    # 1. Ejecutar dialogue_order.py -> CSV enriquecido + JSON
     result = run_dialogue_order(csv_path, json_path)
     if not result['success']:
         stats['errors'].append(f"dialogue_order.py failed: {result['stderr'][-200:]}")
@@ -317,7 +287,6 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
         session.close()
         return stats
 
-    # 2. Ejecutar extract_dialogue.py --elf con filtro mejorado a temp
     elf_result = run_elf_extraction(elftemp_csv)
     if elf_result['success']:
         elf_count = elf_result.get('stdout', '')
@@ -325,20 +294,16 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
     else:
         stats['errors'].append(f"ELF extraction failed: {elf_result['stderr']}")
 
-    # 3. Cargar metadatos del JSON
     script_meta = _load_json_script_metadata(json_path)
 
-    # 4. Parsear CSV
     new_rows = parse_csv(csv_path)
     stats['total'] = len(new_rows)
 
-    # 5. Cargar traducciones existentes (DB + CSV previo)
     existing_db = session.query(TextEntry).filter(
         TextEntry.translated_text != ''
     ).all()
     exact_map, by_script = _group_translations_by_script(existing_db)
 
-    # Merge traducciones del CSV previo (no pisan las de DB)
     csv_new_count = 0
     for key, trans in csv_translations.items():
         if key not in exact_map:
@@ -350,12 +315,10 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
             csv_new_count += 1
     stats['csv_preserved'] = csv_new_count
 
-    # 6. Cargar entries existentes para upsert
     existing_map = {}
     for e in session.query(TextEntry).all():
         existing_map[(e.script_id, e.byte_offset, e.original_text)] = e
 
-    # 7. Agrupar por script_id
     script_ids_in_csv = set()
     new_entries_by_script = {}
     for row in new_rows:
@@ -365,7 +328,6 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
             new_entries_by_script[sid] = []
         new_entries_by_script[sid].append(row)
 
-    # 8. Asegurar scripts en DB con metadatos
     existing_scripts = {s.id: s for s in session.query(Script).all()}
 
     for sid in script_ids_in_csv:
@@ -389,7 +351,6 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
             if not s.total_sections:
                 s.total_sections = meta.get('total_sections', 0)
 
-    # 9. Upsert text_entries
     for sid, entries in new_entries_by_script.items():
         capacities = {}
         if sid != -1:
@@ -413,7 +374,6 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
                     entry.is_translated = True
                 if cap and not entry.segment_capacity:
                     entry.segment_capacity = cap
-                # Update section info
                 if row.get('section_id'):
                     entry.section_id = row['section_id']
                 if row.get('section_order'):
@@ -451,7 +411,6 @@ def import_csv_to_db(csv_path: Path = None) -> dict:
                 session.add(entry)
                 stats['new'] += 1
 
-    # 10. Actualizar contadores
     for sid, script in existing_scripts.items():
         if sid in script_ids_in_csv:
             script.total_texts = len(new_entries_by_script[sid])

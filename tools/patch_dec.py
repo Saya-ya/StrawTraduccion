@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 patch_dec.py — Script Rebuilder para Strawberry Panic! (PS2)
 
@@ -43,7 +42,6 @@ from script_rebuilder import (
 DATA_BIN_ORIG = Path('originales/Data.bin')
 DATA_BIN_WORK = Path('work/Data_patched.bin')
 def load_fat(bin_path):
-    """Lee la FAT completa y devuelve entradas canónicas de archivos reales."""
     rows = read_entries(bin_path)
     entries = [
         {
@@ -60,10 +58,6 @@ def load_fat(bin_path):
 
 
 def get_slot_info(target_fid, bin_path):
-    """
-    Devuelve (foff, real_slot_size) para un file ID.
-    real_slot_size = distancia al siguiente entry en el archivo.
-    """
     rows = read_entries(bin_path)
 
     # Encontrar el entry
@@ -75,11 +69,6 @@ def get_slot_info(target_fid, bin_path):
 
 
 def get_file_info(target_fid, bin_path):
-    """
-    Devuelve (row, foff, file_size, slot_size) para un ID.
-    file_size es el tamaño REAL que el loader lee (size_field de la fila siguiente).
-    slot_size es la capacidad física hasta el siguiente offset.
-    """
     rows = read_entries(bin_path)
     target = find_row(rows, target_fid)
     if target is None:
@@ -88,7 +77,6 @@ def get_file_info(target_fid, bin_path):
 
 
 def decompress_from_data_bin(target_fid, bin_path):
-    """Descomprime el script de un file ID desde Data.bin."""
     _, foff, file_size, slot_size = get_file_info(target_fid, bin_path)
     if foff is None:
         raise ValueError(f"ID {target_fid} no encontrado en FAT")
@@ -104,11 +92,6 @@ def decompress_from_data_bin(target_fid, bin_path):
 
 
 def inject_compressed(target_fid, comp_data, bin_path):
-    """
-    Inyecta datos comprimidos en el slot de un file ID.
-    Solo escribe dentro del slot real (no corrompe vecinos).
-    Actualiza el size_field en la FAT para que el PS2 lea los bytes correctos.
-    """
     target, foff, old_file_size, slot_size = get_file_info(target_fid, bin_path)
     if foff is None:
         raise ValueError(f"ID {target_fid} no encontrado en FAT")
@@ -139,10 +122,6 @@ def inject_compressed(target_fid, comp_data, bin_path):
 
 
 def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, all_literal=False):
-    """
-    Pipeline completo: leer .dec → recomprimir → inyectar.
-    Si all_literal=True, usa 100% literales (sin matches).
-    """
     if verbose:
         print(f"[*] Procesando ID {target_fid} desde {dec_path}")
 
@@ -194,7 +173,6 @@ def patch_script(target_fid, dec_path, bin_path, verify=False, verbose=True, all
 
 
 def ensure_work_copy():
-    """Crea la copia de trabajo si no existe o está desactualizada."""
     DATA_BIN_WORK.parent.mkdir(parents=True, exist_ok=True)
     if (not DATA_BIN_WORK.exists() or
             DATA_BIN_WORK.stat().st_size != DATA_BIN_ORIG.stat().st_size):

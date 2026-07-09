@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-build_iso.py — Reconstruye la ISO con Data.bin modificado.
-
-Busca la firma de Data.bin en la ISO original y la reemplaza.
-
-Uso:
-    python build_iso.py                           # Usa work/Data_patched.bin
-    python build_iso.py <data_bin_patched>        # Especifica archivo
-"""
-
 import os
 import sys
 from pathlib import Path
@@ -18,7 +7,6 @@ SIGNATURE = b"\x00\xC8\x78\x78\x13\x6B\x00\x00\x00\x80\x00\x00"
 
 
 def build_iso(patched_bin_path, iso_in=None, iso_out=None):
-    """Inyecta Data.bin modificado en la ISO."""
     workspace = Path(__file__).parent.parent
     
     if iso_in is None:
@@ -37,13 +25,11 @@ def build_iso(patched_bin_path, iso_in=None, iso_out=None):
         print(f"ERROR: Data.bin no encontrado: {patched_bin}")
         return None
     
-    # Copiar ISO
     if not iso_out.exists():
         import shutil
         print(f"Copiando ISO base...")
         shutil.copy2(iso_in, iso_out)
     
-    # Buscar firma de Data.bin
     print(f"Buscando Data.bin en ISO...")
     target_offset = -1
     chunk_size = 16 * 1024 * 1024
@@ -68,7 +54,6 @@ def build_iso(patched_bin_path, iso_in=None, iso_out=None):
     
     print(f"  Data.bin en offset 0x{target_offset:X}")
     
-    # Inyectar
     bin_size = os.path.getsize(patched_bin)
     print(f"Inyectando {bin_size:,} bytes...")
     

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 patch_compressed.py — Parchea texto directamente en el stream comprimido LZ77
 sin necesidad de recomprimir. Solo funciona para bytes que son LITERAL.
@@ -23,13 +22,6 @@ from datafat import read_entries, find_row
 
 
 def trace_decompression(comp_data, expected_size):
-    """
-    Traza la descompresión y devuelve:
-    - output: bytes descomprimidos
-    - mapping: lista de (type, comp_offset, ...) por cada byte de salida
-      type='LIT': (comp_offset, value)
-      type='MATCH': (comp_offset, window_offset, sub_index)
-    """
     out = bytearray()
     window = bytearray([0x00] * 4096)  # PS2 usa memset(buf, 0, 4113)
     window_pos = 0xFEE
@@ -76,10 +68,6 @@ def trace_decompression(comp_data, expected_size):
 
 
 def patch_file(data_bin_path, file_id, dec_offset, new_bytes):
-    """
-    Parchea bytes en el stream comprimido de un archivo LZ77.
-    Modifica Data.bin in-place sin cargarlo completo en RAM.
-    """
     bin_path = Path(data_bin_path)
     file_size = bin_path.stat().st_size
 

@@ -1,4 +1,3 @@
-"""SQLAlchemy database setup and ORM models."""
 from sqlalchemy import (create_engine, Column, Integer, String, Text,
                         Boolean, DateTime, ForeignKey, Index)
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
@@ -17,10 +16,10 @@ class Base(DeclarativeBase):
 class Script(Base):
     __tablename__ = "scripts"
 
-    id = Column(Integer, primary_key=True)          # file_id
-    source = Column(String(10), default="SCRIPT")    # SCRIPT or ELF
+    id = Column(Integer, primary_key=True)
+    source = Column(String(10), default="SCRIPT")
     script_type = Column(String(30), default="")
-    variant = Column(String(1), default="")           # A (gap zeros) or B (pointer table)
+    variant = Column(String(1), default="")
     offset_in_bin = Column(Integer, default=0)
     size_in_bin = Column(Integer, default=0)
     slot_capacity = Column(Integer, default=0)
@@ -63,6 +62,17 @@ class TextEntry(Base):
     )
 
 
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(Text, default="")
+
+    def json_value(self):
+        import json as _json
+        return _json.loads(self.value) if self.value else None
+
+
 class BuildHistory(Base):
     __tablename__ = "build_history"
 
@@ -79,12 +89,23 @@ class BuildHistory(Base):
 
 
 def init_db():
-    """Create all tables and FTS5 index."""
     from .config import DB_PATH
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
 
-    # FTS5 virtual table for full-text search
+    defaults = {
+        "ui_lang": "es",
+        "target_lang": "es",
+        "custom_glyph_map": "{}",
+    }
+    with engine.connect() as conn:
+        for k, v in defaults.items():
+            conn.exec_driver_sql(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (k, v),
+            )
+        conn.commit()
+
     with engine.connect() as conn:
         conn.exec_driver_sql("""
             CREATE VIRTUAL TABLE IF NOT EXISTS text_entries_fts USING fts5(
@@ -93,7 +114,7 @@ def init_db():
                 content_rowid='id'
             )
         """)
-        # Triggers to keep FTS5 in sync
+
         conn.exec_driver_sql("""
             CREATE TRIGGER IF NOT EXISTS text_entries_ai AFTER INSERT ON text_entries BEGIN
                 INSERT INTO text_entries_fts(rowid, original_text, translated_text)
@@ -116,7 +137,7 @@ def init_db():
         """)
         conn.commit()
 
-    # Populate FTS from existing data (only if FTS is empty)
+
     with engine.connect() as conn:
         count = conn.exec_driver_sql(
             "SELECT COUNT(*) FROM text_entries_fts"
@@ -130,5 +151,4 @@ def init_db():
 
 
 def get_session():
-    """Get a new database session."""
     return SessionLocal()

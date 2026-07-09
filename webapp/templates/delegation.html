@@ -1,36 +1,34 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h1 class="text-2xl font-bold mb-6">👥 Delegacion</h1>
+<h1 class="text-2xl font-bold mb-6">{{ _('delegate.title') }}</h1>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Export panel -->
     <div class="bg-gray-800 rounded-lg p-6">
-        <h2 class="text-lg font-bold mb-3">📤 Exportar asignacion</h2>
-        <p class="text-gray-400 text-sm mb-4">
-            Selecciona un rango de scripts para exportar como CSV parcial.
-        </p>
+        <h2 class="text-lg font-bold mb-3">{{ _('delegate.export_title') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('delegate.export_desc') }}</p>
 
         <form id="export-form" class="space-y-3">
             <div>
-                <label class="text-sm text-gray-300">Desde script ID:</label>
+                <label class="text-sm text-gray-300">{{ _('delegate.from_id') }}</label>
                 <input type="number" name="from_id" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="8005">
             </div>
             <div>
-                <label class="text-sm text-gray-300">Hasta script ID:</label>
+                <label class="text-sm text-gray-300">{{ _('delegate.to_id') }}</label>
                 <input type="number" name="to_id" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="8010">
             </div>
             <div>
-                <label class="text-sm text-gray-300">Etiqueta (ej: "Traductor A")</label>
+                <label class="text-sm text-gray-300">{{ _('delegate.label') }}</label>
                 <input type="text" name="label" class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm" value="parcial">
             </div>
             <div class="flex items-center gap-2">
                 <input type="checkbox" name="only_untranslated" id="only_ut" value="1">
-                <label for="only_ut" class="text-sm text-gray-300">Solo sin traducir</label>
+                <label for="only_ut" class="text-sm text-gray-300">{{ _('delegate.only_ut') }}</label>
             </div>
             <button type="button" onclick="exportPartial()"
                     class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-2 rounded text-sm font-bold">
-                Exportar CSV parcial
+                {{ _('delegate.export_btn') }}
             </button>
         </form>
 
@@ -39,17 +37,15 @@
 
     <!-- Import panel -->
     <div class="bg-gray-800 rounded-lg p-6">
-        <h2 class="text-lg font-bold mb-3">📥 Importar traducciones</h2>
-        <p class="text-gray-400 text-sm mb-4">
-            Sube un CSV parcial con traducciones para hacer merge a la base de datos.
-        </p>
+        <h2 class="text-lg font-bold mb-3">{{ _('delegate.import_title') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('delegate.import_desc') }}</p>
 
         <form id="import-form" enctype="multipart/form-data" class="space-y-3">
             <input type="file" name="file" accept=".csv"
                    class="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm">
             <button type="button" onclick="importPartial()"
                     class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded text-sm font-bold">
-                Importar CSV
+                {{ _('delegate.import_btn') }}
             </button>
         </form>
 
@@ -59,7 +55,7 @@
 
 <!-- Scripts list for quick selection -->
 <div class="mt-8 bg-gray-800 rounded-lg p-6">
-    <h2 class="text-lg font-bold mb-3">📁 Scripts disponibles</h2>
+    <h2 class="text-lg font-bold mb-3">{{ _('delegate.available_title') }}</h2>
     <div class="grid grid-cols-6 md:grid-cols-12 gap-1 text-xs">
         {% for s in scripts %}
         <a href="/scripts/{{ s.id }}"
@@ -73,6 +69,11 @@
 </div>
 
 <script>
+var I18N = {
+    exportDone: "{{ _('delegate.export_done') }}",   // contains {count}
+    importDone: "{{ _('delegate.import_done') }}"     // contains {imported}, {conflicts}, {skipped}
+};
+
 async function exportPartial() {
     const form = document.getElementById('export-form');
     const fromId = parseInt(form.from_id.value);
@@ -96,11 +97,12 @@ async function exportPartial() {
         a.href = url;
         a.download = `parcial_${label.replace(/ /g, '_')}.csv`;
         a.click();
+        const count = resp.headers.get('X-Total-Count') || '0';
         document.getElementById('export-result').classList.remove('hidden');
         document.getElementById('export-result').innerHTML =
-            `<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">
-                ✓ CSV exportado (${resp.headers.get('X-Total-Count')} textos)
-            </div>`;
+            '<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">' +
+            I18N.exportDone.replace('{count}', count) +
+            '</div>';
     } else {
         const data = await resp.json();
         alert('Error: ' + (data.detail || data.message));
@@ -123,13 +125,15 @@ async function importPartial() {
     const data = await resp.json();
     document.getElementById('import-result').classList.remove('hidden');
     if (data.status === 'ok') {
+        var msg = I18N.importDone
+            .replace('{imported}', data.stats.imported)
+            .replace('{conflicts}', data.stats.conflicts)
+            .replace('{skipped}', data.stats.skipped);
         document.getElementById('import-result').innerHTML =
-            `<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">
-                ✓ Importado: ${data.stats.imported} | Conflictos: ${data.stats.conflicts} | Saltados: ${data.stats.skipped}
-            </div>`;
+            '<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">' + msg + '</div>';
     } else {
         document.getElementById('import-result').innerHTML =
-            `<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">Error: ${data.message}</div>`;
+            '<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">Error: ' + data.message + '</div>';
     }
 }
 </script>

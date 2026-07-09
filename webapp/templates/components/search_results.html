@@ -25,12 +25,12 @@
             <span class="text-gray-600">p.{{ r.page_num }}</span>
             {% endif %}
             {% if r.is_translated %}
-            <span class="text-green-400 font-bold">✓ Traducido</span>
+            <span class="text-green-400 font-bold">✓ {{ _('script.filter_translated') }}</span>
             {% else %}
-            <span class="text-yellow-500">Sin traducir</span>
+            <span class="text-yellow-500">{{ _('script.filter_untranslated') }}</span>
             {% endif %}
             {% if r.needs_shift %}
-            <span class="text-red-400">⚠ needs_shift</span>
+            <span class="text-red-400">{{ _('script.needs_shift') }}</span>
             {% endif %}
         </div>
         <div class="text-sm text-gray-200 mb-1">{{ r.original_text[:200] }}</div>
@@ -46,7 +46,7 @@
     {% if page > 1 %}
     <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ page - 1 }}"
             hx-target="#search-results"
-            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">← Anterior</button>
+            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">{{ _('script.prev') }}</button>
     {% endif %}
     {% for p in range([1, page - 2]|max, [total_pages + 1, page + 3]|min) %}
     <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ p }}"
@@ -58,7 +58,7 @@
     {% if page < total_pages %}
     <button hx-get="/api/search?q={{ query|urlencode }}&search_type={{ search_type }}&page={{ page + 1 }}"
             hx-target="#search-results"
-            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">Siguiente →</button>
+            class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600">{{ _('script.next') }}</button>
     {% endif %}
 </div>
 {% endif %}
@@ -68,5 +68,5 @@
 {% endif %}
 
 {% else %}
-<p class="text-gray-500 text-center mt-4 text-sm">Sin resultados para "<span class="text-gray-300">{{ query }}</span>"</p>
+<p class="text-gray-500 text-center mt-4 text-sm">{{ _('search.no_results') }} "<span class="text-gray-300">{{ query }}</span>"</p>
 {% endif %}

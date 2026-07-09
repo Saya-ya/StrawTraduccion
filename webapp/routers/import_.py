@@ -1,4 +1,3 @@
-"""Rutas de importacion y build."""
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
@@ -12,8 +11,9 @@ env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
 
 
 def render(name: str, request: Request, **kwargs) -> HTMLResponse:
+    ctx = getattr(request.state, "i18n", {})
     template = env.get_template(name)
-    return HTMLResponse(template.render(request=request, **kwargs))
+    return HTMLResponse(template.render(request=request, **ctx, **kwargs))
 
 
 @router.get("", response_class=HTMLResponse)
@@ -23,7 +23,6 @@ def import_page(request: Request):
 
 @router.post("/run")
 def run_import():
-    """Dispara la extraccion e importacion a la DB."""
     if not acquire_build_lock():
         return JSONResponse(
             {"status": "error", "message": "Ya hay una operacion en progreso"},

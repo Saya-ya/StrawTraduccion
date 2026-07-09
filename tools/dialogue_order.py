@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 dialogue_order.py — Extrae textos de scripts .dec usando la firma exacta del
 opcode 0x03 y determina el orden narrativo real (secciones y branching).
@@ -99,7 +98,6 @@ class ScriptAnalysis:
 # ---------------------------------------------------------------------------
 
 def find_text_blocks(data: bytes) -> list[TextBlock]:
-    """Busca bloques de texto usando firma [ANY 8 bytes][0x03][0x0100][8 zeros]."""
     blocks: list[TextBlock] = []
     seen_text_offsets: set[int] = set()
 
@@ -148,7 +146,6 @@ def find_text_blocks(data: bytes) -> list[TextBlock]:
 # ---------------------------------------------------------------------------
 
 def parse_pointer_table(data: bytes, bytecode_ptr: int) -> list[PointerEntry]:
-    """Extrae entradas de la pointer table en el gap area (0x20..bytecode_ptr)."""
     entries: list[PointerEntry] = []
     gap = data[0x20:bytecode_ptr]
     for i in range(0, len(gap), 16):
@@ -166,7 +163,6 @@ def parse_pointer_table(data: bytes, bytecode_ptr: int) -> list[PointerEntry]:
 
 
 def _first_block_at_or_after(blocks: list[TextBlock], min_offset: int) -> int | None:
-    """Indice del primer bloque con block_offset >= min_offset, o None."""
     for i, tb in enumerate(blocks):
         if tb.block_offset >= min_offset:
             return i
@@ -178,13 +174,6 @@ def group_by_pointers(
     text_blocks: list[TextBlock],
     bytecode_ptr: int = 0x2010,
 ) -> list[Section]:
-    """
-    Agrupa text blocks en secciones usando los pointer entries como boundaries.
-
-    Los pointer targets son entry points de bytecode (pueden caer en opcodes
-    entre text blocks). La primera seccion cubre desde bytecode_ptr hasta el
-    primer pointer target; las siguientes desde cada target hasta el siguiente.
-    """
     unique_targets = sorted(set(e.pointer for e in entries))
     sorted_blocks = sorted(text_blocks, key=lambda tb: tb.block_offset)
 
@@ -240,13 +229,6 @@ def group_by_pointers(
 # ---------------------------------------------------------------------------
 
 def group_variant_a(text_blocks: list[TextBlock]) -> list[Section]:
-    """
-    Agrupa text blocks en secciones para Variante A (sin pointer table).
-
-    Regla: una nueva seccion comienza cuando los 16 bytes antes del text block
-    NO son el marcador de continuacion (0x06 seguido de 12 ceros).
-    El primer text block siempre inicia una nueva seccion.
-    """
     sections: list[Section] = []
     section_id = 0
     current_section: Section | None = None
@@ -268,10 +250,6 @@ def group_variant_a(text_blocks: list[TextBlock]) -> list[Section]:
 
 
 def group_variant_a_with_data(data: bytes, text_blocks: list[TextBlock]) -> list[Section]:
-    """
-    Agrupa text blocks en secciones para Variante A, usando los bytes previos
-    a cada bloque para detectar boundaries de escena.
-    """
     sections: list[Section] = []
     section_id = 0
     current_section: Section | None = None
@@ -302,7 +280,6 @@ def group_variant_a_with_data(data: bytes, text_blocks: list[TextBlock]) -> list
 # ---------------------------------------------------------------------------
 
 def catalog_counts(scripts: list[ScriptAnalysis]) -> list[int]:
-    """Cataloga todos los valores de count observados en pointer entries."""
     counts: set[int] = set()
     for sa in scripts:
         for sec in sa.sections:
@@ -319,7 +296,6 @@ def export_csv(
     scripts: list[ScriptAnalysis],
     csv_path: Path,
 ) -> int:
-    """Genera CSV enriquecido con columnas section y section_order."""
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
@@ -347,7 +323,6 @@ def export_csv(
 
 
 def export_json(scripts: list[ScriptAnalysis], json_path: Path) -> dict:
-    """Exporta JSON estructural."""
     result = {
         'total_scripts': len(scripts),
         'total_texts': sum(s.total_texts for s in scripts),
@@ -429,7 +404,6 @@ def _is_valid_jp(text: str) -> bool:
 
 
 def find_text_blocks_fallback(data: bytes) -> list[TextBlock]:
-    """Extrae textos via heuristica UTF-16LE (fallback)."""
     blocks: list[TextBlock] = []
     for offset_parity in [0, 1]:
         i = offset_parity
@@ -471,7 +445,6 @@ def find_text_blocks_fallback(data: bytes) -> list[TextBlock]:
 # ---------------------------------------------------------------------------
 
 def analyze_script(dec_path: Path) -> ScriptAnalysis | None:
-    """Analiza un .dec y devuelve su estructura completa."""
     if not dec_path.exists():
         return None
 
@@ -556,7 +529,6 @@ def analyze_script(dec_path: Path) -> ScriptAnalysis | None:
 # ---------------------------------------------------------------------------
 
 def run_diagnose(scripts: list[ScriptAnalysis]):
-    """Ejecuta modo diagnostico y muestra diferencias vs extract_dialogue.py."""
     print("=" * 60)
     print("MODO DIAGNOSTICO")
     print("=" * 60)

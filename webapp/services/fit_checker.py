@@ -1,4 +1,3 @@
-"""Fit-checker — valida si una traduccion cabe en el espacio disponible."""
 import sys
 from pathlib import Path
 
@@ -8,15 +7,8 @@ sys.path.insert(0, str(PROJECT_ROOT / 'tools'))
 from glyph_map import encode_game_utf16, encode_game_sjis
 
 
-def check_fit(translated_text: str, source: str, capacity: int) -> dict:
-    """Verifica si la traduccion cabe en el espacio disponible.
-
-    Returns dict with:
-        status: 'ok' | 'tight' | 'needs_shift' | 'unchecked'
-        used_bytes: bytes ocupados
-        capacity: bytes disponibles
-        remaining: bytes sobrantes (negativo = no cabe)
-    """
+def check_fit(translated_text: str, source: str, capacity: int,
+              glyph_map: dict | None = None) -> dict:
     if not translated_text.strip():
         return {
             'status': 'unchecked',
@@ -26,11 +18,10 @@ def check_fit(translated_text: str, source: str, capacity: int) -> dict:
         }
 
     if source == 'SCRIPT':
-        encoded = encode_game_utf16(translated_text)
+        encoded = encode_game_utf16(translated_text, glyph_map)
     else:
-        encoded = encode_game_sjis(translated_text)
+        encoded = encode_game_sjis(translated_text, glyph_map)
 
-    # +2 for null terminator in SCRIPT (UTF-16LE)
     used = len(encoded) + (2 if source == 'SCRIPT' else 0)
     remaining = capacity - used
 
@@ -49,8 +40,7 @@ def check_fit(translated_text: str, source: str, capacity: int) -> dict:
     }
 
 
-def batch_check_fit(entries: list, session) -> int:
-    """Revalida el fit de una lista de entries. Retorna cuantas cambiaron."""
+def batch_check_fit(entries: list, session, glyph_map: dict | None = None) -> int:
     from ..database import TextEntry
     changed = 0
     for entry in entries:
@@ -59,7 +49,8 @@ def batch_check_fit(entries: list, session) -> int:
         result = check_fit(
             entry.translated_text,
             entry.source,
-            entry.segment_capacity or entry.original_bytes or 999
+            entry.segment_capacity or entry.original_bytes or 999,
+            glyph_map=glyph_map,
         )
         if result['status'] != entry.fit_status:
             entry.fit_status = result['status']

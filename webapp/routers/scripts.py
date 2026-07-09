@@ -1,4 +1,3 @@
-"""Rutas para listar y ver scripts."""
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader
@@ -11,13 +10,13 @@ env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
 
 
 def render(name: str, request: Request, **kwargs) -> HTMLResponse:
+    ctx = getattr(request.state, "i18n", {})
     template = env.get_template(name)
-    return HTMLResponse(template.render(request=request, **kwargs))
+    return HTMLResponse(template.render(request=request, **ctx, **kwargs))
 
 
 @router.get("", response_class=HTMLResponse)
 def list_scripts(request: Request, filter_support: str = Query("all")):
-    """Lista todos los scripts con barras de progreso."""
     session = get_session()
     query = session.query(Script).order_by(Script.id)
 
@@ -62,7 +61,6 @@ def script_detail(
     filter: str = Query(None),
     highlight: int = Query(None),
 ):
-    """Vista detalle de un script con secciones y paginacion."""
     session = get_session()
 
     script = session.query(Script).filter(Script.id == script_id).first()
@@ -70,7 +68,6 @@ def script_detail(
         session.close()
         return HTMLResponse("<h1>Script no encontrado</h1>", status_code=404)
 
-    # Obtener secciones disponibles
     sections = (
         session.query(TextEntry.section_id)
         .filter(TextEntry.script_id == script_id)
@@ -81,7 +78,6 @@ def script_detail(
     section_ids = [s[0] for s in sections]
     current_section = section if section is not None else (section_ids[0] if section_ids else 0)
 
-    # Si hay highlight, verificar si esta en la pagina actual; si no, redirigir
     if highlight:
         highlighted = session.query(TextEntry).filter(
             TextEntry.id == highlight,
@@ -103,7 +99,6 @@ def script_detail(
                     url += f"&filter={filter}"
                 return RedirectResponse(url=url)
 
-    # Si el filtro es needs_shift, buscar en TODAS las secciones
     cross_section = (filter == "needs_shift")
 
     base_q = session.query(TextEntry).filter(
@@ -123,7 +118,6 @@ def script_detail(
     offset = (page - 1) * limit
     texts = base_q.order_by(TextEntry.section_order).offset(offset).limit(limit).all()
 
-    # Calcular contexto (textos vecinos por section_order)
     all_orders = [
         (e.byte_offset, e.section_order) for e in session.query(
             TextEntry.byte_offset, TextEntry.section_order
@@ -159,7 +153,6 @@ def script_detail(
 
     total_pages = max(1, (total + limit - 1) // limit)
 
-    # Stats por seccion (incluye needs_shift)
     section_stats = {}
     for sec_id in section_ids:
         sec_total = session.query(TextEntry).filter(

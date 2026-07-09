@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-6">⚙ {{ _('settings.ui_lang_label') }} &amp; {{ _('settings.target_lang_label') }}</h1>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- UI Language -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">🌐 {{ _('settings.ui_lang_label') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('settings.ui_lang_label') }}: {{ _('nav.brand') }}</p>
+        <select name="ui_lang"
+                class="bg-gray-700 text-white rounded px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 w-full"
+                hx-post="/settings/ui-lang"
+                hx-trigger="change"
+                hx-swap="none"
+                onchange="document.cookie='ui_lang='+this.value+';path=/;max-age=31536000';setTimeout(function(){location.reload()},100)">
+            <option value="es" {% if ui_lang == 'es' %}selected{% endif %}>ES — Español</option>
+            <option value="en" {% if ui_lang == 'en' %}selected{% endif %}>EN — English</option>
+        </select>
+    </div>
+
+    <!-- Target Language -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-bold mb-3">🎯 {{ _('settings.target_lang_label') }}</h2>
+        <p class="text-gray-400 text-sm mb-4">{{ _('settings.target_lang_label') }}: {{ _('settings.target_' ~ target_lang) }}</p>
+        <select name="target_lang"
+                class="bg-gray-700 text-white rounded px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 w-full"
+                hx-post="/settings/target-lang"
+                hx-trigger="change"
+                hx-swap="none"
+                onchange="setTimeout(function(){location.reload()},100)">
+            <option value="es" {% if target_lang == 'es' %}selected{% endif %}>{{ _('settings.target_es') }}</option>
+            <option value="en" {% if target_lang == 'en' %}selected{% endif %}>{{ _('settings.target_en') }}</option>
+            <option value="custom" {% if target_lang == 'custom' %}selected{% endif %}>{{ _('settings.target_custom') }}</option>
+        </select>
+    </div>
+</div>
+
+<!-- Glyph Map Section -->
+<div class="bg-gray-800 rounded-lg p-6">
+    <h2 class="text-lg font-bold mb-3">ℹ️ {{ _('glyphs.title') }}</h2>
+
+    {% if target_lang == 'en' %}
+    <p class="text-gray-400 text-sm">{{ _('glyphs.en_info') }}</p>
+    {% elif target_lang == 'es' %}
+    <p class="text-gray-400 text-sm mb-4">{{ _('glyphs.es_locked') }}</p>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-gray-700 text-left">
+                <th class="px-4 py-2">{{ _('glyphs.th_source') }}</th>
+                <th class="px-4 py-2">{{ _('glyphs.th_glyph') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in glyph_rows %}
+            {% if row.mapped_to %}
+            <tr class="border-b border-gray-700">
+                <td class="px-4 py-2 font-mono text-pink-300">{{ row.mapped_to }}</td>
+                <td class="px-4 py-2 font-mono text-gray-400">{{ row.label }} <span class="text-gray-600 text-xs">{{ row.codepoint }}</span></td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-400 text-sm mb-4">{{ _('glyphs.custom_info') }}</p>
+    <p class="text-gray-500 text-xs mb-4">
+        {{ _('editor.fit_unchecked') }}: <input type="text" class="bg-gray-700 text-white rounded px-2 py-1 text-xs font-mono w-8 text-center" value="a" disabled>
+        → <input type="text" class="bg-gray-700 text-white rounded px-2 py-1 text-xs font-mono w-8 text-center" value="Г" disabled>
+    </p>
+
+    <table class="w-full text-sm mb-6">
+        <thead>
+            <tr class="bg-gray-700 text-left">
+                <th class="px-4 py-2">{{ _('glyphs.th_glyph') }}</th>
+                <th class="px-4 py-2">{{ _('glyphs.th_source') }}</th>
+                <th class="px-4 py-2">{{ _('glyphs.th_preview') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in glyph_rows %}
+            <tr class="border-b border-gray-700">
+                <td class="px-4 py-1 font-mono text-pink-300 text-xs">
+                    {{ row.label }} <span class="text-gray-600 ml-1">{{ row.codepoint }}</span>
+                </td>
+                <td class="px-4 py-1">
+                    <input type="text"
+                           class="glyph-input bg-gray-700 text-white rounded px-2 py-0.5 text-xs font-mono w-12 text-center focus:outline-none focus:ring-2 focus:ring-pink-500"
+                           data-glyph="{{ row.char }}"
+                           value="{{ row.mapped_to }}"
+                           maxlength="1"
+                           oninput="onGlyphInput(this)">
+                </td>
+                <td class="px-4 py-1 font-mono text-gray-400 text-xs">
+                    <span class="glyph-preview" data-glyph="{{ row.char }}">{% if row.mapped_to %}{{ row.mapped_to }} → {{ row.char }}{% else %}-{% endif %}</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="flex flex-col gap-3">
+        <div>
+            <label class="text-sm text-gray-300 block mb-1">{{ _('glyphs.test_label') }}</label>
+            <div class="flex gap-2">
+                <input type="text" id="glyph-test-input"
+                       class="flex-1 bg-gray-700 text-white rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500"
+                       placeholder="{{ _('glyphs.test_placeholder') }}"
+                       oninput="updatePreview()">
+                <div id="glyph-test-preview" class="bg-gray-700 rounded px-4 py-2 text-sm text-pink-300 font-mono min-w-[200px]">
+                    &nbsp;
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-3">
+            <button onclick="saveGlyphMap()"
+                    class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-2 rounded font-bold text-sm">
+                {{ _('glyphs.btn_save') }}
+            </button>
+            <button onclick="resetGlyphMap()"
+                    class="bg-gray-600 hover:bg-gray-500 text-white px-6 py-2 rounded text-sm">
+                {{ _('glyphs.btn_reset') }}
+            </button>
+        </div>
+        <div id="glyph-save-result" class="hidden"></div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+var glyphMap = {};
+{% for row in glyph_rows %}
+glyphMap["{{ row.char }}"] = "{{ row.mapped_to }}";
+{% endfor %}
+
+function onGlyphInput(input) {
+    var glyph = input.dataset.glyph;
+    var value = input.value.slice(0, 1);
+    input.value = value;
+    glyphMap[glyph] = value;
+
+    var preview = document.querySelector('.glyph-preview[data-glyph="' + glyph + '"]');
+    if (preview) {
+        preview.textContent = value ? value + ' → ' + glyph : '-';
+    }
+    updatePreview();
+}
+
+function updatePreview() {
+    var ti = document.getElementById('glyph-test-input');
+    var tp = document.getElementById('glyph-test-preview');
+    if (!ti || !tp) return;
+    var text = ti.value;
+    if (!text) { tp.innerHTML = '&nbsp;'; return; }
+    var result = '';
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        var glyph = null;
+        for (var g in glyphMap) {
+            if (glyphMap[g] === ch) { glyph = g; break; }
+        }
+        result += glyph || ch;
+    }
+    tp.textContent = result;
+}
+
+async function saveGlyphMap() {
+    var payload = {};
+    for (var g in glyphMap) {
+        if (glyphMap[g]) payload[g] = glyphMap[g];
+    }
+    try {
+        var resp = await fetch('/settings/glyphs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        var data = await resp.json();
+        var rd = document.getElementById('glyph-save-result');
+        rd.classList.remove('hidden');
+        if (data.ok) {
+            rd.innerHTML = '<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">{{ _('glyphs.saved') }}</div>';
+        } else {
+            rd.innerHTML = '<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">' + (data.error || 'Error') + '</div>';
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+function resetGlyphMap() {
+    if (!confirm("{{ _('glyphs.reset_confirm') }}")) return;
+    for (var g in glyphMap) {
+        glyphMap[g] = '';
+        var input = document.querySelector('.glyph-input[data-glyph="' + g + '"]');
+        if (input) { input.value = ''; }
+        var preview = document.querySelector('.glyph-preview[data-glyph="' + g + '"]');
+        if (preview) { preview.textContent = '-'; }
+    }
+    updatePreview();
+    saveGlyphMap();
+}
+</script>
+
+{% endblock %}

@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-extract_dialogue.py — Extrae textos del ELF (SLPS_256.11) usando Shift-JIS.
-
-Nota: La extraccion de scripts LZ77 fue reemplazada por dialogue_order.py.
-Este script ahora solo maneja la extraccion de textos de menus/sistema del ELF.
-
-Uso:
-    python extract_dialogue.py --elf --csv textos/dialogo.csv --elf-path originales/SLPS_256.11
-"""
-
 import csv
 import re
 from pathlib import Path
@@ -22,14 +11,6 @@ _KATAKANA_RE = re.compile(r'[\u30a0-\u30ff\uff65-\uff9f]')
 
 
 def is_valid_elf_text(text: str) -> bool:
-    """Filtro estricto para textos extraidos del ELF (Shift-JIS).
-
-    Requiere:
-      - >=4 caracteres japoneses
-      - >50% del texto son caracteres japoneses
-      - >=4 caracteres japoneses consecutivos (evita kanji aislado entre ASCII)
-      - Contiene hiragana (gramatica) O es todo katakana (menus/UI)
-    """
     jp_chars = _JP_RE.findall(text)
     if len(jp_chars) < 4:
         return False

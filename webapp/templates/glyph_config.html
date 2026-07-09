@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-2">{{ _('glyphs.title') }}</h1>
+
+{% if target_lang == 'en' %}
+<div class="bg-gray-800 rounded-lg p-6">
+    <p class="text-gray-300">{{ _('glyphs.en_info') }}</p>
+</div>
+{% else %}
+
+<div class="mb-4">
+    {% if locked %}
+    <div class="bg-yellow-900/50 p-3 rounded text-yellow-300 text-sm mb-4">
+        {{ _('glyphs.locked_es') }}
+    </div>
+    <p class="text-gray-400 text-sm">{{ _('glyphs.es_locked') }}</p>
+    {% else %}
+    <div class="bg-blue-900/50 p-3 rounded text-blue-300 text-sm mb-4">
+        {{ _('glyphs.custom_mode') }}
+    </div>
+    <p class="text-gray-400 text-sm">{{ _('glyphs.custom_info') }}</p>
+    {% endif %}
+</div>
+
+<!-- Test text -->
+<div class="bg-gray-800 rounded-lg p-4 mb-6">
+    <label class="text-sm text-gray-300 mb-2 block">{{ _('glyphs.test_label') }}</label>
+    <div class="flex gap-3">
+        <input type="text" id="glyph-test-input"
+               class="flex-1 bg-gray-700 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500"
+               placeholder="{{ _('glyphs.test_placeholder') }}"
+               oninput="updatePreview()">
+        <div id="glyph-test-preview" class="bg-gray-700 rounded px-4 py-2 text-sm text-pink-300 font-mono min-w-[200px]">
+            &nbsp;
+        </div>
+    </div>
+</div>
+
+<!-- Glyph table -->
+<div class="bg-gray-800 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-gray-700 text-left">
+                <th class="px-4 py-2">{{ _('glyphs.th_glyph') }}</th>
+                <th class="px-4 py-2">{{ _('glyphs.th_source') }}</th>
+                <th class="px-4 py-2">{{ _('glyphs.th_preview') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in glyph_rows %}
+            <tr class="border-b border-gray-700">
+                <td class="px-4 py-2 font-mono text-pink-300">
+                    {{ row.label }} <span class="text-gray-500 text-xs ml-1">{{ row.codepoint }}</span>
+                </td>
+                <td class="px-4 py-2">
+                    <input type="text"
+                           class="glyph-input bg-gray-700 text-white rounded px-2 py-1 text-sm text-center w-16 focus:outline-none focus:ring-2 focus:ring-pink-500 font-mono"
+                           data-glyph="{{ row.char }}"
+                           value="{{ row.mapped_to }}"
+                           maxlength="1"
+                           {% if locked %}disabled{% endif %}
+                           oninput="onGlyphInput(this)">
+                </td>
+                <td class="px-4 py-2 font-mono text-gray-400">
+                    <span class="glyph-preview" data-glyph="{{ row.char }}">{% if row.mapped_to %}{{ row.mapped_to }} → {{ row.char }}{% else %}-{% endif %}</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if not locked %}
+<div class="flex gap-3 mt-4">
+    <button onclick="saveGlyphMap()"
+            class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-lg font-bold text-sm">
+        {{ _('glyphs.btn_save') }}
+    </button>
+    <button onclick="resetGlyphMap()"
+            class="bg-gray-600 hover:bg-gray-500 text-white px-6 py-3 rounded-lg text-sm">
+        {{ _('glyphs.btn_reset') }}
+    </button>
+</div>
+<div id="glyph-save-result" class="mt-3 hidden"></div>
+{% endif %}
+
+{% endif %}  {# end if target_lang != 'en' #}
+
+<script>
+var glyphMap = {};
+{% for row in glyph_rows %}
+glyphMap["{{ row.char }}"] = "{{ row.mapped_to }}";
+{% endfor %}
+
+function onGlyphInput(input) {
+    var glyph = input.dataset.glyph;
+    var value = input.value.replace(/[^\\u0000-\\u00FF]/g, '').slice(0, 1);  // Latin-1 only
+    input.value = value;
+    glyphMap[glyph] = value;
+
+    var preview = document.querySelector('.glyph-preview[data-glyph="' + glyph + '"]');
+    if (preview) {
+        preview.textContent = value ? value + ' → ' + glyph : '-';
+    }
+    updatePreview();
+}
+
+function updatePreview() {
+    var testInput = document.getElementById('glyph-test-input');
+    var testPreview = document.getElementById('glyph-test-preview');
+    if (!testInput || !testPreview) return;
+    var text = testInput.value;
+    if (!text) { testPreview.innerHTML = '&nbsp;'; return; }
+    var result = '';
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        var glyph = findGlyphFor(ch);
+        result += glyph || ch;
+    }
+    testPreview.textContent = result;
+}
+
+function findGlyphFor(ch) {
+    for (var g in glyphMap) {
+        if (glyphMap[g] === ch) return g;
+    }
+    return null;
+}
+
+async function saveGlyphMap() {
+    var payload = {};
+    for (var g in glyphMap) {
+        if (glyphMap[g]) payload[g] = glyphMap[g];
+    }
+    try {
+        var resp = await fetch('/settings/glyphs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        var data = await resp.json();
+        var resultDiv = document.getElementById('glyph-save-result');
+        resultDiv.classList.remove('hidden');
+        if (data.ok) {
+            resultDiv.innerHTML = '<div class="bg-green-900/50 p-3 rounded text-green-300 text-sm">{{ _('glyphs.saved') }}</div>';
+        } else {
+            resultDiv.innerHTML = '<div class="bg-red-900/50 p-3 rounded text-red-300 text-sm">' + (data.error || 'Error') + '</div>';
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+function resetGlyphMap() {
+    if (!confirm("{{ _('glyphs.reset_confirm') }}")) return;
+    for (var g in glyphMap) {
+        glyphMap[g] = '';
+        var input = document.querySelector('.glyph-input[data-glyph="' + g + '"]');
+        if (input) { input.value = ''; }
+        var preview = document.querySelector('.glyph-preview[data-glyph="' + g + '"]');
+        if (preview) { preview.textContent = '-'; }
+    }
+    updatePreview();
+    saveGlyphMap();
+}
+</script>
+
+{% endblock %}

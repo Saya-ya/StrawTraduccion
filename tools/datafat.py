@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 datafat.py — Lógica canónica de la FAT de Data.bin (Strawberry Panic!, PS2).
 
@@ -41,7 +40,6 @@ ENTRY_SIZE = 12  # [id:u32, size_field:u32, offset:u32]
 
 
 def read_fat_raw(source):
-    """Devuelve los bytes crudos de la FAT desde una ruta o desde bytes de Data.bin."""
     if isinstance(source, (bytes, bytearray)):
         return bytes(source[FAT_OFFSET:FAT_OFFSET + NUM_ENTRIES * ENTRY_SIZE])
     with open(source, 'rb') as f:
@@ -50,15 +48,6 @@ def read_fat_raw(source):
 
 
 def parse_entries(fat_raw):
-    """
-    Devuelve una lista de dicts, una por fila de la FAT, con:
-      row        : índice de la fila
-      id         : id del archivo
-      size_field : valor crudo del campo (= tamaño del archivo de la fila anterior)
-      off        : offset en Data.bin del archivo de ESTA fila
-      size       : tamaño REAL del archivo de esta fila (= size_field de la fila i+1)
-      is_file    : True si off > 0 (las filas con off == 0 son centinela/no-archivo)
-    """
     rows = []
     for i in range(NUM_ENTRIES):
         fid, size_field, off = struct.unpack_from('<III', fat_raw, i * ENTRY_SIZE)
@@ -71,12 +60,10 @@ def parse_entries(fat_raw):
 
 
 def read_entries(source):
-    """Atajo: lee y parsea la FAT desde ruta o bytes."""
     return parse_entries(read_fat_raw(source))
 
 
 def find_row(rows, fid):
-    """Encuentra la fila (dict) de un id de archivo real (off > 0). None si no existe."""
     for r in rows:
         if r['id'] == fid and r['off'] > 0:
             return r
@@ -84,11 +71,6 @@ def find_row(rows, fid):
 
 
 def slot_capacity(rows, row):
-    """
-    Capacidad física del slot = distancia hasta el siguiente offset en disco.
-    Es >= size real (incluye el padding de alineación a 0x800). Útil para saber
-    si un stream recomprimido cabe sin pisar al archivo vecino.
-    """
     offs = sorted(r['off'] for r in rows if r['off'] > 0)
     o = row['off']
     idx = offs.index(o)
@@ -98,8 +80,4 @@ def slot_capacity(rows, row):
 
 
 def size_field_write_offset(row):
-    """
-    Offset absoluto (en Data.bin) donde hay que ESCRIBIR el tamaño real del
-    archivo de `row`: el size_field de la fila SIGUIENTE.
-    """
     return FAT_OFFSET + (row['row'] + 1) * ENTRY_SIZE + 4

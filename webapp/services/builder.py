@@ -1,4 +1,3 @@
-"""Build pipeline — orquesta patch_dec.py + build_iso.py + inject_elf.py."""
 import json
 import os
 import shutil
@@ -19,12 +18,9 @@ from ..config import (
 from ..database import get_session, TextEntry, Script, BuildHistory
 from .build_lock import acquire_build_lock, release_build_lock, write_build_state
 
-# ── Número de workers para compresión paralela ───────────────────────────────
-COMPRESS_WORKERS = min(os.cpu_count() or 4, 8)  # usar hasta 8 núcleos reales
-
+COMPRESS_WORKERS = min(os.cpu_count() or 4, 8) 
 
 def export_csv_for_build(csv_path: Path, only_translated: bool = True) -> int:
-    """Exporta textos traducidos a CSV en formato CLI. Retorna conteo."""
     import csv
     session = get_session()
 
@@ -52,7 +48,6 @@ def export_csv_for_build(csv_path: Path, only_translated: bool = True) -> int:
 
 
 def _rebuild_one_script(script_id: int, csv_path: Path, bin_path: Path, verify: bool = True) -> dict:
-    """Reconstruye .dec, comprime, e inyecta en Data.bin (todo en un solo paso)."""
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "tools" / "patch_dec.py"),
          "--id", str(script_id), "--rebuild", "--csv", str(csv_path),
@@ -71,12 +66,12 @@ def _rebuild_one_script(script_id: int, csv_path: Path, bin_path: Path, verify: 
 
 
 def _compress_worker(args: tuple) -> dict:
-    """Worker para ProcessPoolExecutor: recibe (script_id, csv_path, project_root)."""
-    script_id, csv_path, project_root_str = args
+    script_id, csv_path, project_root_str, target_lang = args
     project_root = Path(project_root_str)
 
     sys.path.insert(0, str(project_root / "tools"))
     from script_rebuilder import default_dec_path, load_csv_rows, rebuild_local_slack
+    from glyph_map import get_glyph_map
     from lz77 import compress, decompress
 
     dec_path = default_dec_path(script_id)
@@ -86,8 +81,10 @@ def _compress_worker(args: tuple) -> dict:
     dec_data = dec_path.read_bytes()
     rows = load_csv_rows(csv_path, script_id)
 
+    glyph_map = get_glyph_map(target_lang)
+
     try:
-        rebuilt, report = rebuild_local_slack(dec_data, rows)
+        rebuilt, report = rebuild_local_slack(dec_data, rows, glyph_map=glyph_map)
     except Exception as e:
         return {"success": False, "script_id": script_id, "error": str(e)}
 
@@ -125,10 +122,6 @@ def _compress_worker(args: tuple) -> dict:
 
 
 def _inject_one(script_id: int, comp_data: bytes, bin_path: Path) -> dict:
-    """
-    Inyecta datos comprimidos en Data.bin y actualiza la FAT.
-    Se ejecuta secuencialmente (escritura al mismo archivo).
-    """
     sys.path.insert(0, str(PROJECT_ROOT / "tools"))
     from datafat import read_entries, find_row, slot_capacity, size_field_write_offset
 
@@ -157,12 +150,11 @@ def _inject_one(script_id: int, comp_data: bytes, bin_path: Path) -> dict:
     return {"success": True, "script_id": script_id}
 
 
-def run_apply_translation(csv_path: Path) -> dict:
-    """Ejecuta apply_translation.py para generar SLPS_256.11_translated."""
+def run_apply_translation(csv_path: Path, target_lang: str = "es") -> dict:
     try:
         result = subprocess.run(
             ["python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
-             str(csv_path)],
+             str(csv_path), "--target-lang", target_lang],
             capture_output=True, text=True,
             cwd=str(PROJECT_ROOT),
             timeout=TIMEOUT_APPLY_ELF
@@ -181,7 +173,6 @@ def run_apply_translation(csv_path: Path) -> dict:
 
 
 def run_build_iso() -> dict:
-    """Ejecuta build_iso.py."""
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "traduccion_tools" / "build_iso.py")],
         capture_output=True, text=True,
@@ -196,7 +187,6 @@ def run_build_iso() -> dict:
 
 
 def run_inject_elf() -> dict:
-    """Ejecuta inject_elf.py."""
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "traduccion_tools" / "inject_elf.py")],
         capture_output=True, text=True,
@@ -211,7 +201,6 @@ def run_inject_elf() -> dict:
 
 
 def _fresh_databin() -> Path:
-    """Copia Data.bin limpio desde originales/ a work/Data_patched.bin."""
     src = PROJECT_ROOT / "originales" / "Data.bin"
     dst = WORK / "Data_patched.bin"
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +210,6 @@ def _fresh_databin() -> Path:
 
 
 def run_full_build(build_id: str):
-    """Pipeline completo: export → parallel compress → sequential inject → ISO → ELF."""
     state = {"id": build_id, "status": "running", "step": "", "progress": 0, "log": []}
 
     def save():
@@ -237,7 +225,6 @@ def run_full_build(build_id: str):
     try:
         session = get_session()
 
-        # 1. Obtener scripts con traducciones
         translated_scripts = session.query(TextEntry.script_id).filter(
             TextEntry.is_translated == True,
             TextEntry.script_id != -1
@@ -251,7 +238,6 @@ def run_full_build(build_id: str):
             session.close()
             return
 
-        # 2. Exportar CSV para build
         state["step"] = "Exportando CSV"
         state["progress"] = 5
         state["log"].append("Exportando traducciones a CSV...")
@@ -262,7 +248,6 @@ def run_full_build(build_id: str):
         count = export_csv_for_build(csv_path, only_translated=True)
         state["log"].append(f"  {count} textos exportados")
 
-        # 3. Copia FRESCA de Data.bin (evita contaminación de builds anteriores)
         state["step"] = "Preparando Data.bin"
         state["progress"] = 8
         state["log"].append("Copiando Data.bin fresco desde originales/...")
@@ -270,7 +255,6 @@ def run_full_build(build_id: str):
         bin_path = _fresh_databin()
         state["log"].append(f"  Data.bin listo ({bin_path.stat().st_size // 1024 // 1024} MB)")
 
-        # 4. Compresión paralela (Fase 1: solo CPU, sin escribir a Data.bin)
         total_scripts = len(script_ids)
         state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} procesos)"
         state["progress"] = 10
@@ -282,7 +266,9 @@ def run_full_build(build_id: str):
 
         t_start = time.time()
         project_root_str = str(PROJECT_ROOT)
-        work_items = [(sid, csv_path, project_root_str) for sid in script_ids]
+        from .settings_service import get_setting
+        target_lang = get_setting("target_lang", "es")
+        work_items = [(sid, csv_path, project_root_str, target_lang) for sid in script_ids]
 
         with ProcessPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
             futures = {pool.submit(_compress_worker, item): item[0] for item in work_items}
@@ -318,7 +304,6 @@ def run_full_build(build_id: str):
         state["log"].append(f"  Compresión completada en {elapsed:.1f}s")
         state["log"].append(f"  OK: {len(compressed)}, errores: {len(errors)}")
 
-        # 5. Inyección secuencial (Fase 2: escritura a Data.bin, debe ser secuencial)
         state["step"] = "Inyectando datos en Data.bin"
         state["progress"] = 50
         state["log"].append("Inyectando scripts comprimidos en Data.bin...")
@@ -335,20 +320,18 @@ def run_full_build(build_id: str):
                 state["log"].append(f"  ⚠ {sid}: {inj_result.get('error', 'falló inyección')[:150]}")
         state["log"].append(f"  Inyectados: {injected}/{len(compressed)}")
 
-        # 6. Aplicar traducciones al ELF
         if not any("needs_shift" in e for e in errors):
             state["step"] = "Aplicando traducciones ELF"
             state["progress"] = 70
             state["log"].append("Ejecutando apply_translation.py...")
             save()
 
-            elf_apply = run_apply_translation(csv_path)
+            elf_apply = run_apply_translation(csv_path, target_lang)
             if elf_apply["success"]:
                 state["log"].append("  ✓ ELF procesado")
             else:
                 state["log"].append(f"  ⚠ ELF: {elf_apply['stderr'][:100]}")
 
-        # 7. Reconstruir ISO
         state["step"] = "Generando ISO"
         state["progress"] = 80
         state["log"].append("Ejecutando build_iso.py...")
@@ -360,7 +343,6 @@ def run_full_build(build_id: str):
         else:
             state["log"].append(f"  ✗ Error: {iso_result['stderr'][:100]}")
 
-        # 8. Inyectar ELF
         state["step"] = "Inyectando ELF"
         state["progress"] = 95
         state["log"].append("Ejecutando inject_elf.py...")
@@ -372,7 +354,6 @@ def run_full_build(build_id: str):
         else:
             state["log"].append(f"  ✗ Error: {elf_result['stderr'][:100]}")
 
-        # 9. Build history
         iso_path = str(WORK / "Strawberry_translated.iso")
         build_record = BuildHistory(
             started_at=datetime.now(timezone.utc),

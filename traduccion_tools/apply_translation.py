@@ -1,17 +1,16 @@
-#!/usr/bin/env python3
 """
-apply_translation.py — Aplica traducciones del CSV a Data.bin.
+apply_translation.py — Applies translations from CSV to Data.bin.
 
-Lee el CSV con columnas [source, file_id, offset, original_text, translated_text].
-Para cada fila con traducción:
-  1. Convierte español → cirílico (mapeo de fuente)
-  2. Codifica a UTF-16LE (scripts) o Shift-JIS (ELF)
-  3. Si los bytes caben en el espacio original, parchea directo en stream comprimido
-  4. Si no caben, reporta warning y salta
+Reads the CSV with columns [source, file_id, offset, original_text, translated_text].
+For each row with a translation:
+  1. Applies glyph mapping (e.g. Spanish → Cyrillic via font map)
+  2. Encodes to UTF-16LE (scripts) or Shift-JIS (ELF)
+  3. If bytes fit in the original space, patches directly in the compressed stream
+  4. If not, reports a warning and skips
 
-El mapeo español→cirílico vive AQUÍ en código, no en el CSV.
+The glyph mapping lives HERE in code, not in the CSV.
 
-Uso:
+Usage:
     python apply_translation.py traduccion_tools/dialogue_scripts.csv
 """
 
@@ -20,25 +19,29 @@ import struct
 import sys
 from pathlib import Path
 
-# Agregar tools/ al path
+# Add tools/ to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'tools'))
 from lz77 import decompress
 from patch_compressed import trace_decompression
 from datafat import read_entries, find_row
-from glyph_map import SPANISH_TO_GLYPH, game_string, encode_game_utf16 as _enc_utf16, encode_game_sjis as _enc_sjis
+from glyph_map import SPANISH_TO_GLYPH, game_string, encode_game_utf16 as _enc_utf16, encode_game_sjis as _enc_sjis, get_glyph_map
 
-# Re-exportar para compatibilidad
+# Re-export for compatibility
 SPANISH_TO_GLYPH_UTF16 = SPANISH_TO_GLYPH
 
 
-def encode_for_game_utf16(text):
-    """Convierte texto español a UTF-16LE con mapeo cirílico."""
-    return _enc_utf16(text)
+def encode_for_game_utf16(text, glyph_map=None):
+    """Convierte texto a UTF-16LE con mapeo cirilico."""
+    if glyph_map is None:
+        return _enc_utf16(text)
+    return _enc_utf16(text, glyph_map)
 
 
-def encode_for_game_sjis(text):
-    """Convierte texto español a Shift-JIS con mapeo cirílico."""
-    return _enc_sjis(text)
+def encode_for_game_sjis(text, glyph_map=None):
+    """Convierte texto a Shift-JIS con mapeo cirilico."""
+    if glyph_map is None:
+        return _enc_sjis(text)
+    return _enc_sjis(text, glyph_map)
 
 
 def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
@@ -53,7 +56,7 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
     if row is None:
         return False, f"ID {file_id} no encontrado"
     data_offset = row['off']
-    orig_size = row['size']  # tamaño REAL: size_field de la fila siguiente
+    orig_size = row['size']  # actual size: size_field of the next row
     
     with open(bin_path, 'rb') as f:
         f.seek(data_offset)
@@ -63,26 +66,26 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
         return False, "No es LZ77"
     
     expected_size = struct.unpack_from('<I', raw, 4)[0]
-    comp_data = raw[12:]  # header es 12 bytes (magic + decomp_size + comp_size)
+    comp_data = raw[12:]  # header is 12 bytes (magic + decomp_size + comp_size)
     out, mapping = trace_decompression(comp_data, expected_size)
     
     if dec_offset + len(new_bytes_utf16le) > len(out):
         return False, f"Fuera de rango"
     
-    # Verificar que todos los bytes a modificar son LITERAL
+    # Verify all bytes to modify are LITERAL
     for i in range(dec_offset, dec_offset + len(new_bytes_utf16le)):
         if mapping[i][0] != 'LIT':
             return False, f"Byte {i} es MATCH, no se puede parchear"
     
-    # Aplicar cambios
+    # Apply changes
     comp_offsets = []
     with open(bin_path, 'r+b') as f:
         for i, new_byte in enumerate(new_bytes_utf16le):
             dec_i = dec_offset + i
             comp_pos = mapping[dec_i][1]
             comp_offsets.append(comp_pos)
-            # comp_pos está mapeado contra raw[12:], así que el stream real
-            # empieza en data_offset + 12 (header LZ77 de 12 bytes).
+            # comp_pos is mapped against raw[12:], so the real stream
+            # starts at data_offset + 12 (LZ77 header is 12 bytes).
             abs_pos = data_offset + 12 + comp_pos
             f.seek(abs_pos)
             f.write(bytes([new_byte]))
@@ -90,14 +93,15 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
     return True, f"OK ({len(new_bytes_utf16le)} bytes en {len(comp_offsets)} posiciones)"
 
 
-def apply_translations(csv_path, data_bin_path):
+def apply_translations(csv_path, data_bin_path, target_lang="es"):
     """Lee el CSV y aplica todas las traducciones."""
+    glyph_map = get_glyph_map(target_lang) if target_lang != "es" else None
     bin_path = Path(data_bin_path)
     if not bin_path.exists():
         print(f"ERROR: {bin_path} no existe")
         return
     
-    # Copias de trabajo
+    # Working copies
     work_path = bin_path.parent.parent / 'work' / 'Data_patched.bin'
     work_elf_path = bin_path.parent.parent / 'work' / 'SLPS_256.11_translated'
     
@@ -138,16 +142,16 @@ def apply_translations(csv_path, data_bin_path):
                 continue
             
             if source == 'ELF':
-                # ELF usa Shift-JIS, tamaño fijo
-                new_bytes = encode_for_game_sjis(translated)
+                # ELF uses Shift-JIS, fixed size
+                new_bytes = encode_for_game_sjis(translated, glyph_map)
                 orig_bytes = original.encode('shift-jis')
                 
                 if len(new_bytes) <= len(orig_bytes):
-                    # Parchear ELF (directo, sin compresión)
+                    # Patch ELF (direct, no compression)
                     with open(work_elf_path, 'r+b') as elf:
                         elf.seek(dec_offset)
                         elf.write(new_bytes)
-                        # Rellenar resto con espacios/nulos
+                        # Fill remainder with spaces/nulls
                         padding = len(orig_bytes) - len(new_bytes)
                         if padding > 0:
                             elf.write(b'\x20' * padding)
@@ -159,7 +163,7 @@ def apply_translations(csv_path, data_bin_path):
             
             elif source == 'SCRIPT':
                 file_id = int(file_id_str)
-                new_bytes = encode_for_game_utf16(translated)
+                new_bytes = encode_for_game_utf16(translated, glyph_map)
                 orig_bytes = original.encode('utf-16-le')
                 
                 if len(new_bytes) > len(orig_bytes):
@@ -198,15 +202,24 @@ def apply_translations(csv_path, data_bin_path):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Uso: python apply_translation.py <dialogue.csv>")
-        print("  python apply_translation.py traduccion_tools/dialogue_scripts.csv")
+    import argparse
+    parser = argparse.ArgumentParser(
+        description='Aplica traducciones del CSV a Data.bin y ELF',
+        usage='python apply_translation.py <dialogue.csv> [--target-lang LANG]'
+    )
+    parser.add_argument('csv_path', nargs='?', default=None, help='Ruta al CSV de traducciones')
+    parser.add_argument('--target-lang', default='es',
+                        choices=['es', 'en', 'custom'],
+                        help='Idioma de traduccion (default: es)')
+    args = parser.parse_args()
+
+    if args.csv_path is None:
+        parser.print_help()
         sys.exit(1)
-    
-    csv_path = sys.argv[1]
+
+    csv_path = args.csv_path
     data_bin = "originales/Data.bin"
-    
-    apply_translations(csv_path, data_bin)
+    apply_translations(csv_path, data_bin, target_lang=args.target_lang)
 
 
 if __name__ == '__main__':
