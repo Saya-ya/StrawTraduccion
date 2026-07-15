@@ -40,3 +40,5 @@ dev/
 /textos
 
 .env
+.venv/
+venv/

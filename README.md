@@ -15,10 +15,23 @@ A complete translation toolchain and web-based management system for the PS2 vis
 
 ---
 
+### Requirements
+
+- Python 3.10+
+- Create a virtual environment and install dependencies:
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate      # Linux/macOS
+  # .venv\Scripts\activate       # Windows
+  pip install fastapi uvicorn sqlalchemy jinja2 python-multipart
+  ```
+
+---
+
 ### Quick Start
 
 1. Extract `Data.bin` and `SLPS_256.11` from your ISO into the `originales/` folder
-2. Start the web server:
+2. Start the web server (with the venv activated):
    ```bash
    python run_webapp.py
    ```
@@ -154,10 +167,23 @@ Un sistema completo de traducción con interfaz web para la novela visual de PS2
 
 ---
 
+### Requisitos
+
+- Python 3.10+
+- Crea un entorno virtual e instala las dependencias:
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate      # Linux/macOS
+  # .venv\Scripts\activate       # Windows
+  pip install fastapi uvicorn sqlalchemy jinja2 python-multipart
+  ```
+
+---
+
 ### Inicio Rápido
 
 1. Extrae `Data.bin` y `SLPS_256.11` de tu ISO a la carpeta `originales/`
-2. Inicia el servidor web:
+2. Inicia el servidor web (con el venv activado):
    ```bash
    python run_webapp.py
    ```
