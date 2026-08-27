@@ -45,3 +45,4 @@ dev/
 .env
 .venv/
 venv/
+*.egg-info/

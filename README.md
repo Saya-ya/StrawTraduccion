@@ -18,12 +18,19 @@ A complete translation toolchain and web-based management system for the PS2 vis
 ### Requirements
 
 - Python 3.10+
-- Create a virtual environment and install dependencies:
+- Dependencies are declared in `pyproject.toml`.
+- Create a virtual environment and install the required dependencies:
   ```bash
   python -m venv .venv
   source .venv/bin/activate      # Linux/macOS
   # .venv\Scripts\activate       # Windows
-  pip install fastapi uvicorn sqlalchemy jinja2 python-multipart
+  python -m pip install -e .
+  ```
+- Optional extras:
+  ```bash
+  python -m pip install -e ".[images]"   # Pillow, optional PNG support
+  python -m pip install -e ".[legacy]"   # zstandard, legacy utilities
+  python -m pip install -e ".[test]"     # pytest
   ```
 
 ---
@@ -185,12 +192,19 @@ Un sistema completo de traducción con interfaz web para la novela visual de PS2
 ### Requisitos
 
 - Python 3.10+
-- Crea un entorno virtual e instala las dependencias:
+- Las dependencias estan declaradas en `pyproject.toml`.
+- Crea un entorno virtual e instala las dependencias requeridas:
   ```bash
   python -m venv .venv
   source .venv/bin/activate      # Linux/macOS
   # .venv\Scripts\activate       # Windows
-  pip install fastapi uvicorn sqlalchemy jinja2 python-multipart
+  python -m pip install -e .
+  ```
+- Extras opcionales:
+  ```bash
+  python -m pip install -e ".[images]"   # Pillow, soporte PNG opcional
+  python -m pip install -e ".[legacy]"   # zstandard, utilidades legacy
+  python -m pip install -e ".[test]"     # pytest
   ```
 
 ---

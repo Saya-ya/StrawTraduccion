@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strawtraduccion"
+version = "0.1.0"
+description = "Strawberry Panic! PS2 translation toolchain and web manager"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "jinja2",
+    "python-multipart",
+    "sqlalchemy>=2.0",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+images = [
+    "Pillow",
+]
+legacy = [
+    "zstandard",
+]
+test = [
+    "pytest",
+]
+
+[tool.setuptools]
+py-modules = ["build_worker", "run_webapp"]
+
+[tool.setuptools.packages.find]
+include = ["webapp*"]
