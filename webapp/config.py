@@ -8,6 +8,11 @@ WORK = PROJECT_ROOT / 'work'
 TOOLS = PROJECT_ROOT / 'tools'
 TRAD_TOOLS = PROJECT_ROOT / 'traduccion_tools'
 TEXTOS = PROJECT_ROOT / 'textos'
+TEXTURAS = PROJECT_ROOT / 'texturas'
+REPLACEMENT = PROJECT_ROOT / 'Replacement'
+WORK_TEXTURES = PROJECT_ROOT / 'work_texturas'
+TEXTURE_CATALOG = WORK_TEXTURES / 'output' / 'all_textures'
+TEXTURE_CATALOG_PNG = TEXTURE_CATALOG / 'png'
 TEMPLATES = str(Path(__file__).parent / 'templates')
 
 # Base de datos
@@ -30,3 +35,19 @@ TIMEOUT_PIPELINE = 7200     # pipeline completo (2h max)
 # Server
 HOST = "127.0.0.1"
 PORT = 8080
+
+
+def ensure_runtime_dirs() -> None:
+    """Create all runtime/project data folders used by the web app."""
+    for path in (
+        ORIGINALES,
+        WORK,
+        BUILD_TEMP_DIR,
+        TEXTOS,
+        TEXTURAS,
+        REPLACEMENT,
+        WORK_TEXTURES,
+        TEXTURE_CATALOG,
+        TEXTURE_CATALOG_PNG,
+    ):
+        path.mkdir(parents=True, exist_ok=True)

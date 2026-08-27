@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="flex gap-6">
+    <!-- Columna izquierda: Acciones -->
+    <div class="w-80 shrink-0 space-y-4">
+        <!-- Extraer -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-2">📦 Extraer</h2>
+            <p class="text-gray-400 text-xs mb-3">Extrae todas las texturas TIM2 de Data.bin a PNG + catálogo.</p>
+            <button hx-post="/textures/extract"
+                    hx-target="#extract-result"
+                    hx-disabled-elt="this"
+                    class="bg-pink-600 hover:bg-pink-700 text-white px-4 py-2 rounded text-sm w-full disabled:opacity-50">
+                Extraer texturas
+            </button>
+            <div id="extract-result" class="mt-2 text-xs text-gray-400"></div>
+            {% if stats.total > 0 %}
+            <p class="text-xs text-green-400 mt-2">✓ {{ stats.total }} texturas catalogadas ({{ stats.with_png }} PNGs)</p>
+            {% endif %}
+        </div>
+
+        <!-- Subir PNGs editados -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-2">📤 Subir texturas</h2>
+            <p class="text-gray-400 text-xs mb-3">
+                Edita el PNG, manten el nombre tipo <code class="text-gray-300">ID_15106_T007_P00_232x40.png</code>
+                y súbelo aquí.
+            </p>
+            <form id="upload-form"
+                  hx-encoding="multipart/form-data"
+                  hx-post="/textures/upload"
+                  hx-target="#upload-result"
+                  hx-swap="innerHTML">
+                <input type="file" name="files" accept=".png" multiple
+                       class="text-xs text-gray-300 w-full mb-2 file:bg-gray-700 file:border-0 file:text-gray-200 file:px-3 file:py-1 file:rounded file:mr-2">
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm w-full disabled:opacity-50">
+                    Subir
+                </button>
+            </form>
+            <div id="upload-result" class="mt-2 text-xs text-gray-400"></div>
+        </div>
+
+        <!-- Generar manifiesto -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-2">📋 Manifiesto</h2>
+            <p class="text-gray-400 text-xs mb-3">
+                Escanea <code class="text-gray-300">texturas/</code> y genera <code class="text-gray-300">manifest.json</code>
+                a partir de los nombres de archivo.
+            </p>
+            <button hx-post="/textures/manifest/generate"
+                    hx-target="#manifest-result"
+                    hx-swap="innerHTML"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm w-full">
+                Generar manifiesto
+            </button>
+            <div id="manifest-result" class="mt-2 text-xs"></div>
+            {% if manifest %}
+            <p class="text-xs text-green-400 mt-2">✓ {{ manifest|length }} parches en manifiesto</p>
+            {% endif %}
+        </div>
+
+        <!-- Construir catálogo HTML -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-2">🏷 Catálogo</h2>
+            <p class="text-gray-400 text-xs mb-3">Regenera <code class="text-gray-300">index.html</code> navegable con filtros.</p>
+            <button hx-post="/textures/catalog/build"
+                    hx-target="#catalog-result"
+                    class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm w-full">
+                Construir catálogo
+            </button>
+            <div id="catalog-result" class="mt-2 text-xs text-gray-400"></div>
+            {% if stats.total > 0 %}
+            <a href="/catalog" target="_blank"
+               class="inline-block mt-2 text-xs text-blue-400 hover:text-blue-300">
+                → Abrir catálogo
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Columna derecha: Estado / Previsualización -->
+    <div class="flex-1 space-y-4">
+        <!-- Manifiesto actual -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-3">📋 Manifiesto actual</h2>
+            {% if manifest %}
+            <div class="overflow-auto max-h-96">
+                <table class="w-full text-xs">
+                    <thead class="text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="text-left py-1 pr-2">File ID</th>
+                            <th class="text-left py-1 pr-2">LZ77</th>
+                            <th class="text-left py-1 pr-2">T</th>
+                            <th class="text-left py-1 pr-2">P</th>
+                            <th class="text-left py-1">PNG</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in manifest %}
+                        <tr class="border-b border-gray-700/50">
+                            <td class="py-1 font-mono text-gray-300">{{ p.file_id }}</td>
+                            <td class="py-1 text-gray-400 font-mono">
+                                {% if p.lz77_offset is defined %}0x{{ '%06X' % p.lz77_offset }}{% else %}-{% endif %}
+                            </td>
+                            <td class="py-1 text-gray-400">{{ p.tim2_index }}</td>
+                            <td class="py-1 text-gray-400">{{ p.picture_index }}</td>
+                            <td class="py-1 text-gray-400 truncate max-w-48">{{ p.png }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-xs">Sin parches. Sube PNGs y genera el manifiesto.</p>
+            {% endif %}
+        </div>
+
+        <!-- Archivos en texturas/ -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-3">📁 Archivos en texturas/</h2>
+            {% if png_files %}
+            <div class="overflow-auto max-h-72">
+                <table class="w-full text-xs">
+                    <thead class="text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="text-left py-1 pr-2">Archivo</th>
+                            <th class="text-left py-1 pr-2">Peso</th>
+                            <th class="text-left py-1">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in png_files %}
+                        <tr class="border-b border-gray-700/50">
+                            <td class="py-1 text-gray-300 truncate max-w-40">{{ f.name }}</td>
+                            <td class="py-1 text-gray-400 font-mono">
+                                {% if f.catalog_size and f.catalog_size != f.size %}
+                                <span class="text-yellow-400">{{ (f.size / 1024) | round(0) }} KB</span>
+                                <span class="text-gray-500">→</span>
+                                <span class="text-green-400">{{ (f.catalog_size / 1024) | round(0) }} KB</span>
+                                {% else %}
+                                {{ (f.size / 1024) | round(0) }} KB
+                                {% endif %}
+                            </td>
+                            <td class="py-1">
+                                {% if f.valid %}
+                                <span class="text-green-400">✓ ID {{ f.file_id }}{% if f.lz77_offset is not none %} L0x{{ '%06X' % f.lz77_offset }}{% endif %} T{{ f.tim2_idx }} P{{ f.pic_idx }}</span>
+                                {% else %}
+                                <span class="text-yellow-400">⚠ nombre no reconocido</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-xs">No hay PNGs en texturas/. Sube archivos editados.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}

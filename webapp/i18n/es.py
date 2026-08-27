@@ -9,6 +9,7 @@ STRINGS = {
     "nav.delegate": "Delegar",
     "nav.import": "Importar",
     "nav.build": "Build",
+    "nav.textures": "Texturas",
     "nav.version": "Translation Manager v0.1",
     "nav.ui_lang": "🌐",
     "nav.target_lang": "🎯",

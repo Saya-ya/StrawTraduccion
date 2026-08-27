@@ -36,6 +36,7 @@ A complete translation toolchain and web-based management system for the PS2 vis
    python run_webapp.py
    ```
 3. Open `http://127.0.0.1:8080`
+   The first startup creates the runtime folders used by the app (`originales/`, `work/`, `textos/`, `texturas/`, `work_texturas/`, and `Replacement/`).
 4. Go to **Import** and click **Extract and Import** to load texts into the database
 5. Use the **Scripts** and **Search** tabs to translate — click any text for inline editing (`Ctrl+Enter` to save)
 6. Go to **Build** and click **Build ISO** to generate the patched ISO at `work/Strawberry_translated.iso`
@@ -109,6 +110,18 @@ The custom map is saved to the database and applied automatically during patchin
 
 ---
 
+### Texture Patching
+
+The **Textures** page can extract TIM2 images from `Data.bin`, including TIM2 files inside nested LZ77 streams stored in raw containers. Nested textures use an `L` marker in the filename, for example:
+
+```text
+ID_15111_L000050_T003_P00_176x288.png
+```
+
+When the manifest is generated, that filename becomes a patch entry with `lz77_offset`, so the build can patch both direct files and nested streams before rebuilding the ISO.
+
+---
+
 ### System Architecture
 
 | Layer | Technology |
@@ -146,6 +159,8 @@ StrawTraduccion/
 │   ├── services/                   # builder, import_service, fit_checker, settings_service
 │   └── templates/                  # Jinja2 + Tailwind + HTMX templates
 ├── textos/                         # Generated CSVs
+├── texturas/                       # Local edited PNGs + manifest (not distributed)
+├── work_texturas/                  # Generated texture catalog (regenerable)
 ├── Replacement/                    # PCSX2 font texture replacements
 ├── docs/legado/                    # Legacy utilities
 ├── tests/                          # Automated tests
@@ -188,6 +203,7 @@ Un sistema completo de traducción con interfaz web para la novela visual de PS2
    python run_webapp.py
    ```
 3. Abre `http://127.0.0.1:8080`
+   En el primer arranque se crean las carpetas de trabajo usadas por la app (`originales/`, `work/`, `textos/`, `texturas/`, `work_texturas/` y `Replacement/`).
 4. Ve a **Importar** y haz clic en **Extraer e Importar** para cargar los textos
 5. Usa las pestañas **Scripts** y **Buscar** para traducir — clic en cualquier texto para editar (`Ctrl+Enter` para guardar)
 6. Ve a **Build** y haz clic en **Construir ISO** para generar la ISO parcheada en `work/Strawberry_translated.iso`

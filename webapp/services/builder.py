@@ -172,6 +172,86 @@ def run_apply_translation(csv_path: Path, target_lang: str = "es") -> dict:
         }
 
 
+def run_texture_patches(bin_path: Path, manifest_path: Path | None = None) -> dict:
+    if manifest_path is None:
+        manifest_path = PROJECT_ROOT / "texturas" / "manifest.json"
+
+    if not manifest_path.exists():
+        return {"success": True, "patched": 0, "message": "Sin manifiesto de texturas", "details": []}
+
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    from patch_texture import process_manifest
+    from datafat import read_entries, find_row, slot_capacity
+
+    try:
+        results = process_manifest(bin_path, manifest_path, verbose=False)
+    except Exception as e:
+        return {"success": False, "patched": 0, "error": str(e), "details": []}
+
+    if not results:
+        return {"success": True, "patched": 0, "message": "Sin parches de textura", "details": []}
+
+    rows = read_entries(str(bin_path))
+    injected = 0
+    errors: list[str] = []
+    details: list[dict] = []
+
+    for r in results:
+        fid = r["file_id"]
+        stream = r["stream"]
+
+        if stream is None:
+            errors.append(f"ID {fid}: {r.get('error', 'fallo encode')}")
+            continue
+
+        target = find_row(rows, fid)
+        if target is None:
+            errors.append(f"ID {fid}: no encontrado en FAT")
+            continue
+
+        cap = slot_capacity(rows, target)
+        n_patches = len(r["patches"])
+        def patch_label(p: dict) -> str:
+            nested = p.get("lz77_offset")
+            prefix = f"L0x{nested:06X}:" if nested is not None else ""
+            return f"{prefix}T{p['tim2_index']}P{p['picture_index']}"
+
+        pngs = ", ".join(patch_label(p) for p in r["patches"])
+
+        detail = {
+            "file_id": fid,
+            "patches": n_patches,
+            "pictures": pngs,
+            "stream_size": len(stream),
+            "slot_capacity": cap,
+            "file_offset": target["off"],
+        }
+
+        if len(stream) > cap:
+            detail["fits"] = False
+            errors.append(f"ID {fid}: no cabe ({len(stream):,} > {cap:,})")
+            details.append(detail)
+            continue
+
+        res = _inject_one(fid, stream, bin_path)
+        detail["fits"] = True
+        detail["injected"] = res["success"]
+
+        if res["success"]:
+            injected += 1
+            details.append(detail)
+        else:
+            errors.append(f"ID {fid}: {res.get('error', 'fallo inyeccion')}")
+            details.append(detail)
+
+    return {
+        "success": len(errors) == 0,
+        "patched": injected,
+        "errors": errors,
+        "details": details,
+    }
+
+
 def run_build_iso() -> dict:
     result = subprocess.run(
         ["python3", str(PROJECT_ROOT / "traduccion_tools" / "build_iso.py")],
@@ -204,8 +284,7 @@ def _fresh_databin() -> Path:
     src = PROJECT_ROOT / "originales" / "Data.bin"
     dst = WORK / "Data_patched.bin"
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if not dst.exists() or src.stat().st_size != dst.stat().st_size:
-        shutil.copy2(src, dst)
+    shutil.copy2(src, dst)
     return dst
 
 
@@ -230,10 +309,11 @@ def run_full_build(build_id: str):
             TextEntry.script_id != -1
         ).distinct().all()
         script_ids = sorted([s[0] for s in translated_scripts])
+        texture_manifest = PROJECT_ROOT / "texturas" / "manifest.json"
 
-        if not script_ids:
+        if not script_ids and not texture_manifest.exists():
             state["status"] = "failed"
-            state["error"] = "No hay traducciones para build"
+            state["error"] = "No hay traducciones ni manifiesto de texturas para build"
             save()
             session.close()
             return
@@ -255,72 +335,80 @@ def run_full_build(build_id: str):
         bin_path = _fresh_databin()
         state["log"].append(f"  Data.bin listo ({bin_path.stat().st_size // 1024 // 1024} MB)")
 
-        total_scripts = len(script_ids)
-        state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} procesos)"
-        state["progress"] = 10
-        state["log"].append(f"Comprimiendo {total_scripts} scripts en paralelo...")
-        save()
-
         compressed: dict[int, bytes] = {}
         errors: list[str] = []
-
-        t_start = time.time()
-        project_root_str = str(PROJECT_ROOT)
         from .settings_service import get_setting
         target_lang = get_setting("target_lang", "es")
-        work_items = [(sid, csv_path, project_root_str, target_lang) for sid in script_ids]
 
-        with ProcessPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
-            futures = {pool.submit(_compress_worker, item): item[0] for item in work_items}
-            done = 0
-            for future in as_completed(futures):
-                sid = futures[future]
-                done += 1
-                try:
-                    result = future.result()
-                except Exception as e:
-                    errors.append(f"  ⚠ {sid}: excepción — {e}")
-                    state["log"].append(f"[{done}/{total_scripts}] Script {sid}... ⚠ {e}")
+        if script_ids:
+            total_scripts = len(script_ids)
+            state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} procesos)"
+            state["progress"] = 10
+            state["log"].append(f"Comprimiendo {total_scripts} scripts en paralelo...")
+            save()
+
+            t_start = time.time()
+            project_root_str = str(PROJECT_ROOT)
+            work_items = [(sid, csv_path, project_root_str, target_lang) for sid in script_ids]
+
+            session.close()
+            session = None
+
+            with ProcessPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
+                futures = {pool.submit(_compress_worker, item): item[0] for item in work_items}
+                done = 0
+                for future in as_completed(futures):
+                    sid = futures[future]
+                    done += 1
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        errors.append(f"  ⚠ {sid}: excepción — {e}")
+                        state["log"].append(f"[{done}/{total_scripts}] Script {sid}... ⚠ {e}")
+                        save()
+                        continue
+
+                    if result["success"]:
+                        compressed[sid] = result["comp_data"]
+                        pct = 10 + int((done / total_scripts) * 15)
+                        state["progress"] = pct
+                        state["log"].append(
+                            f"[{done}/{total_scripts}] Script {sid} ✓ "
+                            f"({len(result['comp_data']):,} bytes)"
+                        )
+                    else:
+                        detail = result.get("detail", result.get("error", ""))
+                        errors.append(f"  ⚠ {sid}: {detail[:200]}")
+                        state["log"].append(
+                            f"[{done}/{total_scripts}] Script {sid} ⚠ {detail[:150]}"
+                        )
                     save()
+
+            session = get_session()
+
+            elapsed = time.time() - t_start
+            state["log"].append(f"  Compresión completada en {elapsed:.1f}s")
+            state["log"].append(f"  OK: {len(compressed)}, errores: {len(errors)}")
+
+            state["step"] = "Inyectando datos en Data.bin"
+            state["progress"] = 50
+            state["log"].append("Inyectando scripts comprimidos en Data.bin...")
+            save()
+
+            injected = 0
+            for sid in script_ids:
+                if sid not in compressed:
                     continue
-
-                if result["success"]:
-                    compressed[sid] = result["comp_data"]
-                    pct = 10 + int((done / total_scripts) * 15)
-                    state["progress"] = pct
-                    state["log"].append(
-                        f"[{done}/{total_scripts}] Script {sid} ✓ "
-                        f"({len(result['comp_data']):,} bytes)"
-                    )
+                inj_result = _inject_one(sid, compressed[sid], bin_path)
+                if inj_result["success"]:
+                    injected += 1
                 else:
-                    detail = result.get("detail", result.get("error", ""))
-                    errors.append(f"  ⚠ {sid}: {detail[:200]}")
-                    state["log"].append(
-                        f"[{done}/{total_scripts}] Script {sid} ⚠ {detail[:150]}"
-                    )
-                save()
+                    state["log"].append(f"  ⚠ {sid}: {inj_result.get('error', 'falló inyección')[:150]}")
+            state["log"].append(f"  Inyectados: {injected}/{len(compressed)}")
+        else:
+            state["log"].append("Sin scripts traducidos; build solo con texturas.")
 
-        elapsed = time.time() - t_start
-        state["log"].append(f"  Compresión completada en {elapsed:.1f}s")
-        state["log"].append(f"  OK: {len(compressed)}, errores: {len(errors)}")
-
-        state["step"] = "Inyectando datos en Data.bin"
-        state["progress"] = 50
-        state["log"].append("Inyectando scripts comprimidos en Data.bin...")
-        save()
-
-        injected = 0
-        for sid in script_ids:
-            if sid not in compressed:
-                continue
-            inj_result = _inject_one(sid, compressed[sid], bin_path)
-            if inj_result["success"]:
-                injected += 1
-            else:
-                state["log"].append(f"  ⚠ {sid}: {inj_result.get('error', 'falló inyección')[:150]}")
-        state["log"].append(f"  Inyectados: {injected}/{len(compressed)}")
-
-        if not any("needs_shift" in e for e in errors):
+        if script_ids and not any("needs_shift" in e for e in errors):
             state["step"] = "Aplicando traducciones ELF"
             state["progress"] = 70
             state["log"].append("Ejecutando apply_translation.py...")
@@ -334,6 +422,25 @@ def run_full_build(build_id: str):
 
         state["step"] = "Generando ISO"
         state["progress"] = 80
+        state["log"].append("Aplicando parches de textura...")
+        save()
+
+        tex_result = run_texture_patches(bin_path)
+        if tex_result["success"]:
+            state["log"].append(f"  Texturas: {tex_result['patched']} parches aplicados")
+        else:
+            for err in tex_result.get("errors", []):
+                state["log"].append(f"  {err}")
+        for d in tex_result.get("details", []):
+            fits = "cabe" if d.get("fits") else "NO CABE"
+            injected = "inyectado" if d.get("injected") else "fallo"
+            state["log"].append(
+                f"    ID {d['file_id']}: {d['pictures']} "
+                f"({d['stream_size']:,}/{d['slot_capacity']:,} bytes, {fits}, {injected})"
+            )
+
+        state["step"] = "Generando ISO"
+        state["progress"] = 85
         state["log"].append("Ejecutando build_iso.py...")
         save()
 

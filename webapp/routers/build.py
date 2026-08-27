@@ -48,8 +48,10 @@ def trigger_build():
     BUILD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     worker_script = Path(__file__).parent.parent.parent / "build_worker.py"
+    venv_python = Path(__file__).parent.parent.parent / ".venv" / "bin" / "python"
+    python_exe = str(venv_python) if venv_python.exists() else "python3"
     subprocess.Popen(
-        ["python3", str(worker_script), build_id],
+        [python_exe, str(worker_script), build_id],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(Path(__file__).parent.parent.parent)
     )
