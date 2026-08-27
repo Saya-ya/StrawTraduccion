@@ -18,7 +18,14 @@ from ..config import (
 from ..database import get_session, TextEntry, Script, BuildHistory
 from .build_lock import acquire_build_lock, release_build_lock, write_build_state
 
-COMPRESS_WORKERS = min(os.cpu_count() or 4, 8) 
+DEFAULT_COMPRESS_WORKERS = max(1, min((os.cpu_count() or 2) // 2 or 1, 4))
+
+
+def _clamp_workers(workers: int | None) -> int:
+    max_workers = max(1, min(os.cpu_count() or 2, 8))
+    if workers is None:
+        return DEFAULT_COMPRESS_WORKERS
+    return max(1, min(int(workers), max_workers))
 
 def export_csv_for_build(csv_path: Path, only_translated: bool = True) -> int:
     import csv
@@ -288,8 +295,22 @@ def _fresh_databin() -> Path:
     return dst
 
 
-def run_full_build(build_id: str):
-    state = {"id": build_id, "status": "running", "step": "", "progress": 0, "log": []}
+def run_full_build(build_id: str, build_type: str = "full", workers: int | None = None):
+    if build_type not in {"full", "texts", "images"}:
+        build_type = "full"
+    workers = _clamp_workers(workers)
+    include_texts = build_type in {"full", "texts"}
+    include_images = build_type in {"full", "images"}
+
+    state = {
+        "id": build_id,
+        "status": "running",
+        "step": "",
+        "progress": 0,
+        "log": [],
+        "build_type": build_type,
+        "workers": workers,
+    }
 
     def save():
         BUILD_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -304,22 +325,32 @@ def run_full_build(build_id: str):
     try:
         session = get_session()
 
-        translated_scripts = session.query(TextEntry.script_id).filter(
-            TextEntry.is_translated == True,
-            TextEntry.script_id != -1
-        ).distinct().all()
-        script_ids = sorted([s[0] for s in translated_scripts])
+        script_ids = []
+        if include_texts:
+            translated_scripts = session.query(TextEntry.script_id).filter(
+                TextEntry.is_translated == True,
+                TextEntry.script_id != -1
+            ).distinct().all()
+            script_ids = sorted([s[0] for s in translated_scripts])
         texture_manifest = PROJECT_ROOT / "texturas" / "manifest.json"
 
-        if not script_ids and not texture_manifest.exists():
+        if include_texts and not script_ids and not include_images:
             state["status"] = "failed"
-            state["error"] = "No hay traducciones ni manifiesto de texturas para build"
+            state["error"] = "No hay traducciones para build de textos"
+            save()
+            session.close()
+            return
+
+        if include_images and not texture_manifest.exists() and not script_ids:
+            state["status"] = "failed"
+            state["error"] = "No hay manifiesto de texturas para build de imagenes"
             save()
             session.close()
             return
 
         state["step"] = "Exportando CSV"
         state["progress"] = 5
+        state["log"].append(f"Build tipo: {build_type}; workers: {workers}")
         state["log"].append("Exportando traducciones a CSV...")
         save()
 
@@ -342,7 +373,7 @@ def run_full_build(build_id: str):
 
         if script_ids:
             total_scripts = len(script_ids)
-            state["step"] = f"Comprimiendo scripts (paralelo, {COMPRESS_WORKERS} procesos)"
+            state["step"] = f"Comprimiendo scripts (paralelo, {workers} procesos)"
             state["progress"] = 10
             state["log"].append(f"Comprimiendo {total_scripts} scripts en paralelo...")
             save()
@@ -354,7 +385,7 @@ def run_full_build(build_id: str):
             session.close()
             session = None
 
-            with ProcessPoolExecutor(max_workers=COMPRESS_WORKERS) as pool:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
                 futures = {pool.submit(_compress_worker, item): item[0] for item in work_items}
                 done = 0
                 for future in as_completed(futures):
@@ -408,7 +439,7 @@ def run_full_build(build_id: str):
         else:
             state["log"].append("Sin scripts traducidos; build solo con texturas.")
 
-        if script_ids and not any("needs_shift" in e for e in errors):
+        if include_texts and script_ids and not any("needs_shift" in e for e in errors):
             state["step"] = "Aplicando traducciones ELF"
             state["progress"] = 70
             state["log"].append("Ejecutando apply_translation.py...")
@@ -420,24 +451,25 @@ def run_full_build(build_id: str):
             else:
                 state["log"].append(f"  ⚠ ELF: {elf_apply['stderr'][:100]}")
 
-        state["step"] = "Generando ISO"
-        state["progress"] = 80
-        state["log"].append("Aplicando parches de textura...")
-        save()
+        if include_images:
+            state["step"] = "Aplicando texturas"
+            state["progress"] = 80
+            state["log"].append("Aplicando parches de textura...")
+            save()
 
-        tex_result = run_texture_patches(bin_path)
-        if tex_result["success"]:
-            state["log"].append(f"  Texturas: {tex_result['patched']} parches aplicados")
-        else:
-            for err in tex_result.get("errors", []):
-                state["log"].append(f"  {err}")
-        for d in tex_result.get("details", []):
-            fits = "cabe" if d.get("fits") else "NO CABE"
-            injected = "inyectado" if d.get("injected") else "fallo"
-            state["log"].append(
-                f"    ID {d['file_id']}: {d['pictures']} "
-                f"({d['stream_size']:,}/{d['slot_capacity']:,} bytes, {fits}, {injected})"
-            )
+            tex_result = run_texture_patches(bin_path)
+            if tex_result["success"]:
+                state["log"].append(f"  Texturas: {tex_result['patched']} parches aplicados")
+            else:
+                for err in tex_result.get("errors", []):
+                    state["log"].append(f"  {err}")
+            for d in tex_result.get("details", []):
+                fits = "cabe" if d.get("fits") else "NO CABE"
+                injected = "inyectado" if d.get("injected") else "fallo"
+                state["log"].append(
+                    f"    ID {d['file_id']}: {d['pictures']} "
+                    f"({d['stream_size']:,}/{d['slot_capacity']:,} bytes, {fits}, {injected})"
+                )
 
         state["step"] = "Generando ISO"
         state["progress"] = 85
@@ -450,23 +482,26 @@ def run_full_build(build_id: str):
         else:
             state["log"].append(f"  ✗ Error: {iso_result['stderr'][:100]}")
 
-        state["step"] = "Inyectando ELF"
-        state["progress"] = 95
-        state["log"].append("Ejecutando inject_elf.py...")
-        save()
+        if include_texts and script_ids:
+            state["step"] = "Inyectando ELF"
+            state["progress"] = 95
+            state["log"].append("Ejecutando inject_elf.py...")
+            save()
 
-        elf_result = run_inject_elf()
-        if elf_result["success"]:
-            state["log"].append("  ✓ ELF inyectado")
+            elf_result = run_inject_elf()
+            if elf_result["success"]:
+                state["log"].append("  ✓ ELF inyectado")
+            else:
+                state["log"].append(f"  ✗ Error: {elf_result['stderr'][:100]}")
         else:
-            state["log"].append(f"  ✗ Error: {elf_result['stderr'][:100]}")
+            state["log"].append("Sin cambios ELF para este tipo de build.")
 
         iso_path = str(WORK / "Strawberry_translated.iso")
         build_record = BuildHistory(
             started_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
             status="success" if iso_result["success"] else "failed",
-            build_type="full",
+            build_type=build_type,
             iso_path=iso_path if iso_result["success"] else "",
             step="Completado",
             progress_pct=100,

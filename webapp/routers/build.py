@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -8,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from jinja2 import Environment, FileSystemLoader
 
 from ..config import TEMPLATES as TEMPLATES_DIR, BUILD_TEMP_DIR, TEXTOS
-from ..services.builder import export_csv_for_build, run_full_build
+from ..services.builder import DEFAULT_COMPRESS_WORKERS, export_csv_for_build, run_full_build
 from ..services.build_lock import get_build_state, is_build_running
 
 router = APIRouter(prefix="/build", tags=["build"])
@@ -25,7 +26,15 @@ def render(name: str, request: Request, **kwargs) -> HTMLResponse:
 def build_page(request: Request):
     state = get_build_state()
     running = is_build_running()
-    return render("build.html", request, state=state, running=running)
+    max_workers = max(1, min(os.cpu_count() or 2, 8))
+    return render(
+        "build.html",
+        request,
+        state=state,
+        running=running,
+        default_workers=DEFAULT_COMPRESS_WORKERS,
+        max_workers=max_workers,
+    )
 
 
 @router.get("/status")
@@ -37,7 +46,7 @@ def build_status():
 
 
 @router.post("/run")
-def trigger_build():
+async def trigger_build(request: Request):
     if is_build_running():
         return JSONResponse(
             {"status": "error", "message": "Build ya en progreso"},
@@ -47,16 +56,32 @@ def trigger_build():
     build_id = uuid.uuid4().hex[:8]
     BUILD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
+    build_type = "full"
+    workers = DEFAULT_COMPRESS_WORKERS
+    try:
+        payload = await request.json()
+        build_type = payload.get("build_type", build_type)
+        workers = int(payload.get("workers", workers))
+    except Exception:
+        pass
+
+    if build_type not in {"full", "texts", "images"}:
+        return JSONResponse(
+            {"status": "error", "message": "Tipo de build invalido"},
+            status_code=400,
+        )
+    workers = max(1, min(workers, max(1, min(os.cpu_count() or 2, 8))))
+
     worker_script = Path(__file__).parent.parent.parent / "build_worker.py"
     venv_python = Path(__file__).parent.parent.parent / ".venv" / "bin" / "python"
     python_exe = str(venv_python) if venv_python.exists() else "python3"
     subprocess.Popen(
-        [python_exe, str(worker_script), build_id],
+        [python_exe, str(worker_script), build_id, build_type, str(workers)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(Path(__file__).parent.parent.parent)
     )
 
-    return JSONResponse({"status": "started", "build_id": build_id})
+    return JSONResponse({"status": "started", "build_id": build_id, "build_type": build_type, "workers": workers})
 
 
 @router.get("/export/csv")

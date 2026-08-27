@@ -9,6 +9,30 @@
         <h2 class="text-lg font-bold mb-3">{{ _('build.pipeline_title') }}</h2>
         <p class="text-gray-400 text-sm mb-4">{{ _('build.pipeline_desc') }}</p>
 
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <label class="block text-sm">
+                <span class="text-gray-300 font-semibold">Tipo de build</span>
+                <select id="build-type"
+                        class="mt-1 w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+                        {% if running %}disabled{% endif %}>
+                    <option value="full">Completo: textos + imagenes</option>
+                    <option value="texts">Solo textos</option>
+                    <option value="images">Solo imagenes</option>
+                </select>
+            </label>
+            <label class="block text-sm">
+                <span class="text-gray-300 font-semibold">Potencia</span>
+                <select id="build-workers"
+                        class="mt-1 w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+                        {% if running %}disabled{% endif %}>
+                    {% for n in range(1, max_workers + 1) %}
+                    <option value="{{ n }}" {% if n == default_workers %}selected{% endif %}>{{ n }} proceso{% if n != 1 %}s{% endif %}</option>
+                    {% endfor %}
+                </select>
+                <span class="block text-xs text-gray-500 mt-1">Usa 1-2 en PCs baratas.</span>
+            </label>
+        </div>
+
         <div class="flex gap-3 mb-4">
             <button id="build-btn"
                     class="bg-pink-600 hover:bg-pink-700 disabled:bg-gray-600 text-white px-6 py-3 rounded-lg font-bold"
@@ -70,7 +94,11 @@ let pollTimer = null;
 
 async function triggerBuild() {
     const btn = document.getElementById('build-btn');
+    const buildType = document.getElementById('build-type');
+    const workers = document.getElementById('build-workers');
     btn.disabled = true;
+    buildType.disabled = true;
+    workers.disabled = true;
     btn.textContent = 'Iniciando...';
 
     document.getElementById('build-progress').classList.remove('hidden');
@@ -78,7 +106,14 @@ async function triggerBuild() {
     document.getElementById('build-log').textContent = '{{ _('build.progress_init') }}';
 
     try {
-        const resp = await fetch('/build/run', { method: 'POST' });
+        const resp = await fetch('/build/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                build_type: buildType.value,
+                workers: parseInt(workers.value || '1', 10)
+            })
+        });
         const data = await resp.json();
 
         if (data.status === 'started') {
@@ -87,10 +122,14 @@ async function triggerBuild() {
         } else {
             btn.textContent = '{{ _('build.btn_error') }}' + data.message;
             btn.disabled = false;
+            buildType.disabled = false;
+            workers.disabled = false;
         }
     } catch (e) {
         btn.textContent = '{{ _('build.btn_conn_error') }}';
         btn.disabled = false;
+        buildType.disabled = false;
+        workers.disabled = false;
     }
 }
 
@@ -117,6 +156,8 @@ async function pollBuildStatus() {
             document.getElementById('build-btn').textContent = '{{ _('build.btn_done') }}';
             document.getElementById('build-btn').className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
             document.getElementById('build-btn').disabled = false;
+            document.getElementById('build-type').disabled = false;
+            document.getElementById('build-workers').disabled = false;
 
             document.getElementById('build-result').classList.remove('hidden');
             document.getElementById('build-result-content').innerHTML =
@@ -129,6 +170,8 @@ async function pollBuildStatus() {
             document.getElementById('build-btn').textContent = '{{ _('build.btn_failed') }}';
             document.getElementById('build-btn').className = 'bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold';
             document.getElementById('build-btn').disabled = false;
+            document.getElementById('build-type').disabled = false;
+            document.getElementById('build-workers').disabled = false;
 
             document.getElementById('build-result').classList.remove('hidden');
             document.getElementById('build-result-content').innerHTML =
