@@ -13,8 +13,10 @@ def test_glyph_map_es():
     from glyph_map import ES_MAP, game_string, encode_game_utf16, get_glyph_map
 
     gm = get_glyph_map("es")
-    assert len(gm) == 16
+    assert len(gm) == 20
     assert gm["ñ"] == "\u0418"
+    assert gm["♥"] == "＠"
+    assert gm["@"] == "＠"
 
     result = game_string("año", gm)
     assert result == "a\u0418o"
@@ -81,6 +83,18 @@ def test_glyph_map_uppercase():
     assert game_string("Á") == "\u0413"    # Г, igual que á
     assert game_string("É") == "\u0414"    # Д
     assert game_string("Ñ") == "\u0419"    # Й
+
+
+def test_heart_maps_to_native_fullwidth_at():
+    """El original usa ＠ como glifo visible de corazon."""
+    from glyph_map import game_string, encode_game_sjis, encode_game_utf16
+
+    assert game_string("Hola♥") == "Hola＠"
+    assert game_string("Hola@") == "Hola＠"
+    assert encode_game_utf16("Hola♥") == "Hola＠".encode("utf-16-le")
+    assert encode_game_utf16("Hola@") == "Hola＠".encode("utf-16-le")
+    assert encode_game_sjis("Hola♥") == "Hola＠".encode("shift-jis")
+    assert encode_game_sjis("Hola@") == "Hola＠".encode("shift-jis")
 
 
 def test_char_unmapped_passthrough():

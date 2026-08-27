@@ -1,12 +1,18 @@
 import json
 
+from sqlalchemy.exc import DatabaseError
+
 from ..database import get_session, Setting
 
 
 def get_setting(key: str, default=None):
     session = get_session()
-    row = session.query(Setting).filter(Setting.key == key).first()
-    session.close()
+    try:
+        row = session.query(Setting).filter(Setting.key == key).first()
+    except DatabaseError:
+        return default
+    finally:
+        session.close()
     if row is None:
         return default
     if row.value is None or row.value == "":
@@ -19,15 +25,17 @@ def get_setting(key: str, default=None):
 
 def set_setting(key: str, value) -> None:
     session = get_session()
-    row = session.query(Setting).filter(Setting.key == key).first()
-    serialized = json.dumps(value, ensure_ascii=False)
-    if row is None:
-        row = Setting(key=key, value=serialized)
-        session.add(row)
-    else:
-        row.value = serialized
-    session.commit()
-    session.close()
+    try:
+        row = session.query(Setting).filter(Setting.key == key).first()
+        serialized = json.dumps(value, ensure_ascii=False)
+        if row is None:
+            row = Setting(key=key, value=serialized)
+            session.add(row)
+        else:
+            row.value = serialized
+        session.commit()
+    finally:
+        session.close()
 
 
 def load_glyph_map() -> dict:

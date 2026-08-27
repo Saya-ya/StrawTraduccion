@@ -1,11 +1,16 @@
 from sqlalchemy import (create_engine, Column, Integer, String, Text,
                         Boolean, DateTime, ForeignKey, Index)
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from datetime import datetime, timezone
 
 from .config import DB_URL
 
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DB_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+    poolclass=NullPool,
+)
 SessionLocal = sessionmaker(bind=engine)
 
 

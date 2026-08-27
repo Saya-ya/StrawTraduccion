@@ -25,6 +25,10 @@ ES_MAP = {
     'Ú': '\u0417',  # З
     'Ü': '\u0417',  # З
     'ü': '\u0417',  # З
+    '♥': '＠',      # Native game glyph used as heart in original text
+    '♡': '＠',
+    '❤': '＠',
+    '@': '＠',
 }
 
 EN_MAP = {}

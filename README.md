@@ -343,8 +343,8 @@ StrawTraduccion/
 ### Line break system (`\r\n`)
 The game uses `\r\n` (CRLF) for line breaks inside dialogue boxes. Each `\r\n` takes 4 bytes in UTF-16LE. The web editor auto-inserts proportional breaks based on the Japanese original, searching for nearby spaces or punctuation to avoid splitting words.
 
-### `@` click-pause markers
-The `@` character (and its fullwidth variant `＠`) is a click-pause marker in the game engine: text stops and waits for the player to press a button. It must be preserved at the same positions in translations.
+### Heart glyphs (`＠`)
+The original Japanese scripts use the fullwidth `＠` character as a visible heart-style glyph. Real line breaks are `\r\n`. Translators can write `@`, `♥`, `♡`, or `❤`; the encoder maps them to the game's native `＠` glyph during patching.
 
 ### LZ77 header fix
 The PS2 native decompressor processes the LZ77 header as 12 bytes (not 16). Using 16 bytes causes a 6,905-byte difference in decompressed output and results in a black screen.
