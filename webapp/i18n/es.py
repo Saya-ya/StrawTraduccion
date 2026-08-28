@@ -66,16 +66,17 @@ STRINGS = {
     "script.needs_shift": "⚠ needs_shift",
 
     # ── Import ──
-    "import.title": "📥 Importar textos del juego",
+    "import.title": "📥 Importar datos del juego",
     "import.description": "Esto ejecutará la extracción completa desde",
     "import.steps": [
         "descomprime los scripts .dec",
         "extrae diálogos con secciones",
         "extrae menús y sistema",
+        "extrae imágenes y genera el catálogo de texturas",
     ],
     "import.requirement": "Requiere que Data.bin y SLPS_256.11 existan en originales/.",
-    "import.btn_extract": "Extraer e Importar",
-    "import.status_extracting": "Ejecutando extracción e importación... (puede tardar ~1-2 min la primera vez)",
+    "import.btn_extract": "Extraer e Importar Todo",
+    "import.status_extracting": "Ejecutando extracción de textos e imágenes... (puede tardar varios minutos la primera vez)",
     "import.status_done": "✅ Importación completada",
     "import.status_done_btn": "✓ Completado — Recargar página",
     "import.status_error": "❌ Error: ",

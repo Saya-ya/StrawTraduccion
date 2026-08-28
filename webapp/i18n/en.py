@@ -66,16 +66,17 @@ STRINGS = {
     "script.needs_shift": "⚠ needs_shift",
 
     # ── Import ──
-    "import.title": "📥 Import game texts",
+    "import.title": "📥 Import game data",
     "import.description": "This will run the full extraction from",
     "import.steps": [
         "decompresses .dec scripts",
         "extracts dialogue with sections",
         "extracts menus and system texts",
+        "extracts images and builds the texture catalog",
     ],
     "import.requirement": "Requires Data.bin and SLPS_256.11 to exist in originales/.",
-    "import.btn_extract": "Extract and Import",
-    "import.status_extracting": "Running extraction and import... (may take ~1-2 min the first time)",
+    "import.btn_extract": "Extract and Import All",
+    "import.status_extracting": "Running text and image extraction... (may take several minutes the first time)",
     "import.status_done": "✅ Import complete",
     "import.status_done_btn": "✓ Complete — Reload page",
     "import.status_error": "❌ Error: ",

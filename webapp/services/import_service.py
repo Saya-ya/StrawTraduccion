@@ -10,7 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT / 'tools'))
 sys.path.insert(0, str(PROJECT_ROOT / 'traduccion_tools'))
 
 from sqlalchemy.orm import Session
-from ..config import TIMEOUT_EXTRACT, WORK, TEXTOS, ORIGINALES
+from ..config import TIMEOUT_EXTRACT, WORK, TEXTOS, ORIGINALES, TEXTURE_CATALOG
 from ..database import Script, TextEntry, get_session
 from .capacity import compute_capacity
 from .fit_checker import check_fit
@@ -88,6 +88,42 @@ def run_elf_extraction(output_csv: Path) -> dict:
         "success": result.returncode == 0,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr[-300:],
+    }
+
+
+def run_texture_extraction() -> dict:
+    extract_textures = PROJECT_ROOT / 'tools' / 'extract_all_textures.py'
+    TEXTURE_CATALOG.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = subprocess.run(
+            ["python3", str(extract_textures), "--out", str(TEXTURE_CATALOG), "--catalog"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            timeout=TIMEOUT_EXTRACT
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": f"Timeout tras {TIMEOUT_EXTRACT}s",
+            "stats": {"total": 0, "with_png": 0},
+        }
+
+    stats = {"total": 0, "with_png": 0}
+    textures_json = TEXTURE_CATALOG / "textures.json"
+    if textures_json.exists():
+        try:
+            data = json.loads(textures_json.read_text(encoding="utf-8"))
+            stats["total"] = len(data)
+            stats["with_png"] = sum(1 for r in data if r.get("png"))
+        except Exception:
+            pass
+
+    return {
+        "success": result.returncode == 0,
+        "stdout": result.stdout[-1000:],
+        "stderr": result.stderr[-500:],
+        "stats": stats,
     }
 
 

@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
 
 from ..config import TEMPLATES as TEMPLATES_DIR, TEXTOS
-from ..services.import_service import import_csv_to_db
+from ..services.import_service import import_csv_to_db, run_texture_extraction
 from ..services.build_lock import acquire_build_lock, is_build_running, release_build_lock
 
 router = APIRouter(prefix="/import", tags=["import"])
@@ -31,7 +31,12 @@ def run_import():
 
     try:
         stats = import_csv_to_db(TEXTOS / 'dialogo.csv')
-        return JSONResponse({"status": "ok", "stats": stats})
+        texture_result = run_texture_extraction()
+        return JSONResponse({
+            "status": "ok",
+            "stats": stats,
+            "textures": texture_result,
+        })
     except Exception as e:
         return JSONResponse(
             {"status": "error", "message": str(e)},

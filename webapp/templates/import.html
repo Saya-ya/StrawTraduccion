@@ -11,6 +11,7 @@
         <li><code class="text-pink-400">extract_all.py</code> — {{ _('import.steps')[0] }}</li>
         <li><code class="text-pink-400">dialogue_order.py</code> — {{ _('import.steps')[1] }}</li>
         <li><code class="text-pink-400">extract_dialogue.py --elf</code> — {{ _('import.steps')[2] }}</li>
+        <li><code class="text-pink-400">extract_all_textures.py --catalog</code> — {{ _('import.steps')[3] }}</li>
     </ol>
     <p class="text-gray-500 text-sm mb-4">{{ _('import.requirement') }}</p>
 
@@ -56,7 +57,7 @@ async function runImport() {
         result.classList.remove('hidden');
         if (data.status === 'ok') {
             progress.textContent = '{{ _('import.status_done') }}';
-            result.textContent = JSON.stringify(data.stats, null, 2);
+            result.textContent = JSON.stringify({ texts: data.stats, textures: data.textures }, null, 2);
             btn.textContent = '{{ _('import.status_done_btn') }}';
             btn.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-bold';
             btn.onclick = () => location.reload();

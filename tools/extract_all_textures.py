@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 import argparse
 import csv
+import hashlib
 import json
 import sys
 import time
@@ -69,6 +70,14 @@ def metrics_from_rgba(rgba: bytes) -> tuple[float, float]:
     alpha_nz = n - alpha.count(0)  # count() es a nivel C
     ratio = alpha_nz / n
     return ratio, ratio
+
+
+def rgba_content_hash(width: int, height: int, rgba: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(f"{width}x{height}".encode("ascii"))
+    h.update(b"\0")
+    h.update(rgba)
+    return h.hexdigest()
 
 
 def score_ui(pic: Tim2Picture, unique: int | None, alpha_ratio: float, aspect: float) -> tuple[int, list[str]]:
@@ -172,6 +181,7 @@ def extract_all(
     only_ids: set[int] | None = None,
     background: tuple[int, int, int] | None = None,
     progress_every: int = 100,
+    progress_callback=None,
 ) -> list[dict]:
     rows = [r for r in read_entries(data_path) if r["is_file"]]
     if only_ids is not None:
@@ -186,6 +196,8 @@ def extract_all(
     records: list[dict] = []
     t0 = time.time()
     processed = 0
+    if progress_callback:
+        progress_callback(processed, len(rows), len(records), 0.0)
     with data_path.open("rb") as f:
         for r in rows:
             f.seek(r["off"])
@@ -196,7 +208,7 @@ def extract_all(
                     blob = decompress(raw, strict=False)
                     candidates.append((blob, True, None, None))
                 except Exception:
-                    continue
+                    candidates = []
             else:
                 candidates.append((raw, False, None, None))
                 for nested_off, nested_size, blob in iter_nested_lz77(raw):
@@ -211,9 +223,11 @@ def extract_all(
                         rgba = None
                         alpha_ratio = nonzero_ratio = None
                         png_rel = None
+                        content_hash = None
                         too_big = max_dim is not None and (pic.width > max_dim or pic.height > max_dim)
                         try:
                             rgba = picture_to_rgba(pic, force_opaque=False)
+                            content_hash = rgba_content_hash(pic.width, pic.height, rgba)
                             alpha_ratio, nonzero_ratio = metrics_from_rgba(rgba)
                         except Exception:
                             rgba = None
@@ -258,8 +272,11 @@ def extract_all(
                             "ui_reasons": ",".join(ui_reasons),
                             "too_big": too_big,
                             "png": png_rel,
+                            "content_hash": content_hash,
                         })
             processed += 1
+            if progress_callback:
+                progress_callback(processed, len(rows), len(records), time.time() - t0)
             if progress_every and processed % progress_every == 0:
                 print(f"  ... {processed}/{len(rows)} archivos, {len(records)} texturas, {time.time()-t0:.1f}s")
 

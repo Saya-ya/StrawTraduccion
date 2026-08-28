@@ -8,12 +8,21 @@
         <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
             <h2 class="text-pink-400 font-semibold mb-2">📦 Extraer</h2>
             <p class="text-gray-400 text-xs mb-3">Extrae todas las texturas TIM2 de Data.bin a PNG + catálogo.</p>
-            <button hx-post="/textures/extract"
-                    hx-target="#extract-result"
-                    hx-disabled-elt="this"
+            <button id="extract-btn"
+                    type="button"
                     class="bg-pink-600 hover:bg-pink-700 text-white px-4 py-2 rounded text-sm w-full disabled:opacity-50">
                 Extraer texturas
             </button>
+            <div id="extract-progress-wrap" class="mt-3 {% if extract_state.status != 'running' %}hidden{% endif %}">
+                <div class="h-2 bg-gray-900 rounded overflow-hidden border border-gray-700">
+                    <div id="extract-progress-bar"
+                         class="h-full bg-pink-500 transition-all duration-300"
+                         style="width: {{ extract_state.progress|default(0) }}%"></div>
+                </div>
+                <div id="extract-progress-text" class="mt-2 text-xs text-gray-400">
+                    {{ extract_state.message|default('') }}
+                </div>
+            </div>
             <div id="extract-result" class="mt-2 text-xs text-gray-400"></div>
             {% if stats.total > 0 %}
             <p class="text-xs text-green-400 mt-2">✓ {{ stats.total }} texturas catalogadas ({{ stats.with_png }} PNGs)</p>
@@ -78,6 +87,37 @@
             </a>
             {% endif %}
         </div>
+
+        <!-- Duplicados -->
+        <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h2 class="text-pink-400 font-semibold mb-2">🔁 Duplicados</h2>
+            <p class="text-gray-400 text-xs mb-3">
+                Compara los PNGs del catálogo por hash RGBA y guarda <code class="text-gray-300">duplicates.json</code> + <code class="text-gray-300">duplicates.csv</code>.
+            </p>
+            <button id="duplicate-btn"
+                    type="button"
+                    class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm w-full disabled:opacity-50">
+                Analizar duplicados
+            </button>
+            <div id="duplicate-progress-wrap" class="mt-3 {% if duplicate_state.status != 'running' %}hidden{% endif %}">
+                <div class="h-2 bg-gray-900 rounded overflow-hidden border border-gray-700">
+                    <div id="duplicate-progress-bar"
+                         class="h-full bg-purple-500 transition-all duration-300"
+                         style="width: {{ duplicate_state.progress|default(0) }}%"></div>
+                </div>
+                <div id="duplicate-progress-text" class="mt-2 text-xs text-gray-400">
+                    {{ duplicate_state.message|default('') }}
+                </div>
+            </div>
+            <div id="duplicate-result" class="mt-2 text-xs text-gray-400"></div>
+            {% if duplicates.summary.groups > 0 %}
+            <p class="text-xs text-green-400 mt-2">
+                ✓ {{ duplicates.summary.groups }} grupos duplicados, {{ duplicates.summary.duplicate_files }} archivos relacionados
+            </p>
+            {% else %}
+            <p class="text-xs text-gray-500 mt-2">Sin análisis de duplicados o sin duplicados detectados.</p>
+            {% endif %}
+        </div>
     </div>
 
     <!-- Columna derecha: Estado / Previsualización -->
@@ -127,7 +167,8 @@
                         <tr>
                             <th class="text-left py-1 pr-2">Archivo</th>
                             <th class="text-left py-1 pr-2">Peso</th>
-                            <th class="text-left py-1">Estado</th>
+                            <th class="text-left py-1 pr-2">Estado</th>
+                            <th class="text-left py-1">Duplicados</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -150,6 +191,19 @@
                                 <span class="text-yellow-400">⚠ nombre no reconocido</span>
                                 {% endif %}
                             </td>
+                            <td class="py-1">
+                                {% if f.duplicate_count and f.duplicate_count > 0 %}
+                                <button hx-post="/textures/duplicates/apply/{{ f.name | urlencode }}"
+                                        hx-target="#duplicate-result"
+                                        hx-confirm="Esta textura tiene {{ f.duplicate_count }} duplicados. ¿Copiar este PNG a todos ellos?"
+                                        class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px]">
+                                    Aplicar a {{ f.duplicate_count }}
+                                </button>
+                                <div class="text-[10px] text-gray-500 mt-1">{{ f.duplicate_group }}</div>
+                                {% else %}
+                                <span class="text-gray-600">-</span>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -161,5 +215,171 @@
         </div>
     </div>
 </div>
+
+<script>
+(function() {
+    const btn = document.getElementById('extract-btn');
+    const wrap = document.getElementById('extract-progress-wrap');
+    const bar = document.getElementById('extract-progress-bar');
+    const text = document.getElementById('extract-progress-text');
+    const result = document.getElementById('extract-result');
+    let pollTimer = null;
+
+    function setProgress(state) {
+        const progress = Math.max(0, Math.min(100, state.progress || 0));
+        wrap.classList.remove('hidden');
+        bar.style.width = progress + '%';
+        text.textContent = state.message || 'Procesando...';
+
+        if (state.status === 'success') {
+            btn.disabled = false;
+            btn.textContent = 'Extraer texturas';
+            result.className = 'mt-2 text-xs text-green-400';
+            result.textContent = state.message || 'Extracción completada';
+            clearInterval(pollTimer);
+            pollTimer = null;
+            setTimeout(function() { location.reload(); }, 1200);
+        } else if (state.status === 'error') {
+            btn.disabled = false;
+            btn.textContent = 'Reintentar extracción';
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = state.message || 'Error durante la extracción';
+            clearInterval(pollTimer);
+            pollTimer = null;
+        } else if (state.status === 'running') {
+            btn.disabled = true;
+            btn.textContent = 'Extrayendo... ' + progress + '%';
+            result.className = 'mt-2 text-xs text-gray-400';
+            result.textContent = state.elapsed ? ('Tiempo: ' + state.elapsed + 's') : '';
+        }
+    }
+
+    async function pollStatus() {
+        try {
+            const resp = await fetch('/textures/extract/status');
+            setProgress(await resp.json());
+        } catch (e) {
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = 'No se pudo leer el progreso: ' + e.message;
+        }
+    }
+
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollStatus();
+        pollTimer = setInterval(pollStatus, 1000);
+    }
+
+    btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        btn.textContent = 'Iniciando...';
+        result.textContent = '';
+        try {
+            const resp = await fetch('/textures/extract', { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'started') {
+                startPolling();
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Reintentar extracción';
+                result.className = 'mt-2 text-xs text-red-400';
+                result.textContent = data.message || 'No se pudo iniciar la extracción';
+            }
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Reintentar extracción';
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = 'Error de conexión: ' + e.message;
+        }
+    });
+
+    {% if extract_state.status == 'running' %}
+    startPolling();
+    {% endif %}
+})();
+</script>
+
+<script>
+(function() {
+    const btn = document.getElementById('duplicate-btn');
+    const wrap = document.getElementById('duplicate-progress-wrap');
+    const bar = document.getElementById('duplicate-progress-bar');
+    const text = document.getElementById('duplicate-progress-text');
+    const result = document.getElementById('duplicate-result');
+    let pollTimer = null;
+
+    function setProgress(state) {
+        const progress = Math.max(0, Math.min(100, state.progress || 0));
+        wrap.classList.remove('hidden');
+        bar.style.width = progress + '%';
+        text.textContent = state.message || 'Analizando...';
+
+        if (state.status === 'success') {
+            btn.disabled = false;
+            btn.textContent = 'Analizar duplicados';
+            result.className = 'mt-2 text-xs text-green-400';
+            result.textContent = state.message || 'Análisis completado';
+            clearInterval(pollTimer);
+            pollTimer = null;
+            setTimeout(function() { location.reload(); }, 1200);
+        } else if (state.status === 'error') {
+            btn.disabled = false;
+            btn.textContent = 'Reintentar análisis';
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = state.message || 'Error durante el análisis';
+            clearInterval(pollTimer);
+            pollTimer = null;
+        } else if (state.status === 'running') {
+            btn.disabled = true;
+            btn.textContent = 'Analizando... ' + progress + '%';
+            result.className = 'mt-2 text-xs text-gray-400';
+            result.textContent = state.elapsed ? ('Tiempo: ' + state.elapsed + 's') : '';
+        }
+    }
+
+    async function pollStatus() {
+        try {
+            const resp = await fetch('/textures/duplicates/status');
+            setProgress(await resp.json());
+        } catch (e) {
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = 'No se pudo leer el progreso: ' + e.message;
+        }
+    }
+
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollStatus();
+        pollTimer = setInterval(pollStatus, 1000);
+    }
+
+    btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        btn.textContent = 'Iniciando...';
+        result.textContent = '';
+        try {
+            const resp = await fetch('/textures/duplicates/analyze', { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'started') {
+                startPolling();
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Reintentar análisis';
+                result.className = 'mt-2 text-xs text-red-400';
+                result.textContent = data.message || 'No se pudo iniciar el análisis';
+            }
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Reintentar análisis';
+            result.className = 'mt-2 text-xs text-red-400';
+            result.textContent = 'Error de conexión: ' + e.message;
+        }
+    });
+
+    {% if duplicate_state.status == 'running' %}
+    startPolling();
+    {% endif %}
+})();
+</script>
 
 {% endblock %}
