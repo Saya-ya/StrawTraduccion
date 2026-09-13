@@ -1,9 +1,9 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::{decompress_lz77, read_entries};
+use crate::{compress_lz77, decompress_lz77, find_row, read_entries};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextureRecord {
@@ -29,11 +29,31 @@ pub struct TextureRecord {
     pub png: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TexturePatchReport {
+    pub files_processed: usize,
+    pub patches_applied: usize,
+    pub streams_written: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TexturePatchEntry {
+    file_id: u32,
+    tim2_index: usize,
+    picture_index: usize,
+    png: String,
+    mode: Option<String>,
+    lz77_offset: Option<usize>,
+}
+
 #[derive(Debug, Clone)]
 struct Tim2Picture {
     index: usize,
+    picture_offset: usize,
     image_size: u32,
     clut_size: u32,
+    header_size: usize,
     clut_color_count: u16,
     image_type: u8,
     width: u16,
@@ -83,6 +103,63 @@ pub fn write_texture_inventory(
     }
     writer.flush()?;
     Ok(records)
+}
+
+pub fn patch_textures_from_manifest(
+    data_bin: impl AsRef<Path>,
+    manifest_path: impl AsRef<Path>,
+    out_dir: impl AsRef<Path>,
+) -> Result<TexturePatchReport> {
+    let data_bin = data_bin.as_ref();
+    let manifest_path = manifest_path.as_ref();
+    let out_dir = out_dir.as_ref();
+    let manifest = fs::read_to_string(manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let entries: Vec<TexturePatchEntry> = serde_json::from_str(&manifest)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    fs::create_dir_all(out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+
+    let rows = read_entries(data_bin)?;
+    let mut by_file: BTreeMap<u32, Vec<TexturePatchEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_file.entry(entry.file_id).or_default().push(entry);
+    }
+
+    let mut report = TexturePatchReport {
+        files_processed: 0,
+        patches_applied: 0,
+        streams_written: 0,
+        errors: Vec::new(),
+    };
+    let data =
+        fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
+
+    for (file_id, patches) in by_file {
+        report.files_processed += 1;
+        let Some(row) = find_row(&rows, file_id) else {
+            report.errors.push(format!("ID {file_id} not found"));
+            continue;
+        };
+        let start = row.offset as usize;
+        let end = start.saturating_add(row.size as usize).min(data.len());
+        if start >= end {
+            report
+                .errors
+                .push(format!("ID {file_id} has invalid FAT range"));
+            continue;
+        }
+        match process_texture_file(&data[start..end], &patches) {
+            Ok((stream, applied)) => {
+                fs::write(out_dir.join(format!("ID_{file_id:05}.lz77")), stream)?;
+                report.patches_applied += applied;
+                report.streams_written += 1;
+            }
+            Err(err) => report.errors.push(format!("ID {file_id}: {err}")),
+        }
+    }
+
+    Ok(report)
 }
 
 fn texture_inventory(data_bin: impl AsRef<Path>) -> Result<Vec<TextureRecord>> {
@@ -143,6 +220,204 @@ fn texture_inventory(data_bin: impl AsRef<Path>) -> Result<Vec<TextureRecord>> {
     }
 
     Ok(records)
+}
+
+fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Vec<u8>, usize)> {
+    let nested = patches.iter().any(|patch| patch.lz77_offset.is_some());
+    if nested {
+        if patches.iter().any(|patch| patch.lz77_offset.is_none()) {
+            bail!("cannot mix direct and nested texture patches in one file");
+        }
+        let mut raw = raw.to_vec();
+        let mut by_offset: BTreeMap<usize, Vec<&TexturePatchEntry>> = BTreeMap::new();
+        for patch in patches {
+            by_offset
+                .entry(patch.lz77_offset.unwrap_or(0))
+                .or_default()
+                .push(patch);
+        }
+        let mut applied = 0;
+        for (nested_off, group) in by_offset {
+            let old_size = lz77_stream_size(&raw, nested_off)?;
+            let mut blob = decompress_lz77(&raw[nested_off..nested_off + old_size], None, false)?;
+            for patch in group {
+                apply_texture_patch(&mut blob, patch)?;
+                applied += 1;
+            }
+            let new_stream = compress_lz77(&blob, false);
+            if decompress_lz77(&new_stream, None, false)? != blob {
+                bail!("nested LZ77 roundtrip failed at 0x{nested_off:X}");
+            }
+            if new_stream.len() > old_size {
+                bail!(
+                    "nested LZ77 at 0x{nested_off:X} does not fit: {} > {old_size}",
+                    new_stream.len()
+                );
+            }
+            raw[nested_off..nested_off + new_stream.len()].copy_from_slice(&new_stream);
+            raw[nested_off + new_stream.len()..nested_off + old_size].fill(0);
+        }
+        return Ok((raw, applied));
+    }
+
+    let was_lz77 = raw.starts_with(b"LZ77");
+    let mut blob = if was_lz77 {
+        decompress_lz77(raw, None, false)?
+    } else {
+        raw.to_vec()
+    };
+    for patch in patches {
+        apply_texture_patch(&mut blob, patch)?;
+    }
+    if was_lz77 {
+        let stream = compress_lz77(&blob, false);
+        if decompress_lz77(&stream, None, false)? != blob {
+            bail!("LZ77 roundtrip failed");
+        }
+        Ok((stream, patches.len()))
+    } else {
+        Ok((blob, patches.len()))
+    }
+}
+
+fn apply_texture_patch(blob: &mut [u8], patch: &TexturePatchEntry) -> Result<()> {
+    if patch.mode.as_deref().unwrap_or("preserve_palette") != "preserve_palette" {
+        bail!("only preserve_palette texture patches are supported");
+    }
+    let tm2 = find_tim2_files(blob)
+        .into_iter()
+        .nth(patch.tim2_index)
+        .with_context(|| format!("TIM2 {} not found", patch.tim2_index))?;
+    let pic = tm2
+        .pictures
+        .into_iter()
+        .find(|pic| pic.index == patch.picture_index)
+        .with_context(|| format!("picture {} not found", patch.picture_index))?;
+    let (width, height, rgba) = read_png_rgba(Path::new(&patch.png))?;
+    if width != pic.width as u32 || height != pic.height as u32 {
+        bail!(
+            "PNG dimensions {width}x{height} do not match TIM2 {}x{}",
+            pic.width,
+            pic.height
+        );
+    }
+    let image_data = encode_picture_preserve_palette(&pic, &rgba)?;
+    if image_data.len() != pic.image_size as usize {
+        bail!(
+            "encoded image size {} does not match original {}",
+            image_data.len(),
+            pic.image_size
+        );
+    }
+    let image_offset = pic.picture_offset + pic.header_size;
+    blob[image_offset..image_offset + image_data.len()].copy_from_slice(&image_data);
+    Ok(())
+}
+
+fn encode_picture_preserve_palette(pic: &Tim2Picture, rgba: &[u8]) -> Result<Vec<u8>> {
+    match pic.image_type {
+        5 => encode_indexed8_preserve(pic, rgba),
+        3 | 4 => encode_indexed4_preserve(pic, rgba),
+        other => bail!("image_type {other} is not supported for preserve_palette"),
+    }
+}
+
+fn encode_indexed8_preserve(pic: &Tim2Picture, rgba: &[u8]) -> Result<Vec<u8>> {
+    let palette = decode_clut_rgba32(pic, true);
+    let pixels = pic.width as usize * pic.height as usize;
+    let mut out = Vec::with_capacity(pixels);
+    for i in 0..pixels {
+        out.push(closest_index(&rgba[i * 4..i * 4 + 4], &palette) as u8);
+    }
+    Ok(out)
+}
+
+fn encode_indexed4_preserve(pic: &Tim2Picture, rgba: &[u8]) -> Result<Vec<u8>> {
+    let mut palette = decode_clut_rgba32(pic, false);
+    palette.truncate(
+        usize::from(if pic.clut_color_count == 0 {
+            16
+        } else {
+            pic.clut_color_count
+        })
+        .min(16),
+    );
+    let pixels = pic.width as usize * pic.height as usize;
+    let mut out = Vec::with_capacity((pixels + 1) / 2);
+    for i in (0..pixels).step_by(2) {
+        let low = closest_index(&rgba[i * 4..i * 4 + 4], &palette) as u8 & 0x0f;
+        let high = if i + 1 < pixels {
+            (closest_index(&rgba[(i + 1) * 4..(i + 1) * 4 + 4], &palette) as u8 & 0x0f) << 4
+        } else {
+            0
+        };
+        out.push(low | high);
+    }
+    Ok(out)
+}
+
+fn closest_index(color: &[u8], palette: &[[u8; 4]]) -> usize {
+    let mut best = 0;
+    let mut best_distance = i64::MAX;
+    for (idx, candidate) in palette.iter().enumerate() {
+        let dr = color[0] as i64 - candidate[0] as i64;
+        let dg = color[1] as i64 - candidate[1] as i64;
+        let db = color[2] as i64 - candidate[2] as i64;
+        let da = color[3] as i64 - candidate[3] as i64;
+        let distance = dr * dr + dg * dg + db * db + da * da * 4;
+        if distance < best_distance {
+            best_distance = distance;
+            best = idx;
+            if distance == 0 {
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn read_png_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let decoder = png::Decoder::new(file);
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf)?;
+    let data = &buf[..info.buffer_size()];
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => data.to_vec(),
+        png::ColorType::Rgb => {
+            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
+            for chunk in data.chunks_exact(3) {
+                out.extend([chunk[0], chunk[1], chunk[2], 255]);
+            }
+            out
+        }
+        png::ColorType::Grayscale => data.iter().flat_map(|v| [*v, *v, *v, 255]).collect(),
+        png::ColorType::GrayscaleAlpha => data
+            .chunks_exact(2)
+            .flat_map(|v| [v[0], v[0], v[0], v[1]])
+            .collect(),
+        other => bail!("unsupported PNG color type: {other:?}"),
+    };
+    Ok((info.width, info.height, rgba))
+}
+
+fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
+    if stream.get(offset..offset + 4) != Some(b"LZ77") || offset + 12 > stream.len() {
+        bail!("no valid LZ77 stream at 0x{offset:X}");
+    }
+    let comp_size = u32::from_le_bytes([
+        stream[offset + 8],
+        stream[offset + 9],
+        stream[offset + 10],
+        stream[offset + 11],
+    ]) as usize;
+    let size = 12 + comp_size;
+    if comp_size == 0 || offset + size > stream.len() {
+        bail!("truncated LZ77 stream at 0x{offset:X}");
+    }
+    Ok(size)
 }
 
 fn write_record_png(
@@ -273,8 +548,10 @@ fn parse_tim2(data: &[u8], offset: usize) -> Option<Tim2File> {
         }
         pictures.push(Tim2Picture {
             index,
+            picture_offset: pos,
             image_size,
             clut_size,
+            header_size,
             clut_color_count,
             image_type,
             width,

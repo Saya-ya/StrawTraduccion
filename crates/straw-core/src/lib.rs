@@ -36,4 +36,6 @@ pub use script_rebuilder::{
     find_segment_containing, rebuild_local_slack, RebuildReport, SegmentReport, TextSegment,
     TranslationRow,
 };
-pub use texture_inventory::{write_texture_inventory, TextureRecord};
+pub use texture_inventory::{
+    patch_textures_from_manifest, write_texture_inventory, TexturePatchReport, TextureRecord,
+};

@@ -11,8 +11,8 @@ use axum::{
 use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
-    inject_elf_into_iso, patch_translated_elf, patch_translated_scripts, spanish_glyph_map,
-    write_texture_inventory, FitStatus, TextSource,
+    inject_elf_into_iso, patch_textures_from_manifest, patch_translated_elf,
+    patch_translated_scripts, spanish_glyph_map, write_texture_inventory, FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
@@ -32,6 +32,8 @@ const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
 const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
+const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
+const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 
 #[derive(Clone)]
 struct AppState {
@@ -121,6 +123,7 @@ struct BuildTemplate {
     build_csv_path: &'static str,
     build_csv_exists: bool,
     texture_inventory_exists: bool,
+    texture_manifest_exists: bool,
     message: String,
     error: String,
 }
@@ -171,6 +174,7 @@ struct BuildParams {
     iso: Option<u64>,
     elf: Option<u64>,
     textures: Option<usize>,
+    texture_patches: Option<usize>,
     error: Option<String>,
 }
 
@@ -203,6 +207,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/build-iso", post(build_iso))
         .route("/build/inject-elf", post(inject_elf))
         .route("/build/texture-inventory", post(texture_inventory))
+        .route("/build/patch-textures", post(patch_textures))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -377,6 +382,7 @@ async fn build_page(
         texture_inventory_exists: FsPath::new(TEXTURE_INVENTORY_DIR)
             .join("textures.json")
             .exists(),
+        texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
         message: params
             .exported
             .map(|count| format!("CSV exportado: {count} traducciones"))
@@ -412,6 +418,11 @@ async fn build_page(
                 params
                     .textures
                     .map(|count| format!("Inventario TIM2 generado: {count} texturas"))
+            })
+            .or_else(|| {
+                params
+                    .texture_patches
+                    .map(|count| format!("Parches de textura aplicados: {count}"))
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -597,6 +608,42 @@ async fn texture_inventory(State(state): State<AppState>) -> impl IntoResponse {
             record_build_success(&state.db, "texture inventory", 15, "").await;
             Redirect::to(&format!("/build?textures={}", records.len())).into_response()
         }
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn patch_textures(State(state): State<AppState>) -> impl IntoResponse {
+    if !FsPath::new(DATA_BIN_PATH).exists() {
+        return Redirect::to("/build?error=missing_databin").into_response();
+    }
+    if !FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
+        return Redirect::to("/build?error=missing_texture_manifest").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, TEXTURE_PATCHED_DIR)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(report)) if report.errors.is_empty() => {
+            record_build_success(&state.db, "patch textures", 70, "").await;
+            Redirect::to(&format!(
+                "/build?texture_patches={}",
+                report.patches_applied
+            ))
+            .into_response()
+        }
+        Ok(Ok(report)) => Redirect::to(&format!(
+            "/build?error={}",
+            url_escape(&report.errors.join("; "))
+        ))
+        .into_response(),
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
