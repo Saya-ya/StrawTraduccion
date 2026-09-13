@@ -62,6 +62,26 @@ pub struct SearchResult {
     pub needs_shift: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranslationStats {
+    pub scripts: i64,
+    pub text_entries: i64,
+    pub translated_entries: i64,
+    pub needs_shift_entries: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildSummary {
+    pub id: i64,
+    pub started_at: String,
+    pub finished_at: String,
+    pub status: String,
+    pub build_type: String,
+    pub iso_path: String,
+    pub step: String,
+    pub progress_pct: i64,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -343,6 +363,69 @@ pub async fn search_text_entries(
                     .unwrap_or_default(),
                 is_translated: row.try_get::<i64, _>("is_translated")? != 0,
                 needs_shift: row.try_get::<i64, _>("needs_shift")? != 0,
+            })
+        })
+        .collect()
+}
+
+pub async fn translation_stats(pool: &SqlitePool) -> Result<TranslationStats> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            (SELECT COUNT(*) FROM scripts) AS scripts,
+            (SELECT COUNT(*) FROM text_entries) AS text_entries,
+            (SELECT COUNT(*) FROM text_entries WHERE is_translated = 1) AS translated_entries,
+            (SELECT COUNT(*) FROM text_entries WHERE needs_shift = 1) AS needs_shift_entries
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(TranslationStats {
+        scripts: row.try_get("scripts")?,
+        text_entries: row.try_get("text_entries")?,
+        translated_entries: row.try_get("translated_entries")?,
+        needs_shift_entries: row.try_get("needs_shift_entries")?,
+    })
+}
+
+pub async fn recent_builds(pool: &SqlitePool, limit: i64) -> Result<Vec<BuildSummary>> {
+    let limit = limit.clamp(1, 50);
+    let rows = sqlx::query(
+        r#"
+        SELECT id, started_at, finished_at, status, build_type, iso_path, step, progress_pct
+        FROM build_history
+        ORDER BY id DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(BuildSummary {
+                id: row.try_get("id")?,
+                started_at: row
+                    .try_get::<Option<String>, _>("started_at")?
+                    .unwrap_or_default(),
+                finished_at: row
+                    .try_get::<Option<String>, _>("finished_at")?
+                    .unwrap_or_default(),
+                status: row
+                    .try_get::<Option<String>, _>("status")?
+                    .unwrap_or_default(),
+                build_type: row
+                    .try_get::<Option<String>, _>("build_type")?
+                    .unwrap_or_default(),
+                iso_path: row
+                    .try_get::<Option<String>, _>("iso_path")?
+                    .unwrap_or_default(),
+                step: row
+                    .try_get::<Option<String>, _>("step")?
+                    .unwrap_or_default(),
+                progress_pct: row.try_get::<Option<i64>, _>("progress_pct")?.unwrap_or(0),
             })
         })
         .collect()
@@ -692,5 +775,29 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].script_id, 1);
         assert_eq!(results[0].translated_text, "panic traducido");
+    }
+
+    #[tokio::test]
+    async fn translation_stats_counts_entries() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, byte_offset, original_text, translated_text, is_translated, needs_shift) \
+             VALUES (1, 16, 'a', 'b', 1, 0), (1, 18, 'c', '', 0, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let stats = translation_stats(&pool).await.unwrap();
+        assert_eq!(stats.scripts, 1);
+        assert_eq!(stats.text_entries, 2);
+        assert_eq!(stats.translated_entries, 1);
+        assert_eq!(stats.needs_shift_entries, 1);
     }
 }

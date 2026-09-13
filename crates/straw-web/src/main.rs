@@ -14,13 +14,16 @@ use straw_core::{
 };
 use straw_db::{
     connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
-    search_text_entries, set_setting, update_text_entry_translation, ScriptDetail, ScriptSummary,
-    SearchResult, TextEntrySummary, DEFAULT_DB_PATH,
+    recent_builds, search_text_entries, set_setting, translation_stats,
+    update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
+    TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DATA_BIN_PATH: &str = "originales/Data.bin";
 const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
+const PATCHED_DATA_PATH: &str = "work/Data_patched.bin";
+const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
 
 #[derive(Clone)]
 struct AppState {
@@ -94,6 +97,18 @@ struct ImportTemplate {
     error: String,
 }
 
+#[derive(Template)]
+#[template(path = "build.html")]
+struct BuildTemplate {
+    stats: TranslationStats,
+    builds: Vec<BuildSummary>,
+    data_bin_exists: bool,
+    dec_count: usize,
+    patched_data_exists: bool,
+    iso_exists: bool,
+    iso_out_path: &'static str,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
@@ -148,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
         .route("/import", get(import_page).post(run_import))
+        .route("/build", get(build_page))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -286,6 +302,28 @@ async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
         error,
     };
     Html(template.render().expect("import template renders"))
+}
+
+async fn build_page(State(state): State<AppState>) -> Html<String> {
+    let stats = translation_stats(&state.db)
+        .await
+        .unwrap_or(TranslationStats {
+            scripts: 0,
+            text_entries: 0,
+            translated_entries: 0,
+            needs_shift_entries: 0,
+        });
+    let builds = recent_builds(&state.db, 10).await.unwrap_or_default();
+    let template = BuildTemplate {
+        stats,
+        builds,
+        data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
+        dec_count: count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)),
+        patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
+        iso_exists: FsPath::new(ISO_OUT_PATH).exists(),
+        iso_out_path: ISO_OUT_PATH,
+    };
+    Html(template.render().expect("build template renders"))
 }
 
 async fn run_import() -> impl IntoResponse {

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Build - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-6 py-10">
+        <nav class="mb-8 flex items-center justify-between">
+            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
+            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Pipeline Rust</span>
+        </nav>
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Build</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Estado del pipeline</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">
+                Esta pantalla prepara el reemplazo del build Python. Por ahora muestra prerequisitos y estadisticas reales desde SQLite.
+            </p>
+        </section>
+
+        <section class="mb-8 grid gap-4 md:grid-cols-4">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
+                {% if data_bin_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-red-300">Falta</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Scripts .dec</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ dec_count }}</div>
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data parcheado</div>
+                {% if patched_data_exists %}<div class="mt-2 font-bold text-emerald-300">Existe</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">ISO</div>
+                {% if iso_exists %}<div class="mt-2 font-bold text-emerald-300">{{ iso_out_path }}</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+        </section>
+
+        <section class="mb-8 grid gap-4 md:grid-cols-4">
+            <div class="rounded-2xl bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Scripts DB</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ stats.scripts }}</div>
+            </div>
+            <div class="rounded-2xl bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Textos</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ stats.text_entries }}</div>
+            </div>
+            <div class="rounded-2xl bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Traducidos</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ stats.translated_entries }}</div>
+            </div>
+            <div class="rounded-2xl bg-slate-900/70 p-5">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Needs shift</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ stats.needs_shift_entries }}</div>
+            </div>
+        </section>
+
+        <section class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <h2 class="text-xl font-black">Historial reciente</h2>
+            {% if builds.len() == 0 %}
+            <p class="mt-4 text-slate-400">Aun no hay builds registrados.</p>
+            {% else %}
+            <div class="mt-4 overflow-hidden rounded-2xl border border-slate-800">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
+                        <tr>
+                            <th class="px-4 py-3">ID</th>
+                            <th class="px-4 py-3">Estado</th>
+                            <th class="px-4 py-3">Tipo</th>
+                            <th class="px-4 py-3">Paso</th>
+                            <th class="px-4 py-3">Progreso</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800">
+                        {% for build in builds %}
+                        <tr>
+                            <td class="px-4 py-3 font-mono text-pink-200">{{ build.id }}</td>
+                            <td class="px-4 py-3">{{ build.status }}</td>
+                            <td class="px-4 py-3">{{ build.build_type }}</td>
+                            <td class="px-4 py-3 text-slate-400">{{ build.step }}</td>
+                            <td class="px-4 py-3">{{ build.progress_pct }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>
