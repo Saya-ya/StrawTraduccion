@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Row, SqlitePool,
+};
 
 pub const DEFAULT_DB_PATH: &str = "work/translation_manager.db";
 
@@ -21,7 +24,14 @@ pub async fn connect_path(path: impl AsRef<Path>) -> Result<SqlitePool> {
             .await
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    connect(&format!("sqlite://{}", path.display())).await
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true);
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .with_context(|| format!("failed to connect to SQLite database {}", path.display()))
 }
 
 pub async fn init_db(pool: &SqlitePool) -> Result<()> {

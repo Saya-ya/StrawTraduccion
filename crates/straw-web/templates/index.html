@@ -12,6 +12,20 @@
             <p class="mb-3 text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Strawberry Panic PS2</p>
             <h1 class="text-4xl font-black tracking-tight text-white md:text-6xl">{{ title }}</h1>
             <p class="mt-5 max-w-2xl text-lg text-slate-300">{{ status }}</p>
+            <dl class="mt-6 grid gap-3 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-sm md:grid-cols-3">
+                <div>
+                    <dt class="text-slate-500">DB</dt>
+                    <dd class="mt-1 font-mono text-pink-200">{{ db_path }}</dd>
+                </div>
+                <div>
+                    <dt class="text-slate-500">UI</dt>
+                    <dd class="mt-1 font-mono text-pink-200">{{ ui_lang }}</dd>
+                </div>
+                <div>
+                    <dt class="text-slate-500">Target</dt>
+                    <dd class="mt-1 font-mono text-pink-200">{{ target_lang }}</dd>
+                </div>
+            </dl>
             <div class="mt-8 grid gap-4 md:grid-cols-3">
                 <div class="rounded-2xl border border-slate-700 bg-slate-800/70 p-5">
                     <h2 class="font-bold text-pink-200">Core</h2>

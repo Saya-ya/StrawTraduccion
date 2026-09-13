@@ -12,6 +12,8 @@ path = "src/main.rs"
 anyhow.workspace = true
 askama.workspace = true
 axum.workspace = true
+sqlx.workspace = true
+straw-db = { path = "../straw-db" }
 straw-core = { path = "../straw-core" }
 tokio.workspace = true
 tower-http.workspace = true
