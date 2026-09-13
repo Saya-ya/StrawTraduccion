@@ -22,7 +22,9 @@ pub use glyph_map::{
     encode_game_sjis, encode_game_utf16, english_glyph_map, game_string, invert_glyph_map,
     normalize_glyph_map, spanish_glyph_map, GlyphMap,
 };
-pub use iso::{build_iso_with_patched_data, find_signature_offset, DATA_BIN_SIGNATURE};
+pub use iso::{
+    build_iso_with_patched_data, find_signature_offset, inject_elf_into_iso, DATA_BIN_SIGNATURE,
+};
 pub use lz77::{compress_lz77, decompress_lz77};
 pub use patch_scripts::{patch_translated_scripts, PatchScriptsReport};
 pub use script_rebuilder::{

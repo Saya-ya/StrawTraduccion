@@ -11,7 +11,7 @@ use axum::{
 use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
-    patch_translated_scripts, spanish_glyph_map, FitStatus, TextSource,
+    inject_elf_into_iso, patch_translated_scripts, spanish_glyph_map, FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
@@ -26,6 +26,8 @@ const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
 const PATCHED_DATA_PATH: &str = "work/Data_patched.bin";
 const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
 const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
+const ORIGINAL_ELF_PATH: &str = "originales/SLPS_256.11";
+const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 
 #[derive(Clone)]
@@ -110,6 +112,8 @@ struct BuildTemplate {
     patched_data_exists: bool,
     iso_exists: bool,
     base_iso_exists: bool,
+    original_elf_exists: bool,
+    translated_elf_exists: bool,
     iso_out_path: &'static str,
     build_csv_path: &'static str,
     build_csv_exists: bool,
@@ -157,6 +161,7 @@ struct BuildParams {
     prepared: Option<u64>,
     patched: Option<usize>,
     iso: Option<u64>,
+    elf: Option<u64>,
     error: Option<String>,
 }
 
@@ -185,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/prepare-data", post(prepare_data_bin))
         .route("/build/patch-scripts", post(patch_scripts))
         .route("/build/build-iso", post(build_iso))
+        .route("/build/inject-elf", post(inject_elf))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -346,6 +352,8 @@ async fn build_page(
         patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
         iso_exists: FsPath::new(ISO_OUT_PATH).exists(),
         base_iso_exists: FsPath::new(BASE_ISO_PATH).exists(),
+        original_elf_exists: FsPath::new(ORIGINAL_ELF_PATH).exists(),
+        translated_elf_exists: FsPath::new(TRANSLATED_ELF_PATH).exists(),
         iso_out_path: ISO_OUT_PATH,
         build_csv_path: BUILD_CSV_PATH,
         build_csv_exists: FsPath::new(BUILD_CSV_PATH).exists(),
@@ -369,6 +377,11 @@ async fn build_page(
                 params
                     .iso
                     .map(|bytes| format!("ISO generada: {} MB escritos", bytes / 1024 / 1024))
+            })
+            .or_else(|| {
+                params
+                    .elf
+                    .map(|bytes| format!("ELF inyectado: {bytes} bytes escritos"))
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -457,6 +470,33 @@ async fn build_iso() -> impl IntoResponse {
 
     match result {
         Ok(Ok(bytes)) => Redirect::to(&format!("/build?iso={bytes}")).into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn inject_elf() -> impl IntoResponse {
+    if !FsPath::new(ISO_OUT_PATH).exists() {
+        return Redirect::to("/build?error=missing_iso").into_response();
+    }
+    if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
+        return Redirect::to("/build?error=missing_original_elf").into_response();
+    }
+    if !FsPath::new(TRANSLATED_ELF_PATH).exists() {
+        return Redirect::to("/build?error=missing_translated_elf").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(bytes)) => Redirect::to(&format!("/build?elf={bytes}")).into_response(),
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }

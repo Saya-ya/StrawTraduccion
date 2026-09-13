@@ -34,6 +34,31 @@ pub fn build_iso_with_patched_data(
     inject_file_at_offset(out_iso, patched_data, target_offset)
 }
 
+pub fn inject_elf_into_iso(
+    iso_path: impl AsRef<Path>,
+    original_elf: impl AsRef<Path>,
+    translated_elf: impl AsRef<Path>,
+) -> Result<u64> {
+    let iso_path = iso_path.as_ref();
+    let original_elf = original_elf.as_ref();
+    let translated_elf = translated_elf.as_ref();
+
+    if !iso_path.exists() {
+        bail!("ISO not found: {}", iso_path.display());
+    }
+    if !original_elf.exists() {
+        bail!("original ELF not found: {}", original_elf.display());
+    }
+    if !translated_elf.exists() {
+        bail!("translated ELF not found: {}", translated_elf.display());
+    }
+
+    let signature = read_prefix(original_elf, 4096)?;
+    let target_offset = find_signature_offset(iso_path, &signature)?
+        .with_context(|| "ELF signature not found in ISO")?;
+    inject_file_at_offset(iso_path, translated_elf, target_offset)
+}
+
 pub fn find_signature_offset(path: impl AsRef<Path>, signature: &[u8]) -> Result<Option<u64>> {
     if signature.is_empty() {
         bail!("signature cannot be empty");
@@ -75,6 +100,18 @@ fn inject_file_at_offset(target: &Path, source: &Path, offset: u64) -> Result<u6
     let written = std::io::copy(&mut source_file, &mut target_file)?;
     target_file.flush()?;
     Ok(written)
+}
+
+fn read_prefix(path: &Path, size: usize) -> Result<Vec<u8>> {
+    let mut file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let mut signature = vec![0_u8; size];
+    let read = file.read(&mut signature)?;
+    signature.truncate(read);
+    if signature.is_empty() {
+        bail!("signature source is empty: {}", path.display());
+    }
+    Ok(signature)
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -119,5 +156,27 @@ mod tests {
         assert_eq!(written, 7);
         let out_data = fs::read(&out).unwrap();
         assert_eq!(&out_data[64..71], b"PATCHED");
+    }
+
+    #[test]
+    fn injects_elf_by_original_prefix() {
+        let temp = tempfile::tempdir().unwrap();
+        let iso = temp.path().join("out.iso");
+        let original_elf = temp.path().join("SLPS_256.11");
+        let translated_elf = temp.path().join("SLPS_256.11_translated");
+
+        let original = b"ORIGINAL_ELF_PREFIX_and_body";
+        let translated = b"TRANSLATED_ELF";
+        let mut iso_data = vec![0xAA; 48];
+        iso_data.extend(original);
+        iso_data.extend([0xBB; 48]);
+        fs::write(&iso, iso_data).unwrap();
+        fs::write(&original_elf, original).unwrap();
+        fs::write(&translated_elf, translated).unwrap();
+
+        let written = inject_elf_into_iso(&iso, &original_elf, &translated_elf).unwrap();
+        assert_eq!(written, translated.len() as u64);
+        let out_data = fs::read(&iso).unwrap();
+        assert_eq!(&out_data[48..48 + translated.len()], translated);
     }
 }
