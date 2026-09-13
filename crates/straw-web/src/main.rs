@@ -11,7 +11,8 @@ use axum::{
 use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
-    inject_elf_into_iso, patch_translated_scripts, spanish_glyph_map, FitStatus, TextSource,
+    inject_elf_into_iso, patch_translated_elf, patch_translated_scripts, spanish_glyph_map,
+    FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
@@ -160,6 +161,7 @@ struct BuildParams {
     exported: Option<usize>,
     prepared: Option<u64>,
     patched: Option<usize>,
+    elf_patched: Option<usize>,
     iso: Option<u64>,
     elf: Option<u64>,
     error: Option<String>,
@@ -189,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/export-csv", post(export_build_csv))
         .route("/build/prepare-data", post(prepare_data_bin))
         .route("/build/patch-scripts", post(patch_scripts))
+        .route("/build/patch-elf", post(patch_elf))
         .route("/build/build-iso", post(build_iso))
         .route("/build/inject-elf", post(inject_elf))
         .route("/settings", get(settings).post(save_settings))
@@ -375,6 +378,11 @@ async fn build_page(
             })
             .or_else(|| {
                 params
+                    .elf_patched
+                    .map(|count| format!("Entradas ELF parcheadas: {count}"))
+            })
+            .or_else(|| {
+                params
                     .iso
                     .map(|bytes| format!("ISO generada: {} MB escritos", bytes / 1024 / 1024))
             })
@@ -446,6 +454,38 @@ async fn patch_scripts() -> impl IntoResponse {
             url_escape(&report.errors.join("; "))
         ))
         .into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn patch_elf() -> impl IntoResponse {
+    if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
+        return Redirect::to("/build?error=missing_original_elf").into_response();
+    }
+    if !FsPath::new(BUILD_CSV_PATH).exists() {
+        return Redirect::to("/build?error=missing_build_csv").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        let glyph_map = spanish_glyph_map();
+        patch_translated_elf(
+            ORIGINAL_ELF_PATH,
+            TRANSLATED_ELF_PATH,
+            BUILD_CSV_PATH,
+            Some(&glyph_map),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(report)) => {
+            Redirect::to(&format!("/build?elf_patched={}", report.rows_patched)).into_response()
+        }
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }

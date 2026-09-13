@@ -59,6 +59,22 @@
         <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
+                    <h2 class="text-xl font-black">Parchear ELF</h2>
+                    <p class="mt-2 text-sm text-slate-400">Copia <span class="font-mono text-pink-200">originales/SLPS_256.11</span> y aplica filas ELF del CSV con Shift-JIS en <span class="font-mono text-pink-200">work/SLPS_256.11_translated</span>.</p>
+                </div>
+                <form method="post" action="/build/patch-elf">
+                    {% if original_elf_exists && build_csv_exists %}
+                    <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white shadow-lg shadow-pink-950/40 hover:bg-pink-400">Parchear ELF</button>
+                    {% else %}
+                    <button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere ELF y CSV</button>
+                    {% endif %}
+                </form>
+            </div>
+        </section>
+
+        <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
                     <h2 class="text-xl font-black">Inyectar ELF</h2>
                     <p class="mt-2 text-sm text-slate-400">Busca el ELF original dentro de la ISO por sus primeros 4096 bytes e inyecta <span class="font-mono text-pink-200">work/SLPS_256.11_translated</span>.</p>
                     {% if !translated_elf_exists %}

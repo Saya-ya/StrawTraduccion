@@ -5,6 +5,7 @@ pub mod fs_ops;
 pub mod glyph_map;
 pub mod iso;
 pub mod lz77;
+pub mod patch_elf;
 pub mod patch_scripts;
 pub mod script_rebuilder;
 
@@ -26,6 +27,7 @@ pub use iso::{
     build_iso_with_patched_data, find_signature_offset, inject_elf_into_iso, DATA_BIN_SIGNATURE,
 };
 pub use lz77::{compress_lz77, decompress_lz77};
+pub use patch_elf::{patch_translated_elf, PatchElfReport};
 pub use patch_scripts::{patch_translated_scripts, PatchScriptsReport};
 pub use script_rebuilder::{
     find_segment_containing, rebuild_local_slack, RebuildReport, SegmentReport, TextSegment,
