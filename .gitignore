@@ -43,6 +43,7 @@ dev/
 /texturas/manifest.json
 
 .env
+.python-version
 .venv/
 venv/
 *.egg-info/
