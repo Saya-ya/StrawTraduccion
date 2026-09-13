@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Configuracion - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-4xl px-6 py-10">
+        <nav class="mb-8 flex items-center justify-between">
+            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
+            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">SQLite settings</span>
+        </nav>
+
+        <section class="rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Preferencias</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Configuracion</h1>
+
+            {% if message.len() > 0 %}
+            <div class="mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>
+            {% endif %}
+
+            <form method="post" action="/settings" class="mt-8 space-y-6">
+                <div class="grid gap-5 md:grid-cols-2">
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Idioma UI</span>
+                        <select name="ui_lang" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="es" {% if ui_lang == "es" %}selected{% endif %}>ES - Español</option>
+                            <option value="en" {% if ui_lang == "en" %}selected{% endif %}>EN - English</option>
+                        </select>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Idioma objetivo</span>
+                        <select name="target_lang" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="es" {% if target_lang == "es" %}selected{% endif %}>Español</option>
+                            <option value="en" {% if target_lang == "en" %}selected{% endif %}>English</option>
+                            <option value="custom" {% if target_lang == "custom" %}selected{% endif %}>Personalizado</option>
+                        </select>
+                    </label>
+                </div>
+                <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Guardar cambios</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

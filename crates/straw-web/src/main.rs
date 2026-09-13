@@ -4,7 +4,7 @@ use askama::Template;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Redirect},
     routing::{get, put},
     Form, Router,
 };
@@ -12,8 +12,8 @@ use sqlx::SqlitePool;
 use straw_core::{check_fit, spanish_glyph_map, FitStatus, TextSource};
 use straw_db::{
     connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
-    search_text_entries, update_text_entry_translation, ScriptDetail, ScriptSummary, SearchResult,
-    TextEntrySummary, DEFAULT_DB_PATH,
+    search_text_entries, set_setting, update_text_entry_translation, ScriptDetail, ScriptSummary,
+    SearchResult, TextEntrySummary, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -70,6 +70,14 @@ struct SearchTemplate {
     error: String,
 }
 
+#[derive(Template)]
+#[template(path = "settings.html")]
+struct SettingsTemplate {
+    ui_lang: String,
+    target_lang: String,
+    message: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
@@ -84,6 +92,17 @@ struct SearchParams {
 #[derive(Debug, serde::Deserialize)]
 struct TextForm {
     translated_text: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SettingsForm {
+    ui_lang: String,
+    target_lang: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SettingsParams {
+    saved: Option<String>,
 }
 
 #[tokio::main]
@@ -105,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts", get(scripts))
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
+        .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
         .with_state(AppState { db });
@@ -198,6 +218,62 @@ async fn search(State(state): State<AppState>, Query(params): Query<SearchParams
         error,
     };
     Html(template.render().expect("search template renders"))
+}
+
+async fn settings(
+    State(state): State<AppState>,
+    Query(params): Query<SettingsParams>,
+) -> Html<String> {
+    let ui_lang: String = get_setting(&state.db, "ui_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
+    let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
+    let message = if params.saved.as_deref() == Some("1") {
+        "Configuracion guardada".to_owned()
+    } else {
+        String::new()
+    };
+    let template = SettingsTemplate {
+        ui_lang,
+        target_lang,
+        message,
+    };
+    Html(template.render().expect("settings template renders"))
+}
+
+async fn save_settings(
+    State(state): State<AppState>,
+    Form(form): Form<SettingsForm>,
+) -> impl IntoResponse {
+    let ui_lang = if matches!(form.ui_lang.as_str(), "es" | "en") {
+        form.ui_lang
+    } else {
+        "es".to_owned()
+    };
+    let target_lang = if matches!(form.target_lang.as_str(), "es" | "en" | "custom") {
+        form.target_lang
+    } else {
+        "es".to_owned()
+    };
+
+    if let Err(err) = set_setting(&state.db, "ui_lang", &ui_lang).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to save ui_lang: {err}"),
+        )
+            .into_response();
+    }
+    if let Err(err) = set_setting(&state.db, "target_lang", &target_lang).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to save target_lang: {err}"),
+        )
+            .into_response();
+    }
+
+    Redirect::to("/settings?saved=1").into_response()
 }
 
 async fn text_editor(
