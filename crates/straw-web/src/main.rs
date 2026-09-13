@@ -1,9 +1,18 @@
 use std::net::SocketAddr;
 
 use askama::Template;
-use axum::{extract::State, response::Html, routing::get, Router};
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{Html, IntoResponse},
+    routing::get,
+    Router,
+};
 use sqlx::SqlitePool;
-use straw_db::{connect_path, get_setting, init_db, list_scripts, ScriptSummary, DEFAULT_DB_PATH};
+use straw_db::{
+    connect_path, get_script_detail, get_setting, init_db, list_scripts, ScriptDetail,
+    ScriptSummary, DEFAULT_DB_PATH,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
@@ -31,6 +40,20 @@ struct ScriptsTemplate {
     percent_label: String,
 }
 
+#[derive(Template)]
+#[template(path = "script_detail.html")]
+struct ScriptDetailTemplate {
+    detail: ScriptDetail,
+    prev_page: i64,
+    next_page: i64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PageParams {
+    page: Option<i64>,
+    limit: Option<i64>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -48,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/scripts", get(scripts))
+        .route("/scripts/:script_id", get(script_detail))
         .with_state(AppState { db });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
@@ -98,4 +122,31 @@ async fn scripts(State(state): State<AppState>) -> Html<String> {
         percent_label: format!("{percent:.1}"),
     };
     Html(template.render().expect("scripts template renders"))
+}
+
+async fn script_detail(
+    State(state): State<AppState>,
+    Path(script_id): Path<i64>,
+    Query(params): Query<PageParams>,
+) -> impl IntoResponse {
+    let page = params.page.unwrap_or(1);
+    let limit = params.limit.unwrap_or(50);
+    match get_script_detail(&state.db, script_id, page, limit).await {
+        Ok(Some(detail)) => {
+            let prev_page = (detail.page - 1).max(1);
+            let next_page = (detail.page + 1).min(detail.total_pages);
+            let template = ScriptDetailTemplate {
+                detail,
+                prev_page,
+                next_page,
+            };
+            Html(template.render().expect("script detail template renders")).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "script not found").into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load script: {err}"),
+        )
+            .into_response(),
+    }
 }

@@ -55,7 +55,7 @@
                 </thead>
                 <tbody class="divide-y divide-slate-800">
                     {% for script in scripts %}
-                    <tr class="transition hover:bg-slate-800/50">
+                    <tr class="transition hover:bg-slate-800/50" onclick="location.href='/scripts/{{ script.id }}'">
                         <td class="px-5 py-3 font-mono text-pink-200">{{ script.id }}</td>
                         <td class="px-5 py-3 text-slate-300">{{ script.script_type }}</td>
                         <td class="px-5 py-3 font-mono text-slate-400">{{ script.variant }}</td>

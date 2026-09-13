@@ -21,6 +21,32 @@ pub struct ScriptSummary {
     pub total_sections: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEntrySummary {
+    pub id: i64,
+    pub script_id: i64,
+    pub byte_offset: i64,
+    pub byte_offset_hex: String,
+    pub section_id: i64,
+    pub section_order: i64,
+    pub original_text: String,
+    pub translated_text: String,
+    pub is_translated: bool,
+    pub needs_shift: bool,
+    pub fit_status: String,
+    pub segment_capacity: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptDetail {
+    pub script: ScriptSummary,
+    pub texts: Vec<TextEntrySummary>,
+    pub total: i64,
+    pub page: i64,
+    pub limit: i64,
+    pub total_pages: i64,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -128,6 +154,128 @@ pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
             })
         })
         .collect()
+}
+
+pub async fn get_script(pool: &SqlitePool, script_id: i64) -> Result<Option<ScriptSummary>> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, source, script_type, variant, is_supported,
+               total_texts, translated_texts, total_sections
+        FROM scripts
+        WHERE id = ?
+        "#,
+    )
+    .bind(script_id)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(script_from_row).transpose()
+}
+
+pub async fn get_script_detail(
+    pool: &SqlitePool,
+    script_id: i64,
+    page: i64,
+    limit: i64,
+) -> Result<Option<ScriptDetail>> {
+    let Some(script) = get_script(pool, script_id).await? else {
+        return Ok(None);
+    };
+
+    let page = page.max(1);
+    let limit = limit.clamp(1, 200);
+    let offset = (page - 1) * limit;
+
+    let total: i64 = sqlx::query("SELECT COUNT(*) AS count FROM text_entries WHERE script_id = ?")
+        .bind(script_id)
+        .fetch_one(pool)
+        .await?
+        .try_get("count")?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, script_id, byte_offset, section_id, section_order,
+               original_text, translated_text, is_translated, needs_shift,
+               fit_status, segment_capacity
+        FROM text_entries
+        WHERE script_id = ?
+        ORDER BY section_id, section_order
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(script_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let texts = rows
+        .into_iter()
+        .map(text_entry_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    let total_pages = if total > 0 {
+        (total + limit - 1) / limit
+    } else {
+        1
+    };
+
+    Ok(Some(ScriptDetail {
+        script,
+        texts,
+        total,
+        page,
+        limit,
+        total_pages,
+    }))
+}
+
+fn script_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScriptSummary> {
+    Ok(ScriptSummary {
+        id: row.try_get("id")?,
+        source: row
+            .try_get::<Option<String>, _>("source")?
+            .unwrap_or_default(),
+        script_type: row
+            .try_get::<Option<String>, _>("script_type")?
+            .unwrap_or_default(),
+        variant: row
+            .try_get::<Option<String>, _>("variant")?
+            .unwrap_or_default(),
+        is_supported: row.try_get::<i64, _>("is_supported")? != 0,
+        total_texts: row.try_get::<Option<i64>, _>("total_texts")?.unwrap_or(0),
+        translated_texts: row
+            .try_get::<Option<i64>, _>("translated_texts")?
+            .unwrap_or(0),
+        total_sections: row
+            .try_get::<Option<i64>, _>("total_sections")?
+            .unwrap_or(0),
+    })
+}
+
+fn text_entry_from_row(row: sqlx::sqlite::SqliteRow) -> Result<TextEntrySummary> {
+    let byte_offset: i64 = row.try_get("byte_offset")?;
+    Ok(TextEntrySummary {
+        id: row.try_get("id")?,
+        script_id: row.try_get("script_id")?,
+        byte_offset,
+        byte_offset_hex: format!("0x{byte_offset:05X}"),
+        section_id: row.try_get::<Option<i64>, _>("section_id")?.unwrap_or(0),
+        section_order: row.try_get::<Option<i64>, _>("section_order")?.unwrap_or(0),
+        original_text: row
+            .try_get::<Option<String>, _>("original_text")?
+            .unwrap_or_default(),
+        translated_text: row
+            .try_get::<Option<String>, _>("translated_text")?
+            .unwrap_or_default(),
+        is_translated: row.try_get::<i64, _>("is_translated")? != 0,
+        needs_shift: row.try_get::<i64, _>("needs_shift")? != 0,
+        fit_status: row
+            .try_get::<Option<String>, _>("fit_status")?
+            .unwrap_or_else(|| "unchecked".to_owned()),
+        segment_capacity: row
+            .try_get::<Option<i64>, _>("segment_capacity")?
+            .unwrap_or(0),
+    })
 }
 
 async fn create_schema(pool: &SqlitePool) -> Result<()> {

@@ -1671,6 +1671,7 @@ dependencies = [
  "anyhow",
  "askama",
  "axum",
+ "serde",
  "sqlx",
  "straw-core",
  "straw-db",

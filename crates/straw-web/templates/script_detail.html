@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Script {{ detail.script.id }} - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-6 py-10">
+        <nav class="mb-8 flex items-center justify-between">
+            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
+            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Script #{{ detail.script.id }}</span>
+        </nav>
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">{{ detail.script.source }}</p>
+                    <h1 class="mt-2 text-4xl font-black tracking-tight">Script {{ detail.script.id }}</h1>
+                    <p class="mt-2 text-slate-400">{{ detail.script.script_type }} {{ detail.script.variant }}</p>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-center">
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.script.translated_texts }}/{{ detail.script.total_texts }}</div>
+                        <div class="text-xs text-slate-500">traducidos</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.script.total_sections }}</div>
+                        <div class="text-xs text-slate-500">secciones</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.total }}</div>
+                        <div class="text-xs text-slate-500">filas</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="space-y-4">
+            {% if detail.texts.len() == 0 %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                Este script no tiene textos importados.
+            </div>
+            {% else %}
+            {% for text in detail.texts %}
+            <article class="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30">
+                <div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span class="font-mono text-pink-200">#{{ text.id }}</span>
+                    <span class="font-mono">{{ text.byte_offset_hex }}</span>
+                    <span>[{{ text.section_id }}:{{ text.section_order }}]</span>
+                    <span>{{ text.fit_status }}</span>
+                    {% if text.needs_shift %}<span class="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">needs_shift</span>{% endif %}
+                    {% if text.is_translated %}<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">traducido</span>{% endif %}
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Original</div>
+                        <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ text.original_text }}</p>
+                    </div>
+                    <div>
+                        <div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Traduccion</div>
+                        {% if text.translated_text.len() == 0 %}
+                        <p class="rounded-xl border border-dashed border-slate-700 p-4 text-sm italic text-slate-600">Sin traducir</p>
+                        {% else %}
+                        <p class="whitespace-pre-wrap rounded-xl bg-slate-800/80 p-4 text-sm text-white">{{ text.translated_text }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+            {% endif %}
+        </section>
+
+        <nav class="mt-8 flex items-center justify-between text-sm">
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}">← Anterior</a>
+            <span class="text-slate-500">Página {{ detail.page }} de {{ detail.total_pages }}</span>
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}">Siguiente →</a>
+        </nav>
+    </main>
+</body>
+</html>
