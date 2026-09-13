@@ -177,6 +177,7 @@ struct BuildParams {
     textures: Option<usize>,
     texture_patches: Option<usize>,
     texture_injected: Option<usize>,
+    full: Option<usize>,
     error: Option<String>,
 }
 
@@ -211,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/texture-inventory", post(texture_inventory))
         .route("/build/patch-textures", post(patch_textures))
         .route("/build/inject-textures", post(inject_textures))
+        .route("/build/run-full", post(run_full_build))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -431,6 +433,11 @@ async fn build_page(
                 params
                     .texture_injected
                     .map(|count| format!("Streams de textura inyectados: {count}"))
+            })
+            .or_else(|| {
+                params
+                    .full
+                    .map(|count| format!("Build completo finalizado: {count} pasos ejecutados"))
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -695,6 +702,93 @@ async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
+}
+
+async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
+    if let Err(err) = export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
+        return Redirect::to(&format!("/build?error={}", url_escape(&err.to_string())))
+            .into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(run_full_build_steps).await;
+
+    match result {
+        Ok(Ok(steps)) => {
+            record_build_success(&state.db, "full build", 100, ISO_OUT_PATH).await;
+            Redirect::to(&format!("/build?full={}", steps + 1)).into_response()
+        }
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+fn run_full_build_steps() -> anyhow::Result<usize> {
+    if !FsPath::new(DATA_BIN_PATH).exists() {
+        anyhow::bail!("missing originales/Data.bin");
+    }
+    if !FsPath::new(BASE_ISO_PATH).exists() {
+        anyhow::bail!("missing originales/Strawberry_patched.iso");
+    }
+    if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
+        anyhow::bail!("missing originales/SLPS_256.11");
+    }
+    if count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)) == 0 {
+        anyhow::bail!("missing extracted .dec scripts; run import first");
+    }
+
+    let mut steps = 0;
+    copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH)?;
+    steps += 1;
+
+    let glyph_map = spanish_glyph_map();
+    let script_report = patch_translated_scripts(
+        PATCHED_DATA_PATH,
+        SCRIPTS_OUT_DIR,
+        BUILD_CSV_PATH,
+        Some(&glyph_map),
+    )?;
+    if !script_report.errors.is_empty() {
+        anyhow::bail!(script_report.errors.join("; "));
+    }
+    steps += 1;
+
+    patch_translated_elf(
+        ORIGINAL_ELF_PATH,
+        TRANSLATED_ELF_PATH,
+        BUILD_CSV_PATH,
+        Some(&glyph_map),
+    )?;
+    steps += 1;
+
+    if FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
+        let texture_report = patch_textures_from_manifest(
+            DATA_BIN_PATH,
+            TEXTURE_MANIFEST_PATH,
+            TEXTURE_PATCHED_DIR,
+        )?;
+        if !texture_report.errors.is_empty() {
+            anyhow::bail!(texture_report.errors.join("; "));
+        }
+        steps += 1;
+
+        let inject_report = inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)?;
+        if !inject_report.errors.is_empty() {
+            anyhow::bail!(inject_report.errors.join("; "));
+        }
+        steps += 1;
+    }
+
+    build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)?;
+    steps += 1;
+
+    inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)?;
+    steps += 1;
+
+    Ok(steps)
 }
 
 async fn record_build_success(db: &SqlitePool, step: &str, progress_pct: i64, iso_path: &str) {
