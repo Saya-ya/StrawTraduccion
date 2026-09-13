@@ -37,5 +37,6 @@ pub use script_rebuilder::{
     TranslationRow,
 };
 pub use texture_inventory::{
-    patch_textures_from_manifest, write_texture_inventory, TexturePatchReport, TextureRecord,
+    inject_patched_texture_streams, patch_textures_from_manifest, write_texture_inventory,
+    TextureInjectReport, TexturePatchReport, TextureRecord,
 };

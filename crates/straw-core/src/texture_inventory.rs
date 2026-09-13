@@ -3,7 +3,10 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{compress_lz77, decompress_lz77, find_row, read_entries};
+use crate::{
+    compress_lz77, datafat::parse_entries_from_data, decompress_lz77, find_row, read_entries,
+    size_field_write_offset, slot_capacity,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextureRecord {
@@ -34,6 +37,13 @@ pub struct TexturePatchReport {
     pub files_processed: usize,
     pub patches_applied: usize,
     pub streams_written: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextureInjectReport {
+    pub streams_injected: usize,
+    pub bytes_written: usize,
     pub errors: Vec<String>,
 }
 
@@ -160,6 +170,89 @@ pub fn patch_textures_from_manifest(
     }
 
     Ok(report)
+}
+
+pub fn inject_patched_texture_streams(
+    data_bin_path: impl AsRef<Path>,
+    streams_dir: impl AsRef<Path>,
+) -> Result<TextureInjectReport> {
+    let data_bin_path = data_bin_path.as_ref();
+    let streams_dir = streams_dir.as_ref();
+    let mut data = fs::read(data_bin_path)
+        .with_context(|| format!("failed to read {}", data_bin_path.display()))?;
+    let rows = parse_entries_from_data(&data)?;
+    let mut report = TextureInjectReport {
+        streams_injected: 0,
+        bytes_written: 0,
+        errors: Vec::new(),
+    };
+
+    if !streams_dir.exists() {
+        bail!(
+            "patched texture stream dir not found: {}",
+            streams_dir.display()
+        );
+    }
+
+    for entry in fs::read_dir(streams_dir)
+        .with_context(|| format!("failed to read {}", streams_dir.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().is_none_or(|ext| ext != "lz77") {
+            continue;
+        }
+        let Some(file_id) = parse_patched_stream_id(&path) else {
+            report
+                .errors
+                .push(format!("invalid stream name: {}", path.display()));
+            continue;
+        };
+        let stream =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let Some(target) = find_row(&rows, file_id) else {
+            report.errors.push(format!("ID {file_id} not found in FAT"));
+            continue;
+        };
+        let Some(capacity) = slot_capacity(&rows, target) else {
+            report
+                .errors
+                .push(format!("could not compute capacity for ID {file_id}"));
+            continue;
+        };
+        if stream.len() > capacity as usize {
+            report.errors.push(format!(
+                "ID {file_id} does not fit: {} > {capacity}",
+                stream.len()
+            ));
+            continue;
+        }
+        let start = target.offset as usize;
+        let end = start + capacity as usize;
+        if end > data.len() {
+            report
+                .errors
+                .push(format!("ID {file_id} slot outside Data.bin"));
+            continue;
+        }
+        data[start..start + stream.len()].copy_from_slice(&stream);
+        data[start + stream.len()..end].fill(0);
+        let size_offset = size_field_write_offset(target);
+        data[size_offset..size_offset + 4].copy_from_slice(&(stream.len() as u32).to_le_bytes());
+        report.streams_injected += 1;
+        report.bytes_written += stream.len();
+    }
+
+    fs::write(data_bin_path, data)
+        .with_context(|| format!("failed to write {}", data_bin_path.display()))?;
+    Ok(report)
+}
+
+fn parse_patched_stream_id(path: &Path) -> Option<u32> {
+    path.file_stem()?
+        .to_str()?
+        .strip_prefix("ID_")?
+        .parse()
+        .ok()
 }
 
 fn texture_inventory(data_bin: impl AsRef<Path>) -> Result<Vec<TextureRecord>> {

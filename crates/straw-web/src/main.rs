@@ -11,8 +11,9 @@ use axum::{
 use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
-    inject_elf_into_iso, patch_textures_from_manifest, patch_translated_elf,
-    patch_translated_scripts, spanish_glyph_map, write_texture_inventory, FitStatus, TextSource,
+    inject_elf_into_iso, inject_patched_texture_streams, patch_textures_from_manifest,
+    patch_translated_elf, patch_translated_scripts, spanish_glyph_map, write_texture_inventory,
+    FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
@@ -175,6 +176,7 @@ struct BuildParams {
     elf: Option<u64>,
     textures: Option<usize>,
     texture_patches: Option<usize>,
+    texture_injected: Option<usize>,
     error: Option<String>,
 }
 
@@ -208,6 +210,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/inject-elf", post(inject_elf))
         .route("/build/texture-inventory", post(texture_inventory))
         .route("/build/patch-textures", post(patch_textures))
+        .route("/build/inject-textures", post(inject_textures))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -424,6 +427,11 @@ async fn build_page(
                     .texture_patches
                     .map(|count| format!("Parches de textura aplicados: {count}"))
             })
+            .or_else(|| {
+                params
+                    .texture_injected
+                    .map(|count| format!("Streams de textura inyectados: {count}"))
+            })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
     };
@@ -636,6 +644,42 @@ async fn patch_textures(State(state): State<AppState>) -> impl IntoResponse {
             Redirect::to(&format!(
                 "/build?texture_patches={}",
                 report.patches_applied
+            ))
+            .into_response()
+        }
+        Ok(Ok(report)) => Redirect::to(&format!(
+            "/build?error={}",
+            url_escape(&report.errors.join("; "))
+        ))
+        .into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
+    if !FsPath::new(PATCHED_DATA_PATH).exists() {
+        return Redirect::to("/build?error=missing_patched_data").into_response();
+    }
+    if !FsPath::new(TEXTURE_PATCHED_DIR).exists() {
+        return Redirect::to("/build?error=missing_patched_texture_streams").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(report)) if report.errors.is_empty() => {
+            record_build_success(&state.db, "inject textures", 75, "").await;
+            Redirect::to(&format!(
+                "/build?texture_injected={}",
+                report.streams_injected
             ))
             .into_response()
         }
