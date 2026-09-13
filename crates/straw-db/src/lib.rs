@@ -25,6 +25,7 @@ pub struct ScriptSummary {
 pub struct TextEntrySummary {
     pub id: i64,
     pub script_id: i64,
+    pub source: String,
     pub byte_offset: i64,
     pub byte_offset_hex: String,
     pub section_id: i64,
@@ -194,7 +195,7 @@ pub async fn get_script_detail(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, script_id, byte_offset, section_id, section_order,
+        SELECT id, script_id, source, byte_offset, section_id, section_order,
                original_text, translated_text, is_translated, needs_shift,
                fit_status, segment_capacity
         FROM text_entries
@@ -229,6 +230,78 @@ pub async fn get_script_detail(
     }))
 }
 
+pub async fn get_text_entry(pool: &SqlitePool, entry_id: i64) -> Result<Option<TextEntrySummary>> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, script_id, source, byte_offset, section_id, section_order,
+               original_text, translated_text, is_translated, needs_shift,
+               fit_status, segment_capacity
+        FROM text_entries
+        WHERE id = ?
+        "#,
+    )
+    .bind(entry_id)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(text_entry_from_row).transpose()
+}
+
+pub async fn update_text_entry_translation(
+    pool: &SqlitePool,
+    entry_id: i64,
+    translated_text: &str,
+    fit_status: &str,
+    needs_shift: bool,
+) -> Result<Option<TextEntrySummary>> {
+    let Some(existing) = get_text_entry(pool, entry_id).await? else {
+        return Ok(None);
+    };
+    let is_translated = !translated_text.trim().is_empty();
+
+    sqlx::query(
+        r#"
+        UPDATE text_entries
+        SET translated_text = ?,
+            is_translated = ?,
+            fit_status = ?,
+            needs_shift = ?,
+            locked_by = '',
+            locked_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(translated_text)
+    .bind(if is_translated { 1 } else { 0 })
+    .bind(fit_status)
+    .bind(if needs_shift { 1 } else { 0 })
+    .bind(entry_id)
+    .execute(pool)
+    .await?;
+
+    refresh_script_translated_count(pool, existing.script_id).await?;
+    get_text_entry(pool, entry_id).await
+}
+
+async fn refresh_script_translated_count(pool: &SqlitePool, script_id: i64) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE scripts
+        SET translated_texts = (
+            SELECT COUNT(*) FROM text_entries
+            WHERE script_id = ? AND is_translated = 1
+        )
+        WHERE id = ?
+        "#,
+    )
+    .bind(script_id)
+    .bind(script_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 fn script_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScriptSummary> {
     Ok(ScriptSummary {
         id: row.try_get("id")?,
@@ -257,6 +330,9 @@ fn text_entry_from_row(row: sqlx::sqlite::SqliteRow) -> Result<TextEntrySummary>
     Ok(TextEntrySummary {
         id: row.try_get("id")?,
         script_id: row.try_get("script_id")?,
+        source: row
+            .try_get::<Option<String>, _>("source")?
+            .unwrap_or_default(),
         byte_offset,
         byte_offset_hex: format!("0x{byte_offset:05X}"),
         section_id: row.try_get::<Option<i64>, _>("section_id")?.unwrap_or(0),
@@ -501,5 +577,33 @@ mod tests {
         assert_eq!(scripts[1].id, 2);
         assert!(scripts[1].is_supported);
         assert_eq!(scripts[1].translated_texts, 4);
+    }
+
+    #[tokio::test]
+    async fn updating_text_refreshes_script_count() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 1, 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated) \
+             VALUES (1, 'SCRIPT', 16, 'original', '', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_text_entry_translation(&pool, 1, "traducido", "ok", false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.translated_text, "traducido");
+        assert!(updated.is_translated);
+
+        let script = get_script(&pool, 1).await.unwrap().unwrap();
+        assert_eq!(script.translated_texts, 1);
     }
 }

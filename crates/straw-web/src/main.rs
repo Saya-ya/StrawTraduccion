@@ -5,13 +5,14 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
-    routing::get,
-    Router,
+    routing::{get, put},
+    Form, Router,
 };
 use sqlx::SqlitePool;
+use straw_core::{check_fit, spanish_glyph_map, FitStatus, TextSource};
 use straw_db::{
-    connect_path, get_script_detail, get_setting, init_db, list_scripts, ScriptDetail,
-    ScriptSummary, DEFAULT_DB_PATH,
+    connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
+    update_text_entry_translation, ScriptDetail, ScriptSummary, TextEntrySummary, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -48,10 +49,27 @@ struct ScriptDetailTemplate {
     next_page: i64,
 }
 
+#[derive(Template)]
+#[template(path = "components/text_row.html")]
+struct TextRowTemplate {
+    text: TextEntrySummary,
+}
+
+#[derive(Template)]
+#[template(path = "components/text_editor.html")]
+struct TextEditorTemplate {
+    text: TextEntrySummary,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TextForm {
+    translated_text: String,
 }
 
 #[tokio::main]
@@ -72,6 +90,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/scripts", get(scripts))
         .route("/scripts/:script_id", get(script_detail))
+        .route("/api/texts/:entry_id/edit", get(text_editor))
+        .route("/api/texts/:entry_id", put(update_text))
         .with_state(AppState { db });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
@@ -146,6 +166,89 @@ async fn script_detail(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to load script: {err}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn text_editor(
+    State(state): State<AppState>,
+    Path(entry_id): Path<i64>,
+) -> impl IntoResponse {
+    match get_text_entry(&state.db, entry_id).await {
+        Ok(Some(text)) => Html(
+            TextEditorTemplate { text }
+                .render()
+                .expect("text editor template renders"),
+        )
+        .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "text not found").into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load text: {err}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn update_text(
+    State(state): State<AppState>,
+    Path(entry_id): Path<i64>,
+    Form(form): Form<TextForm>,
+) -> impl IntoResponse {
+    let existing = match get_text_entry(&state.db, entry_id).await {
+        Ok(Some(entry)) => entry,
+        Ok(None) => return (StatusCode::NOT_FOUND, "text not found").into_response(),
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to load text: {err}"),
+            )
+                .into_response()
+        }
+    };
+
+    let source = if existing.source == "SCRIPT" {
+        TextSource::Script
+    } else {
+        TextSource::Elf
+    };
+    let fallback_capacity = match source {
+        TextSource::Script => existing.original_text.encode_utf16().count() * 2 + 2,
+        TextSource::Elf => existing.original_text.len(),
+    };
+    let capacity = existing
+        .segment_capacity
+        .max(fallback_capacity as i64)
+        .max(1) as usize;
+    let glyph_map = spanish_glyph_map();
+    let fit = check_fit(&form.translated_text, source, capacity, Some(&glyph_map));
+    let fit_status = match fit.status {
+        FitStatus::Unchecked => "unchecked",
+        FitStatus::Ok => "ok",
+        FitStatus::Tight => "tight",
+        FitStatus::NeedsShift => "needs_shift",
+    };
+
+    match update_text_entry_translation(
+        &state.db,
+        entry_id,
+        &form.translated_text,
+        fit_status,
+        fit.status == FitStatus::NeedsShift,
+    )
+    .await
+    {
+        Ok(Some(text)) => Html(
+            TextRowTemplate { text }
+                .render()
+                .expect("text row template renders"),
+        )
+        .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "text not found").into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to update text: {err}"),
         )
             .into_response(),
     }

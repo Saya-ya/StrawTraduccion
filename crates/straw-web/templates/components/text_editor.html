@@ -1,0 +1,22 @@
+<article id="entry-{{ text.id }}" class="rounded-2xl border border-pink-400/40 bg-slate-900 p-5 shadow-lg shadow-pink-950/20">
+    <form hx-put="/api/texts/{{ text.id }}" hx-target="#entry-{{ text.id }}" hx-swap="outerHTML" class="space-y-4">
+        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span class="font-mono text-pink-200">#{{ text.id }}</span>
+            <span class="font-mono">{{ text.byte_offset_hex }}</span>
+            <span>[{{ text.section_id }}:{{ text.section_order }}]</span>
+            <span>cap {{ text.segment_capacity }}</span>
+        </div>
+        <div>
+            <div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Original</div>
+            <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ text.original_text }}</p>
+        </div>
+        <div>
+            <label class="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500" for="translated-{{ text.id }}">Traduccion</label>
+            <textarea id="translated-{{ text.id }}" name="translated_text" rows="5" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400">{{ text.translated_text }}</textarea>
+        </div>
+        <div class="flex gap-3">
+            <button type="submit" class="rounded-full bg-pink-500 px-5 py-2 text-sm font-bold text-white hover:bg-pink-400">Guardar</button>
+            <button type="button" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800" onclick="location.reload()">Cancelar</button>
+        </div>
+    </form>
+</article>
