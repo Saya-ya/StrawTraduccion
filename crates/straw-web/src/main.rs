@@ -10,8 +10,8 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir, patch_translated_scripts,
-    spanish_glyph_map, FitStatus, TextSource,
+    build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
+    patch_translated_scripts, spanish_glyph_map, FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
@@ -25,6 +25,7 @@ const DATA_BIN_PATH: &str = "originales/Data.bin";
 const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
 const PATCHED_DATA_PATH: &str = "work/Data_patched.bin";
 const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
+const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 
 #[derive(Clone)]
@@ -108,6 +109,7 @@ struct BuildTemplate {
     dec_count: usize,
     patched_data_exists: bool,
     iso_exists: bool,
+    base_iso_exists: bool,
     iso_out_path: &'static str,
     build_csv_path: &'static str,
     build_csv_exists: bool,
@@ -154,6 +156,7 @@ struct BuildParams {
     exported: Option<usize>,
     prepared: Option<u64>,
     patched: Option<usize>,
+    iso: Option<u64>,
     error: Option<String>,
 }
 
@@ -181,6 +184,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/export-csv", post(export_build_csv))
         .route("/build/prepare-data", post(prepare_data_bin))
         .route("/build/patch-scripts", post(patch_scripts))
+        .route("/build/build-iso", post(build_iso))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -341,6 +345,7 @@ async fn build_page(
         dec_count: count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)),
         patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
         iso_exists: FsPath::new(ISO_OUT_PATH).exists(),
+        base_iso_exists: FsPath::new(BASE_ISO_PATH).exists(),
         iso_out_path: ISO_OUT_PATH,
         build_csv_path: BUILD_CSV_PATH,
         build_csv_exists: FsPath::new(BUILD_CSV_PATH).exists(),
@@ -359,6 +364,11 @@ async fn build_page(
                 params
                     .patched
                     .map(|count| format!("Scripts parcheados: {count}"))
+            })
+            .or_else(|| {
+                params
+                    .iso
+                    .map(|bytes| format!("ISO generada: {} MB escritos", bytes / 1024 / 1024))
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -423,6 +433,30 @@ async fn patch_scripts() -> impl IntoResponse {
             url_escape(&report.errors.join("; "))
         ))
         .into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn build_iso() -> impl IntoResponse {
+    if !FsPath::new(BASE_ISO_PATH).exists() {
+        return Redirect::to("/build?error=missing_base_iso").into_response();
+    }
+    if !FsPath::new(PATCHED_DATA_PATH).exists() {
+        return Redirect::to("/build?error=missing_patched_data").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(bytes)) => Redirect::to(&format!("/build?iso={bytes}")).into_response(),
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
