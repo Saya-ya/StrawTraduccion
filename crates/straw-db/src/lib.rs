@@ -9,6 +9,18 @@ use sqlx::{
 
 pub const DEFAULT_DB_PATH: &str = "work/translation_manager.db";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptSummary {
+    pub id: i64,
+    pub source: String,
+    pub script_type: String,
+    pub variant: String,
+    pub is_supported: bool,
+    pub total_texts: i64,
+    pub translated_texts: i64,
+    pub total_sections: i64,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -78,6 +90,44 @@ where
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, source, script_type, variant, is_supported,
+               total_texts, translated_texts, total_sections
+        FROM scripts
+        ORDER BY id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ScriptSummary {
+                id: row.try_get("id")?,
+                source: row
+                    .try_get::<Option<String>, _>("source")?
+                    .unwrap_or_default(),
+                script_type: row
+                    .try_get::<Option<String>, _>("script_type")?
+                    .unwrap_or_default(),
+                variant: row
+                    .try_get::<Option<String>, _>("variant")?
+                    .unwrap_or_default(),
+                is_supported: row.try_get::<i64, _>("is_supported")? != 0,
+                total_texts: row.try_get::<Option<i64>, _>("total_texts")?.unwrap_or(0),
+                translated_texts: row
+                    .try_get::<Option<i64>, _>("translated_texts")?
+                    .unwrap_or(0),
+                total_sections: row
+                    .try_get::<Option<i64>, _>("total_sections")?
+                    .unwrap_or(0),
+            })
+        })
+        .collect()
 }
 
 async fn create_schema(pool: &SqlitePool) -> Result<()> {
@@ -281,5 +331,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn lists_scripts_in_id_order() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections) \
+             VALUES (2, 'SCRIPT', 'B', 'x', 1, 10, 4, 3), \
+                    (1, 'ELF', 'A', '', 0, 2, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let scripts = list_scripts(&pool).await.unwrap();
+        assert_eq!(scripts.len(), 2);
+        assert_eq!(scripts[0].id, 1);
+        assert_eq!(scripts[1].id, 2);
+        assert!(scripts[1].is_supported);
+        assert_eq!(scripts[1].translated_texts, 4);
     }
 }

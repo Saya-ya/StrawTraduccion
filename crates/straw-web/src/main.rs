@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use askama::Template;
 use axum::{extract::State, response::Html, routing::get, Router};
 use sqlx::SqlitePool;
-use straw_db::{connect_path, get_setting, init_db, DEFAULT_DB_PATH};
+use straw_db::{connect_path, get_setting, init_db, list_scripts, ScriptSummary, DEFAULT_DB_PATH};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
@@ -19,6 +19,16 @@ struct IndexTemplate<'a> {
     db_path: &'a str,
     ui_lang: &'a str,
     target_lang: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "scripts.html")]
+struct ScriptsTemplate {
+    scripts: Vec<ScriptSummary>,
+    scripts_count: usize,
+    total_texts: i64,
+    translated_texts: i64,
+    percent_label: String,
 }
 
 #[tokio::main]
@@ -37,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        .route("/scripts", get(scripts))
         .with_state(AppState { db });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
@@ -66,4 +77,25 @@ async fn index(State(state): State<AppState>) -> Html<String> {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn scripts(State(state): State<AppState>) -> Html<String> {
+    let scripts = list_scripts(&state.db).await.unwrap_or_default();
+    let total_texts = scripts.iter().map(|script| script.total_texts).sum();
+    let translated_texts = scripts.iter().map(|script| script.translated_texts).sum();
+    let percent = if total_texts > 0 {
+        translated_texts as f64 / total_texts as f64 * 100.0
+    } else {
+        0.0
+    };
+    let scripts_count = scripts.len();
+
+    let template = ScriptsTemplate {
+        scripts,
+        scripts_count,
+        total_texts,
+        translated_texts,
+        percent_label: format!("{percent:.1}"),
+    };
+    Html(template.render().expect("scripts template renders"))
 }

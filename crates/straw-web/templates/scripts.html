@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Scripts - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-7xl px-6 py-10">
+        <nav class="mb-8 flex items-center justify-between">
+            <a href="/" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">StrawTraduccion</a>
+            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Rust Web</span>
+        </nav>
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Base de datos</p>
+                    <h1 class="mt-2 text-4xl font-black tracking-tight">Scripts</h1>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-center">
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ scripts_count }}</div>
+                        <div class="text-xs text-slate-500">scripts</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ translated_texts }}/{{ total_texts }}</div>
+                        <div class="text-xs text-slate-500">textos</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ percent_label }}%</div>
+                        <div class="text-xs text-slate-500">avance</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70">
+            {% if scripts_count == 0 %}
+            <div class="p-10 text-center text-slate-400">
+                No hay scripts importados todavia.
+            </div>
+            {% else %}
+            <table class="w-full text-sm">
+                <thead class="bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
+                    <tr>
+                        <th class="px-5 py-3">ID</th>
+                        <th class="px-5 py-3">Tipo</th>
+                        <th class="px-5 py-3">Var</th>
+                        <th class="px-5 py-3">Secciones</th>
+                        <th class="px-5 py-3">Textos</th>
+                        <th class="px-5 py-3">Estado</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800">
+                    {% for script in scripts %}
+                    <tr class="transition hover:bg-slate-800/50">
+                        <td class="px-5 py-3 font-mono text-pink-200">{{ script.id }}</td>
+                        <td class="px-5 py-3 text-slate-300">{{ script.script_type }}</td>
+                        <td class="px-5 py-3 font-mono text-slate-400">{{ script.variant }}</td>
+                        <td class="px-5 py-3 text-slate-400">{{ script.total_sections }}</td>
+                        <td class="px-5 py-3 text-slate-300">{{ script.translated_texts }}/{{ script.total_texts }}</td>
+                        <td class="px-5 py-3">
+                            {% if script.is_supported %}
+                            <span class="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300">soportado</span>
+                            {% else %}
+                            <span class="rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-slate-300">pendiente</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>
