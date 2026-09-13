@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::Path as FsPath};
 
 use askama::Template;
 use axum::{
@@ -9,13 +9,18 @@ use axum::{
     Form, Router,
 };
 use sqlx::SqlitePool;
-use straw_core::{check_fit, spanish_glyph_map, FitStatus, TextSource};
+use straw_core::{
+    check_fit, extract_lz77_scripts_to_dir, spanish_glyph_map, FitStatus, TextSource,
+};
 use straw_db::{
     connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
     search_text_entries, set_setting, update_text_entry_translation, ScriptDetail, ScriptSummary,
     SearchResult, TextEntrySummary, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+const DATA_BIN_PATH: &str = "originales/Data.bin";
+const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
 
 #[derive(Clone)]
 struct AppState {
@@ -78,6 +83,17 @@ struct SettingsTemplate {
     message: String,
 }
 
+#[derive(Template)]
+#[template(path = "import.html")]
+struct ImportTemplate {
+    data_bin_path: &'static str,
+    scripts_out_dir: &'static str,
+    data_bin_exists: bool,
+    existing_dec_count: usize,
+    message: String,
+    error: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
@@ -105,6 +121,13 @@ struct SettingsParams {
     saved: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ImportParams {
+    status: Option<String>,
+    count: Option<usize>,
+    error: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -124,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts", get(scripts))
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
+        .route("/import", get(import_page).post(run_import))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -241,6 +265,68 @@ async fn settings(
         message,
     };
     Html(template.render().expect("settings template renders"))
+}
+
+async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
+    let message = if params.status.as_deref() == Some("ok") {
+        format!(
+            "Extraccion completada: {} scripts LZ77 escritos",
+            params.count.unwrap_or(0)
+        )
+    } else {
+        String::new()
+    };
+    let error = params.error.unwrap_or_default();
+    let template = ImportTemplate {
+        data_bin_path: DATA_BIN_PATH,
+        scripts_out_dir: SCRIPTS_OUT_DIR,
+        data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
+        existing_dec_count: count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)),
+        message,
+        error,
+    };
+    Html(template.render().expect("import template renders"))
+}
+
+async fn run_import() -> impl IntoResponse {
+    if !FsPath::new(DATA_BIN_PATH).exists() {
+        return Redirect::to("/import?error=missing_databin").into_response();
+    }
+
+    let result =
+        tokio::task::spawn_blocking(|| extract_lz77_scripts_to_dir(DATA_BIN_PATH, SCRIPTS_OUT_DIR))
+            .await;
+
+    match result {
+        Ok(Ok(count)) => Redirect::to(&format!("/import?status=ok&count={count}")).into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+fn count_dec_files(path: &FsPath) -> usize {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "dec"))
+        .count()
+}
+
+fn url_escape(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![ch],
+            ' ' => vec!['+'],
+            _ => format!("%{:02X}", ch as u32).chars().collect(),
+        })
+        .collect()
 }
 
 async fn save_settings(
