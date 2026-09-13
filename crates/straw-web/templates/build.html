@@ -120,6 +120,25 @@
         <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
+                    <h2 class="text-xl font-black">Inventario TIM2</h2>
+                    <p class="mt-2 text-sm text-slate-400">Escanea Data.bin, LZ77 directos y LZ77 anidados para generar metadatos de texturas en <span class="font-mono text-pink-200">work_texturas/output/all_textures</span>.</p>
+                    {% if texture_inventory_exists %}
+                    <p class="mt-2 text-xs font-bold text-emerald-300">textures.json existente detectado.</p>
+                    {% endif %}
+                </div>
+                <form method="post" action="/build/texture-inventory">
+                    {% if data_bin_exists %}
+                    <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white shadow-lg shadow-pink-950/40 hover:bg-pink-400">Generar inventario</button>
+                    {% else %}
+                    <button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Data.bin requerido</button>
+                    {% endif %}
+                </form>
+            </div>
+        </section>
+
+        <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
                     <h2 class="text-xl font-black">Exportar CSV de build</h2>
                     <p class="mt-2 text-sm text-slate-400">Genera <span class="font-mono text-pink-200">{{ build_csv_path }}</span> con traducciones marcadas como traducidas.</p>
                     {% if build_csv_exists %}

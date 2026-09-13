@@ -9,6 +9,7 @@ pub mod lz77;
 pub mod patch_elf;
 pub mod patch_scripts;
 pub mod script_rebuilder;
+pub mod texture_inventory;
 
 pub use datafat::{
     find_row, parse_entries, read_entries, size_field_write_offset, slot_capacity, FatEntry,
@@ -35,3 +36,4 @@ pub use script_rebuilder::{
     find_segment_containing, rebuild_local_slack, RebuildReport, SegmentReport, TextSegment,
     TranslationRow,
 };
+pub use texture_inventory::{write_texture_inventory, TextureRecord};

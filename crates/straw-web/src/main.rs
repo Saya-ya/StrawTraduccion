@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
     inject_elf_into_iso, patch_translated_elf, patch_translated_scripts, spanish_glyph_map,
-    FitStatus, TextSource,
+    write_texture_inventory, FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
@@ -31,6 +31,7 @@ const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
 const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
 const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
+const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
 
 #[derive(Clone)]
 struct AppState {
@@ -119,6 +120,7 @@ struct BuildTemplate {
     iso_out_path: &'static str,
     build_csv_path: &'static str,
     build_csv_exists: bool,
+    texture_inventory_exists: bool,
     message: String,
     error: String,
 }
@@ -168,6 +170,7 @@ struct BuildParams {
     elf_patched: Option<usize>,
     iso: Option<u64>,
     elf: Option<u64>,
+    textures: Option<usize>,
     error: Option<String>,
 }
 
@@ -199,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/patch-elf", post(patch_elf))
         .route("/build/build-iso", post(build_iso))
         .route("/build/inject-elf", post(inject_elf))
+        .route("/build/texture-inventory", post(texture_inventory))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -370,6 +374,9 @@ async fn build_page(
         iso_out_path: ISO_OUT_PATH,
         build_csv_path: BUILD_CSV_PATH,
         build_csv_exists: FsPath::new(BUILD_CSV_PATH).exists(),
+        texture_inventory_exists: FsPath::new(TEXTURE_INVENTORY_DIR)
+            .join("textures.json")
+            .exists(),
         message: params
             .exported
             .map(|count| format!("CSV exportado: {count} traducciones"))
@@ -400,6 +407,11 @@ async fn build_page(
                 params
                     .elf
                     .map(|bytes| format!("ELF inyectado: {bytes} bytes escritos"))
+            })
+            .or_else(|| {
+                params
+                    .textures
+                    .map(|count| format!("Inventario TIM2 generado: {count} texturas"))
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -560,6 +572,30 @@ async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
         Ok(Ok(bytes)) => {
             record_build_success(&state.db, "inject ELF", 100, ISO_OUT_PATH).await;
             Redirect::to(&format!("/build?elf={bytes}")).into_response()
+        }
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn texture_inventory(State(state): State<AppState>) -> impl IntoResponse {
+    if !FsPath::new(DATA_BIN_PATH).exists() {
+        return Redirect::to("/build?error=missing_databin").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        write_texture_inventory(DATA_BIN_PATH, TEXTURE_INVENTORY_DIR)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(records)) => {
+            record_build_success(&state.db, "texture inventory", 15, "").await;
+            Redirect::to(&format!("/build?textures={}", records.len())).into_response()
         }
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
