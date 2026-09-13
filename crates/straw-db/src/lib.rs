@@ -440,6 +440,33 @@ pub async fn recent_builds(pool: &SqlitePool, limit: i64) -> Result<Vec<BuildSum
         .collect()
 }
 
+pub async fn record_build_step(
+    pool: &SqlitePool,
+    status: &str,
+    build_type: &str,
+    step: &str,
+    progress_pct: i64,
+    iso_path: &str,
+    error_log: &str,
+) -> Result<i64> {
+    let result = sqlx::query(
+        r#"
+        INSERT INTO build_history (finished_at, status, build_type, iso_path, error_log, step, progress_pct)
+        VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(status)
+    .bind(build_type)
+    .bind(iso_path)
+    .bind(error_log)
+    .bind(step)
+    .bind(progress_pct.clamp(0, 100))
+    .execute(pool)
+    .await?;
+
+    Ok(result.last_insert_rowid())
+}
+
 pub async fn exported_translations(
     pool: &SqlitePool,
     only_translated: bool,
@@ -918,5 +945,30 @@ mod tests {
         assert_eq!(rows[0].file_id, "1");
         assert_eq!(rows[0].offset, "0x00010");
         assert_eq!(rows[0].translated_text, "b");
+    }
+
+    #[tokio::test]
+    async fn records_build_steps() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        let id = record_build_step(
+            &pool,
+            "success",
+            "full",
+            "build iso",
+            80,
+            "work/Strawberry_translated.iso",
+            "",
+        )
+        .await
+        .unwrap();
+
+        let builds = recent_builds(&pool, 10).await.unwrap();
+        assert_eq!(builds.len(), 1);
+        assert_eq!(builds[0].id, id);
+        assert_eq!(builds[0].status, "success");
+        assert_eq!(builds[0].step, "build iso");
+        assert_eq!(builds[0].progress_pct, 80);
     }
 }

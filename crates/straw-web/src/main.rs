@@ -16,9 +16,9 @@ use straw_core::{
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
-    list_scripts, recent_builds, search_text_entries, set_setting, translation_stats,
-    update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
-    TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
+    list_scripts, recent_builds, record_build_step, search_text_entries, set_setting,
+    translation_stats, update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary,
+    SearchResult, TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -399,14 +399,17 @@ async fn build_page(
 
 async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
     match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
-        Ok(count) => Redirect::to(&format!("/build?exported={count}")).into_response(),
+        Ok(count) => {
+            record_build_success(&state.db, "export csv", 20, "").await;
+            Redirect::to(&format!("/build?exported={count}")).into_response()
+        }
         Err(err) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
 }
 
-async fn prepare_data_bin() -> impl IntoResponse {
+async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(DATA_BIN_PATH).exists() {
         return Redirect::to("/build?error=missing_databin").into_response();
     }
@@ -416,7 +419,10 @@ async fn prepare_data_bin() -> impl IntoResponse {
             .await;
 
     match result {
-        Ok(Ok(bytes)) => Redirect::to(&format!("/build?prepared={bytes}")).into_response(),
+        Ok(Ok(bytes)) => {
+            record_build_success(&state.db, "prepare Data.bin", 35, "").await;
+            Redirect::to(&format!("/build?prepared={bytes}")).into_response()
+        }
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
@@ -426,7 +432,7 @@ async fn prepare_data_bin() -> impl IntoResponse {
     }
 }
 
-async fn patch_scripts() -> impl IntoResponse {
+async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
         return Redirect::to("/build?error=missing_patched_data").into_response();
     }
@@ -447,6 +453,7 @@ async fn patch_scripts() -> impl IntoResponse {
 
     match result {
         Ok(Ok(report)) if report.errors.is_empty() => {
+            record_build_success(&state.db, "patch scripts", 55, "").await;
             Redirect::to(&format!("/build?patched={}", report.scripts_patched)).into_response()
         }
         Ok(Ok(report)) => Redirect::to(&format!(
@@ -463,7 +470,7 @@ async fn patch_scripts() -> impl IntoResponse {
     }
 }
 
-async fn patch_elf() -> impl IntoResponse {
+async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
         return Redirect::to("/build?error=missing_original_elf").into_response();
     }
@@ -484,6 +491,7 @@ async fn patch_elf() -> impl IntoResponse {
 
     match result {
         Ok(Ok(report)) => {
+            record_build_success(&state.db, "patch ELF", 65, "").await;
             Redirect::to(&format!("/build?elf_patched={}", report.rows_patched)).into_response()
         }
         Ok(Err(err)) => {
@@ -495,7 +503,7 @@ async fn patch_elf() -> impl IntoResponse {
     }
 }
 
-async fn build_iso() -> impl IntoResponse {
+async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(BASE_ISO_PATH).exists() {
         return Redirect::to("/build?error=missing_base_iso").into_response();
     }
@@ -509,7 +517,10 @@ async fn build_iso() -> impl IntoResponse {
     .await;
 
     match result {
-        Ok(Ok(bytes)) => Redirect::to(&format!("/build?iso={bytes}")).into_response(),
+        Ok(Ok(bytes)) => {
+            record_build_success(&state.db, "build ISO", 85, ISO_OUT_PATH).await;
+            Redirect::to(&format!("/build?iso={bytes}")).into_response()
+        }
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
@@ -519,7 +530,7 @@ async fn build_iso() -> impl IntoResponse {
     }
 }
 
-async fn inject_elf() -> impl IntoResponse {
+async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(ISO_OUT_PATH).exists() {
         return Redirect::to("/build?error=missing_iso").into_response();
     }
@@ -536,7 +547,10 @@ async fn inject_elf() -> impl IntoResponse {
     .await;
 
     match result {
-        Ok(Ok(bytes)) => Redirect::to(&format!("/build?elf={bytes}")).into_response(),
+        Ok(Ok(bytes)) => {
+            record_build_success(&state.db, "inject ELF", 100, ISO_OUT_PATH).await;
+            Redirect::to(&format!("/build?elf={bytes}")).into_response()
+        }
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
@@ -544,6 +558,10 @@ async fn inject_elf() -> impl IntoResponse {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
+}
+
+async fn record_build_success(db: &SqlitePool, step: &str, progress_pct: i64, iso_path: &str) {
+    let _ = record_build_step(db, "success", "full", step, progress_pct, iso_path, "").await;
 }
 
 async fn run_import() -> impl IntoResponse {
