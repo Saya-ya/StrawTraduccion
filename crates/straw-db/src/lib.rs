@@ -48,6 +48,20 @@ pub struct ScriptDetail {
     pub total_pages: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchResult {
+    pub id: i64,
+    pub script_id: i64,
+    pub byte_offset: i64,
+    pub byte_offset_hex: String,
+    pub section_id: i64,
+    pub section_order: i64,
+    pub original_text: String,
+    pub translated_text: String,
+    pub is_translated: bool,
+    pub needs_shift: bool,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -282,6 +296,56 @@ pub async fn update_text_entry_translation(
 
     refresh_script_translated_count(pool, existing.script_id).await?;
     get_text_entry(pool, entry_id).await
+}
+
+pub async fn search_text_entries(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<SearchResult>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.clamp(1, 200);
+
+    let rows = sqlx::query(
+        r#"
+        SELECT te.id, te.script_id, te.byte_offset, te.section_id, te.section_order,
+               te.original_text, te.translated_text, te.is_translated, te.needs_shift
+        FROM text_entries_fts fts
+        JOIN text_entries te ON te.id = fts.rowid
+        WHERE text_entries_fts MATCH ?
+        ORDER BY te.script_id, te.section_id, te.section_order
+        LIMIT ?
+        "#,
+    )
+    .bind(query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            let byte_offset: i64 = row.try_get("byte_offset")?;
+            Ok(SearchResult {
+                id: row.try_get("id")?,
+                script_id: row.try_get("script_id")?,
+                byte_offset,
+                byte_offset_hex: format!("0x{byte_offset:05X}"),
+                section_id: row.try_get::<Option<i64>, _>("section_id")?.unwrap_or(0),
+                section_order: row.try_get::<Option<i64>, _>("section_order")?.unwrap_or(0),
+                original_text: row
+                    .try_get::<Option<String>, _>("original_text")?
+                    .unwrap_or_default(),
+                translated_text: row
+                    .try_get::<Option<String>, _>("translated_text")?
+                    .unwrap_or_default(),
+                is_translated: row.try_get::<i64, _>("is_translated")? != 0,
+                needs_shift: row.try_get::<i64, _>("needs_shift")? != 0,
+            })
+        })
+        .collect()
 }
 
 async fn refresh_script_translated_count(pool: &SqlitePool, script_id: i64) -> Result<()> {
@@ -605,5 +669,28 @@ mod tests {
 
         let script = get_script(&pool, 1).await.unwrap().unwrap();
         assert_eq!(script.translated_texts, 1);
+    }
+
+    #[tokio::test]
+    async fn search_uses_fts_table() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, byte_offset, original_text, translated_text, is_translated) \
+             VALUES (1, 16, 'strawberry original', 'panic traducido', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = search_text_entries(&pool, "panic", 20).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].script_id, 1);
+        assert_eq!(results[0].translated_text, "panic traducido");
     }
 }

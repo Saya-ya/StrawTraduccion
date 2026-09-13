@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Buscar - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-6 py-10">
+        <nav class="mb-8 flex items-center justify-between">
+            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
+            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">FTS5</span>
+        </nav>
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Busqueda</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Buscar textos</h1>
+            <form class="mt-6 flex flex-col gap-3 md:flex-row" method="get" action="/search">
+                <input name="q" value="{{ query }}" placeholder="original o traduccion..." class="min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <button class="rounded-2xl bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Buscar</button>
+            </form>
+            {% if error.len() > 0 %}
+            <div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
+            {% endif %}
+        </section>
+
+        <section class="space-y-4">
+            {% if query.len() == 0 %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                Escribe una consulta para buscar en originales y traducciones.
+            </div>
+            {% else if results.len() == 0 %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                Sin resultados para “{{ query }}”.
+            </div>
+            {% else %}
+            {% for result in results %}
+            <a href="/scripts/{{ result.script_id }}?page=1&limit=50" class="block rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition hover:border-pink-400/40">
+                <div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span class="font-mono text-pink-200">Script {{ result.script_id }}</span>
+                    <span class="font-mono">{{ result.byte_offset_hex }}</span>
+                    <span>[{{ result.section_id }}:{{ result.section_order }}]</span>
+                    {% if result.needs_shift %}<span class="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">needs_shift</span>{% endif %}
+                    {% if result.is_translated %}<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">traducido</span>{% endif %}
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                    <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ result.original_text }}</p>
+                    {% if result.translated_text.len() == 0 %}
+                    <p class="rounded-xl border border-dashed border-slate-700 p-4 text-sm italic text-slate-600">Sin traducir</p>
+                    {% else %}
+                    <p class="whitespace-pre-wrap rounded-xl bg-slate-800/80 p-4 text-sm text-white">{{ result.translated_text }}</p>
+                    {% endif %}
+                </div>
+            </a>
+            {% endfor %}
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

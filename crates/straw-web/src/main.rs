@@ -12,7 +12,8 @@ use sqlx::SqlitePool;
 use straw_core::{check_fit, spanish_glyph_map, FitStatus, TextSource};
 use straw_db::{
     connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
-    update_text_entry_translation, ScriptDetail, ScriptSummary, TextEntrySummary, DEFAULT_DB_PATH,
+    search_text_entries, update_text_entry_translation, ScriptDetail, ScriptSummary, SearchResult,
+    TextEntrySummary, DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -61,10 +62,23 @@ struct TextEditorTemplate {
     text: TextEntrySummary,
 }
 
+#[derive(Template)]
+#[template(path = "search.html")]
+struct SearchTemplate {
+    query: String,
+    results: Vec<SearchResult>,
+    error: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SearchParams {
+    q: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -90,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/scripts", get(scripts))
         .route("/scripts/:script_id", get(script_detail))
+        .route("/search", get(search))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
         .with_state(AppState { db });
@@ -169,6 +184,20 @@ async fn script_detail(
         )
             .into_response(),
     }
+}
+
+async fn search(State(state): State<AppState>, Query(params): Query<SearchParams>) -> Html<String> {
+    let query = params.q.unwrap_or_default();
+    let (results, error) = match search_text_entries(&state.db, &query, 100).await {
+        Ok(results) => (results, String::new()),
+        Err(err) => (Vec::new(), format!("No se pudo buscar: {err}")),
+    };
+    let template = SearchTemplate {
+        query,
+        results,
+        error,
+    };
+    Html(template.render().expect("search template renders"))
 }
 
 async fn text_editor(
