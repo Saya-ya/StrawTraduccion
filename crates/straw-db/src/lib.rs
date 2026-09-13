@@ -82,6 +82,15 @@ pub struct BuildSummary {
     pub progress_pct: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedTranslation {
+    pub source: String,
+    pub file_id: String,
+    pub offset: String,
+    pub original_text: String,
+    pub translated_text: String,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -429,6 +438,92 @@ pub async fn recent_builds(pool: &SqlitePool, limit: i64) -> Result<Vec<BuildSum
             })
         })
         .collect()
+}
+
+pub async fn exported_translations(
+    pool: &SqlitePool,
+    only_translated: bool,
+) -> Result<Vec<ExportedTranslation>> {
+    let mut sql = String::from(
+        r#"
+        SELECT source, script_id, byte_offset, original_text, translated_text
+        FROM text_entries
+        "#,
+    );
+    if only_translated {
+        sql.push_str(" WHERE is_translated = 1");
+    }
+    sql.push_str(" ORDER BY script_id, section_id, section_order");
+
+    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    rows.into_iter()
+        .map(|row| {
+            let source = row
+                .try_get::<Option<String>, _>("source")?
+                .unwrap_or_else(|| "SCRIPT".to_owned());
+            let script_id: i64 = row.try_get("script_id")?;
+            let byte_offset: i64 = row.try_get("byte_offset")?;
+            let file_id = if script_id == -1 {
+                "ELF".to_owned()
+            } else {
+                script_id.to_string()
+            };
+            let offset = if source == "SCRIPT" {
+                format!("0x{byte_offset:05X}")
+            } else {
+                format!("0x{byte_offset:06X}")
+            };
+            Ok(ExportedTranslation {
+                source,
+                file_id,
+                offset,
+                original_text: row
+                    .try_get::<Option<String>, _>("original_text")?
+                    .unwrap_or_default(),
+                translated_text: row
+                    .try_get::<Option<String>, _>("translated_text")?
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+pub async fn export_translations_csv(
+    pool: &SqlitePool,
+    csv_path: impl AsRef<Path>,
+    only_translated: bool,
+) -> Result<usize> {
+    let csv_path = csv_path.as_ref();
+    if let Some(parent) = csv_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let rows = exported_translations(pool, only_translated).await?;
+    let mut writer = csv::WriterBuilder::new()
+        .has_headers(false)
+        .terminator(csv::Terminator::CRLF)
+        .from_path(csv_path)
+        .with_context(|| format!("failed to create {}", csv_path.display()))?;
+    writer.write_record([
+        "source",
+        "file_id",
+        "offset",
+        "original_text",
+        "translated_text",
+    ])?;
+    for row in &rows {
+        writer.write_record([
+            row.source.as_str(),
+            row.file_id.as_str(),
+            row.offset.as_str(),
+            row.original_text.as_str(),
+            row.translated_text.as_str(),
+        ])?;
+    }
+    writer.flush()?;
+    Ok(rows.len())
 }
 
 async fn refresh_script_translated_count(pool: &SqlitePool, script_id: i64) -> Result<()> {
@@ -799,5 +894,29 @@ mod tests {
         assert_eq!(stats.text_entries, 2);
         assert_eq!(stats.translated_entries, 1);
         assert_eq!(stats.needs_shift_entries, 1);
+    }
+
+    #[tokio::test]
+    async fn exports_translations_for_build() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, section_id, section_order, original_text, translated_text, is_translated) \
+             VALUES (1, 'SCRIPT', 16, 0, 0, 'a', 'b', 1), (1, 'SCRIPT', 18, 0, 1, 'c', '', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = exported_translations(&pool, true).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].file_id, "1");
+        assert_eq!(rows[0].offset, "0x00010");
+        assert_eq!(rows[0].translated_text, "b");
     }
 }

@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect},
-    routing::{get, put},
+    routing::{get, post, put},
     Form, Router,
 };
 use sqlx::SqlitePool;
@@ -13,8 +13,8 @@ use straw_core::{
     check_fit, extract_lz77_scripts_to_dir, spanish_glyph_map, FitStatus, TextSource,
 };
 use straw_db::{
-    connect_path, get_script_detail, get_setting, get_text_entry, init_db, list_scripts,
-    recent_builds, search_text_entries, set_setting, translation_stats,
+    connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
+    list_scripts, recent_builds, search_text_entries, set_setting, translation_stats,
     update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
     TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
@@ -24,6 +24,7 @@ const DATA_BIN_PATH: &str = "originales/Data.bin";
 const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
 const PATCHED_DATA_PATH: &str = "work/Data_patched.bin";
 const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
+const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 
 #[derive(Clone)]
 struct AppState {
@@ -107,6 +108,10 @@ struct BuildTemplate {
     patched_data_exists: bool,
     iso_exists: bool,
     iso_out_path: &'static str,
+    build_csv_path: &'static str,
+    build_csv_exists: bool,
+    message: String,
+    error: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -143,6 +148,12 @@ struct ImportParams {
     error: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct BuildParams {
+    exported: Option<usize>,
+    error: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -164,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/search", get(search))
         .route("/import", get(import_page).post(run_import))
         .route("/build", get(build_page))
+        .route("/build/export-csv", post(export_build_csv))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -304,7 +316,10 @@ async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
     Html(template.render().expect("import template renders"))
 }
 
-async fn build_page(State(state): State<AppState>) -> Html<String> {
+async fn build_page(
+    State(state): State<AppState>,
+    Query(params): Query<BuildParams>,
+) -> Html<String> {
     let stats = translation_stats(&state.db)
         .await
         .unwrap_or(TranslationStats {
@@ -322,8 +337,24 @@ async fn build_page(State(state): State<AppState>) -> Html<String> {
         patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
         iso_exists: FsPath::new(ISO_OUT_PATH).exists(),
         iso_out_path: ISO_OUT_PATH,
+        build_csv_path: BUILD_CSV_PATH,
+        build_csv_exists: FsPath::new(BUILD_CSV_PATH).exists(),
+        message: params
+            .exported
+            .map(|count| format!("CSV exportado: {count} traducciones"))
+            .unwrap_or_default(),
+        error: params.error.unwrap_or_default(),
     };
     Html(template.render().expect("build template renders"))
+}
+
+async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
+    match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
+        Ok(count) => Redirect::to(&format!("/build?exported={count}")).into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
 }
 
 async fn run_import() -> impl IntoResponse {
