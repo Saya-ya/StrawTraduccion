@@ -6,14 +6,18 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import TEMPLATES as TEMPLATES_DIR, BUILD_TEMP_DIR, TEXTOS
 from ..services.builder import DEFAULT_COMPRESS_WORKERS, export_csv_for_build, run_full_build
 from ..services.build_lock import get_build_state, is_build_running
 
 router = APIRouter(prefix="/build", tags=["build"])
-env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    auto_reload=False,
+    autoescape=select_autoescape(["html", "xml"]),
+)
 
 
 def render(name: str, request: Request, **kwargs) -> HTMLResponse:

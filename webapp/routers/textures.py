@@ -13,13 +13,17 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import TEMPLATES as TEMPLATES_DIR, PROJECT_ROOT, TEXTURE_CATALOG, WORK_TEXTURES, ORIGINALES
 from ..services.build_lock import acquire_build_lock, is_build_running, release_build_lock
 
 router = APIRouter(prefix="/textures", tags=["textures"])
-env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    auto_reload=False,
+    autoescape=select_autoescape(["html", "xml"]),
+)
 
 CATALOG_DIR = TEXTURE_CATALOG
 MANIFEST_DIR = PROJECT_ROOT / "texturas"

@@ -1,13 +1,17 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import TEMPLATES as TEMPLATES_DIR, TEXTOS
 from ..services.import_service import import_csv_to_db, run_texture_extraction
 from ..services.build_lock import acquire_build_lock, is_build_running, release_build_lock
 
 router = APIRouter(prefix="/import", tags=["import"])
-env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    auto_reload=False,
+    autoescape=select_autoescape(["html", "xml"]),
+)
 
 
 def render(name: str, request: Request, **kwargs) -> HTMLResponse:

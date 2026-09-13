@@ -2,14 +2,18 @@ import json
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import TEMPLATES as TEMPLATES_DIR
 from ..i18n import inject_i18n
-from ..services.settings_service import get_setting, set_setting
+from ..services.settings_service import get_setting, invert_glyph_map, normalize_glyph_map, set_setting
 
 router = APIRouter(prefix="/settings", tags=["settings"])
-env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    auto_reload=False,
+    autoescape=select_autoescape(["html", "xml"]),
+)
 
 
 def render(name: str, request: Request, **kwargs) -> HTMLResponse:
@@ -49,9 +53,9 @@ def settings_page(request: Request):
     custom_map = get_setting("custom_glyph_map", {})
 
     if target_lang == "es":
-        current_map = dict(ES_MAP)
+        current_map = invert_glyph_map(ES_MAP)
     elif target_lang == "custom":
-        current_map = dict(custom_map)
+        current_map = invert_glyph_map(custom_map)
     else:
         current_map = {}
 
@@ -80,10 +84,10 @@ def glyph_config(request: Request):
     custom_map = get_setting("custom_glyph_map", {})
 
     if target_lang == "es":
-        current_map = dict(ES_MAP)
+        current_map = invert_glyph_map(ES_MAP)
         locked = True
     elif target_lang == "custom":
-        current_map = dict(custom_map)
+        current_map = invert_glyph_map(custom_map)
         locked = False
     else:
         current_map = {}
@@ -116,15 +120,17 @@ async def save_glyph_map(request: Request):
     except Exception:
         return JSONResponse({"error": "JSON invalido"}, status_code=400)
 
-    validated = {}
+    ui_map = {}
     for glyph, target_char in body.items():
+        if not isinstance(glyph, str) or len(glyph) != 1:
+            continue
         if not isinstance(target_char, str) or len(target_char) != 1:
             continue
         try:
             target_char.encode("latin-1")
         except UnicodeEncodeError:
             continue
-        validated[glyph] = target_char
+        ui_map[glyph] = target_char
 
-    set_setting("custom_glyph_map", validated)
+    set_setting("custom_glyph_map", normalize_glyph_map(ui_map))
     return JSONResponse({"ok": True})

@@ -15,6 +15,7 @@ Usage:
 """
 
 import csv
+import json
 import struct
 import sys
 from pathlib import Path
@@ -93,9 +94,10 @@ def patch_script_text(data_bin_path, file_id, dec_offset, new_bytes_utf16le):
     return True, f"OK ({len(new_bytes_utf16le)} bytes en {len(comp_offsets)} posiciones)"
 
 
-def apply_translations(csv_path, data_bin_path, target_lang="es"):
+def apply_translations(csv_path, data_bin_path, target_lang="es", glyph_map=None):
     """Lee el CSV y aplica todas las traducciones."""
-    glyph_map = get_glyph_map(target_lang) if target_lang != "es" else None
+    if glyph_map is None:
+        glyph_map = get_glyph_map(target_lang) if target_lang != "es" else None
     bin_path = Path(data_bin_path)
     if not bin_path.exists():
         print(f"ERROR: {bin_path} no existe")
@@ -211,6 +213,8 @@ def main():
     parser.add_argument('--target-lang', default='es',
                         choices=['es', 'en', 'custom'],
                         help='Idioma de traduccion (default: es)')
+    parser.add_argument('--glyph-map-json', default=None,
+                        help='Mapa de glifos serializado como JSON (caracter -> glifo)')
     args = parser.parse_args()
 
     if args.csv_path is None:
@@ -219,7 +223,10 @@ def main():
 
     csv_path = args.csv_path
     data_bin = "originales/Data.bin"
-    apply_translations(csv_path, data_bin, target_lang=args.target_lang)
+    glyph_map = None
+    if args.glyph_map_json:
+        glyph_map = json.loads(args.glyph_map_json)
+    apply_translations(csv_path, data_bin, target_lang=args.target_lang, glyph_map=glyph_map)
 
 
 if __name__ == '__main__':

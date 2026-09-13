@@ -73,12 +73,11 @@ def _rebuild_one_script(script_id: int, csv_path: Path, bin_path: Path, verify: 
 
 
 def _compress_worker(args: tuple) -> dict:
-    script_id, csv_path, project_root_str, target_lang = args
+    script_id, csv_path, project_root_str, glyph_map = args
     project_root = Path(project_root_str)
 
     sys.path.insert(0, str(project_root / "tools"))
     from script_rebuilder import default_dec_path, load_csv_rows, rebuild_local_slack
-    from glyph_map import get_glyph_map
     from lz77 import compress, decompress
 
     dec_path = default_dec_path(script_id)
@@ -87,8 +86,6 @@ def _compress_worker(args: tuple) -> dict:
 
     dec_data = dec_path.read_bytes()
     rows = load_csv_rows(csv_path, script_id)
-
-    glyph_map = get_glyph_map(target_lang)
 
     try:
         rebuilt, report = rebuild_local_slack(dec_data, rows, glyph_map=glyph_map)
@@ -157,11 +154,16 @@ def _inject_one(script_id: int, comp_data: bytes, bin_path: Path) -> dict:
     return {"success": True, "script_id": script_id}
 
 
-def run_apply_translation(csv_path: Path, target_lang: str = "es") -> dict:
+def run_apply_translation(csv_path: Path, target_lang: str = "es", glyph_map: dict | None = None) -> dict:
     try:
+        cmd = [
+            "python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
+            str(csv_path), "--target-lang", target_lang,
+        ]
+        if glyph_map is not None:
+            cmd.extend(["--glyph-map-json", json.dumps(glyph_map, ensure_ascii=False)])
         result = subprocess.run(
-            ["python3", str(PROJECT_ROOT / "traduccion_tools" / "apply_translation.py"),
-             str(csv_path), "--target-lang", target_lang],
+            cmd,
             capture_output=True, text=True,
             cwd=str(PROJECT_ROOT),
             timeout=TIMEOUT_APPLY_ELF
@@ -368,8 +370,9 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
 
         compressed: dict[int, bytes] = {}
         errors: list[str] = []
-        from .settings_service import get_setting
+        from .settings_service import get_setting, load_glyph_map
         target_lang = get_setting("target_lang", "es")
+        glyph_map = load_glyph_map()
 
         if script_ids:
             total_scripts = len(script_ids)
@@ -380,7 +383,7 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
 
             t_start = time.time()
             project_root_str = str(PROJECT_ROOT)
-            work_items = [(sid, csv_path, project_root_str, target_lang) for sid in script_ids]
+            work_items = [(sid, csv_path, project_root_str, glyph_map) for sid in script_ids]
 
             session.close()
             session = None
@@ -434,7 +437,9 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
                 if inj_result["success"]:
                     injected += 1
                 else:
-                    state["log"].append(f"  ⚠ {sid}: {inj_result.get('error', 'falló inyección')[:150]}")
+                    msg = f"  ⚠ {sid}: {inj_result.get('error', 'falló inyección')[:150]}"
+                    errors.append(msg)
+                    state["log"].append(msg)
             state["log"].append(f"  Inyectados: {injected}/{len(compressed)}")
         else:
             state["log"].append("Sin scripts traducidos; build solo con texturas.")
@@ -445,11 +450,13 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
             state["log"].append("Ejecutando apply_translation.py...")
             save()
 
-            elf_apply = run_apply_translation(csv_path, target_lang)
+            elf_apply = run_apply_translation(csv_path, target_lang, glyph_map)
             if elf_apply["success"]:
                 state["log"].append("  ✓ ELF procesado")
             else:
-                state["log"].append(f"  ⚠ ELF: {elf_apply['stderr'][:100]}")
+                msg = f"  ⚠ ELF: {elf_apply['stderr'][:100]}"
+                errors.append(msg)
+                state["log"].append(msg)
 
         if include_images:
             state["step"] = "Aplicando texturas"
@@ -462,7 +469,9 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
                 state["log"].append(f"  Texturas: {tex_result['patched']} parches aplicados")
             else:
                 for err in tex_result.get("errors", []):
-                    state["log"].append(f"  {err}")
+                    msg = f"  {err}"
+                    errors.append(msg)
+                    state["log"].append(msg)
             for d in tex_result.get("details", []):
                 fits = "cabe" if d.get("fits") else "NO CABE"
                 injected = "inyectado" if d.get("injected") else "fallo"
@@ -480,7 +489,9 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
         if iso_result["success"]:
             state["log"].append("  ✓ ISO generada")
         else:
-            state["log"].append(f"  ✗ Error: {iso_result['stderr'][:100]}")
+            msg = f"  ✗ Error: {iso_result['stderr'][:100]}"
+            errors.append(msg)
+            state["log"].append(msg)
 
         if include_texts and script_ids:
             state["step"] = "Inyectando ELF"
@@ -492,17 +503,21 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
             if elf_result["success"]:
                 state["log"].append("  ✓ ELF inyectado")
             else:
-                state["log"].append(f"  ✗ Error: {elf_result['stderr'][:100]}")
+                msg = f"  ✗ Error: {elf_result['stderr'][:100]}"
+                errors.append(msg)
+                state["log"].append(msg)
         else:
             state["log"].append("Sin cambios ELF para este tipo de build.")
 
         iso_path = str(WORK / "Strawberry_translated.iso")
+        build_success = iso_result["success"] and not errors
         build_record = BuildHistory(
             started_at=datetime.now(timezone.utc),
             finished_at=datetime.now(timezone.utc),
-            status="success" if iso_result["success"] else "failed",
+            status="success" if build_success else "failed",
             build_type=build_type,
-            iso_path=iso_path if iso_result["success"] else "",
+            iso_path=iso_path if build_success else "",
+            error_log="\n".join(errors)[:500],
             step="Completado",
             progress_pct=100,
         )
@@ -510,11 +525,18 @@ def run_full_build(build_id: str, build_type: str = "full", workers: int | None 
         session.commit()
         session.close()
 
-        state["status"] = "success"
+        state["status"] = "success" if build_success else "failed"
         state["progress"] = 100
         state["step"] = "Completado"
-        state["iso_path"] = iso_path if iso_result["success"] else ""
-        state["log"].append(f"\n✓ ISO lista: {iso_path}" if iso_result["success"] else "\n✗ Falló la generación de ISO")
+        state["iso_path"] = iso_path if build_success else ""
+        if build_success:
+            state["log"].append(f"\n✓ ISO lista: {iso_path}")
+        elif iso_result["success"]:
+            state["error"] = "Build completado con errores parciales"
+            state["log"].append("\n✗ ISO generada, pero el build tuvo errores parciales")
+        else:
+            state["error"] = "Falló la generación de ISO"
+            state["log"].append("\n✗ Falló la generación de ISO")
         save()
 
     except Exception as e:

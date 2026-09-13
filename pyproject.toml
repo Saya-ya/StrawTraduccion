@@ -31,4 +31,4 @@ test = [
 py-modules = ["build_worker", "run_webapp"]
 
 [tool.setuptools.packages.find]
-include = ["webapp*"]
+include = ["webapp*", "tools*", "traduccion_tools*"]

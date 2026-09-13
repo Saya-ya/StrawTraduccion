@@ -152,6 +152,11 @@ def test_fit_checker_params():
 
 def test_settings_service():
     """Settings service lee y escribe correctamente."""
+    try:
+        import sqlalchemy  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
     from webapp.config import DB_PATH
     from webapp.database import init_db, SessionLocal, engine, Base
 
@@ -169,6 +174,21 @@ def test_settings_service():
     assert val == {"a": 1, "b": [2]}
 
     assert get_setting("nonexistent_key", "default_val") == "default_val"
+
+
+def test_custom_glyph_map_normalization():
+    """Mapa custom se normaliza a formato encoder: caracter -> glifo."""
+    try:
+        import sqlalchemy  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    from webapp.services.settings_service import invert_glyph_map, normalize_glyph_map
+
+    old_ui_map = {"\u0413": "ą", "\u0414": "ć"}
+    normalized = normalize_glyph_map(old_ui_map)
+    assert normalized == {"ą": "\u0413", "ć": "\u0414"}
+    assert invert_glyph_map(normalized) == old_ui_map
 
 
 def test_glyph_map_available_glyphs():

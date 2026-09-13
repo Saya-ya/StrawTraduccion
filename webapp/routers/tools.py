@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import text, func
 
 from ..config import TEMPLATES as TEMPLATES_DIR, BUILD_TEMP_DIR, TEXTOS
@@ -19,7 +19,11 @@ _POS_REF_RE = re.compile(
 )
 
 router = APIRouter(tags=["tools"])
-env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), auto_reload=False)
+env = Environment(
+    loader=FileSystemLoader(TEMPLATES_DIR),
+    auto_reload=False,
+    autoescape=select_autoescape(["html", "xml"]),
+)
 
 # Add urlencode filter
 from urllib.parse import quote_plus

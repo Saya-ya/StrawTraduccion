@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
+from html import escape
 
 from fastapi import APIRouter, Request, HTTPException, Form
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -69,6 +70,9 @@ def get_editor(request: Request, entry_id: int):
     row_height = min(max(line_count, 3), 20)
     capacity = entry.segment_capacity or 999
 
+    original_html = escape(entry.original_text[:300])
+    translated_html = escape(translated)
+
     html = f'''<div class="text-entry border border-gray-700 rounded p-3 bg-gray-700/40"
                  id="entry-{entry_id}">
     <form hx-put="/api/texts/{entry_id}"
@@ -79,11 +83,11 @@ def get_editor(request: Request, entry_id: int):
         <div class="text-xs text-gray-500 font-mono mb-1">
             [{entry.section_id}:{entry.section_order}] 0x{entry.byte_offset:05X} (#{entry_id})
         </div>
-        <div class="text-sm text-gray-400 mb-1 whitespace-pre-wrap">{entry.original_text[:300]}</div>
+        <div class="text-sm text-gray-400 mb-1 whitespace-pre-wrap">{original_html}</div>
         <textarea name="translated_text"
                   class="w-full bg-gray-800 text-white rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500"
                   id="editor-ta-{entry_id}"
-                  rows="{row_height}">{translated}</textarea>
+                   rows="{row_height}">{translated_html}</textarea>
         <div class="flex gap-2 text-xs items-center">
             <span id="byte-counter-{entry_id}" class="text-gray-400 font-mono">
                 bytes: --
@@ -187,9 +191,10 @@ def _render_entry_row(entry, fit: dict, _=None) -> HTMLResponse:
 
     translated_block = ''
     if entry.translated_text:
+        translated_text = escape(entry.translated_text[:200])
         translated_block = (
             f'<div class="text-sm text-white bg-gray-700/50 rounded p-2">'
-            f'{entry.translated_text[:200]}</div>'
+            f'{translated_text}</div>'
         )
 
     sec_info = f'[{entry.section_id}:{entry.section_order}] '
@@ -206,7 +211,7 @@ def _render_entry_row(entry, fit: dict, _=None) -> HTMLResponse:
                 {f'<span class="text-green-400 ml-2">✓</span>' if entry.is_translated else ''}
                 {f'<span class="text-red-400 ml-2">⚠</span>' if fit['status'] == 'needs_shift' else ''}
             </div>
-            <div class="text-sm text-gray-300 mb-2">{entry.original_text[:120]}</div>
+            <div class="text-sm text-gray-300 mb-2">{escape(entry.original_text[:120])}</div>
             {translated_block if translated_block else f'<div class="text-xs text-gray-600 italic">{_("editor.click_translate")}</div>'}
         </div>
         <div class="text-xs flex-shrink-0" title="{cap_info}">{fit_icon}</div>
@@ -231,7 +236,7 @@ def get_row(request: Request, entry_id: int):
     fit_icon = {'ok': '🟢', 'tight': '🟡', 'needs_shift': '🔴'}.get(entry.fit_status, '⚪')
     translated_html = ''
     if entry.translated_text:
-        translated_html = f'<div class="text-sm text-white bg-gray-700/50 rounded p-2">{entry.translated_text[:200]}</div>'
+        translated_html = f'<div class="text-sm text-white bg-gray-700/50 rounded p-2">{escape(entry.translated_text[:200])}</div>'
 
     sec_info = f'[{entry.section_id}:{entry.section_order}] '
     bg = 'bg-green-900/30' if entry.is_translated else 'bg-gray-800'
@@ -247,7 +252,7 @@ def get_row(request: Request, entry_id: int):
                     {f'<span class="text-green-400 ml-2">✓</span>' if entry.is_translated else ''}
                     {f'<span class="text-red-400 ml-2">⚠</span>' if entry.needs_shift else ''}
                 </div>
-                <div class="text-sm text-gray-300 mb-2">{entry.original_text[:120]}</div>
+                <div class="text-sm text-gray-300 mb-2">{escape(entry.original_text[:120])}</div>
                 {translated_html if translated_html else f'<div class="text-xs text-gray-600 italic">{_("editor.click_translate")}</div>'}
             </div>
             <div class="text-xs">{fit_icon}</div>
