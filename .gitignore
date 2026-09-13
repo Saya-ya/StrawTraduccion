@@ -47,3 +47,4 @@ dev/
 .venv/
 venv/
 *.egg-info/
+target/
