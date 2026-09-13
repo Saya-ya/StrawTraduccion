@@ -4,6 +4,7 @@ pub mod fit_checker;
 pub mod fs_ops;
 pub mod glyph_map;
 pub mod lz77;
+pub mod patch_scripts;
 pub mod script_rebuilder;
 
 pub use datafat::{
@@ -21,6 +22,7 @@ pub use glyph_map::{
     normalize_glyph_map, spanish_glyph_map, GlyphMap,
 };
 pub use lz77::{compress_lz77, decompress_lz77};
+pub use patch_scripts::{patch_translated_scripts, PatchScriptsReport};
 pub use script_rebuilder::{
     find_segment_containing, rebuild_local_slack, RebuildReport, SegmentReport, TextSegment,
     TranslationRow,

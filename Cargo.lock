@@ -1670,6 +1670,7 @@ name = "straw-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "csv",
  "encoding_rs",
  "tempfile",
 ]

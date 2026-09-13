@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+csv.workspace = true
 encoding_rs.workspace = true
 
 [dev-dependencies]

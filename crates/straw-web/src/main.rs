@@ -10,8 +10,8 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir, spanish_glyph_map,
-    FitStatus, TextSource,
+    check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir, patch_translated_scripts,
+    spanish_glyph_map, FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
@@ -153,6 +153,7 @@ struct ImportParams {
 struct BuildParams {
     exported: Option<usize>,
     prepared: Option<u64>,
+    patched: Option<usize>,
     error: Option<String>,
 }
 
@@ -179,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build", get(build_page))
         .route("/build/export-csv", post(export_build_csv))
         .route("/build/prepare-data", post(prepare_data_bin))
+        .route("/build/patch-scripts", post(patch_scripts))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -353,6 +355,11 @@ async fn build_page(
                     )
                 })
             })
+            .or_else(|| {
+                params
+                    .patched
+                    .map(|count| format!("Scripts parcheados: {count}"))
+            })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
     };
@@ -379,6 +386,43 @@ async fn prepare_data_bin() -> impl IntoResponse {
 
     match result {
         Ok(Ok(bytes)) => Redirect::to(&format!("/build?prepared={bytes}")).into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn patch_scripts() -> impl IntoResponse {
+    if !FsPath::new(PATCHED_DATA_PATH).exists() {
+        return Redirect::to("/build?error=missing_patched_data").into_response();
+    }
+    if !FsPath::new(BUILD_CSV_PATH).exists() {
+        return Redirect::to("/build?error=missing_build_csv").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(|| {
+        let glyph_map = spanish_glyph_map();
+        patch_translated_scripts(
+            PATCHED_DATA_PATH,
+            SCRIPTS_OUT_DIR,
+            BUILD_CSV_PATH,
+            Some(&glyph_map),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(report)) if report.errors.is_empty() => {
+            Redirect::to(&format!("/build?patched={}", report.scripts_patched)).into_response()
+        }
+        Ok(Ok(report)) => Redirect::to(&format!(
+            "/build?error={}",
+            url_escape(&report.errors.join("; "))
+        ))
+        .into_response(),
         Ok(Err(err)) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }

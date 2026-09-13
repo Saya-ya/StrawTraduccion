@@ -21,6 +21,22 @@
             </p>
         </section>
 
+        <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-xl font-black">Parchear scripts traducidos</h2>
+                    <p class="mt-2 text-sm text-slate-400">Reconstruye scripts con local-slack, recomprime LZ77 e inyecta en <span class="font-mono text-pink-200">work/Data_patched.bin</span>.</p>
+                </div>
+                <form method="post" action="/build/patch-scripts">
+                    {% if patched_data_exists && build_csv_exists %}
+                    <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white shadow-lg shadow-pink-950/40 hover:bg-pink-400">Parchear scripts</button>
+                    {% else %}
+                    <button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere Data y CSV</button>
+                    {% endif %}
+                </form>
+            </div>
+        </section>
+
         <section class="mb-8 grid gap-4 md:grid-cols-4">
             <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
                 <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
