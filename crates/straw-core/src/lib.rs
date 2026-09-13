@@ -1,6 +1,7 @@
 pub mod datafat;
 pub mod extract;
 pub mod fit_checker;
+pub mod fs_ops;
 pub mod glyph_map;
 pub mod lz77;
 pub mod script_rebuilder;
@@ -12,6 +13,7 @@ pub use extract::{
     extract_lz77_scripts, extract_lz77_scripts_from_file, extract_lz77_scripts_to_dir,
     write_extracted_scripts, ExtractedScript,
 };
+pub use fs_ops::copy_file_creating_parent;
 
 pub use fit_checker::{check_fit, FitResult, FitStatus, TextSource};
 pub use glyph_map::{

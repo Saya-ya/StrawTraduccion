@@ -10,7 +10,8 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    check_fit, extract_lz77_scripts_to_dir, spanish_glyph_map, FitStatus, TextSource,
+    check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir, spanish_glyph_map,
+    FitStatus, TextSource,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
@@ -151,6 +152,7 @@ struct ImportParams {
 #[derive(Debug, serde::Deserialize)]
 struct BuildParams {
     exported: Option<usize>,
+    prepared: Option<u64>,
     error: Option<String>,
 }
 
@@ -176,6 +178,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/import", get(import_page).post(run_import))
         .route("/build", get(build_page))
         .route("/build/export-csv", post(export_build_csv))
+        .route("/build/prepare-data", post(prepare_data_bin))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
@@ -342,6 +345,14 @@ async fn build_page(
         message: params
             .exported
             .map(|count| format!("CSV exportado: {count} traducciones"))
+            .or_else(|| {
+                params.prepared.map(|bytes| {
+                    format!(
+                        "Data_patched.bin preparado: {} MB copiados",
+                        bytes / 1024 / 1024
+                    )
+                })
+            })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
     };
@@ -351,6 +362,26 @@ async fn build_page(
 async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
     match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
         Ok(count) => Redirect::to(&format!("/build?exported={count}")).into_response(),
+        Err(err) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn prepare_data_bin() -> impl IntoResponse {
+    if !FsPath::new(DATA_BIN_PATH).exists() {
+        return Redirect::to("/build?error=missing_databin").into_response();
+    }
+
+    let result =
+        tokio::task::spawn_blocking(|| copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH))
+            .await;
+
+    match result {
+        Ok(Ok(bytes)) => Redirect::to(&format!("/build?prepared={bytes}")).into_response(),
+        Ok(Err(err)) => {
+            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+        }
         Err(err) => {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
