@@ -1,4 +1,5 @@
 pub mod datafat;
+pub mod dialogue;
 pub mod extract;
 pub mod fit_checker;
 pub mod fs_ops;
@@ -12,6 +13,7 @@ pub mod script_rebuilder;
 pub use datafat::{
     find_row, parse_entries, read_entries, size_field_write_offset, slot_capacity, FatEntry,
 };
+pub use dialogue::{analyze_script_dec, extract_elf_strings, AnalyzedScript, ImportedText};
 pub use extract::{
     extract_lz77_scripts, extract_lz77_scripts_from_file, extract_lz77_scripts_to_dir,
     write_extracted_scripts, ExtractedScript,

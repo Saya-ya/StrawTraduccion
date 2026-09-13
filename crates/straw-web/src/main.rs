@@ -15,19 +15,20 @@ use straw_core::{
     FitStatus, TextSource,
 };
 use straw_db::{
-    connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry, init_db,
-    list_scripts, recent_builds, record_build_step, search_text_entries, set_setting,
-    translation_stats, update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary,
-    SearchResult, TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
+    connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
+    import_extracted_texts, init_db, list_scripts, recent_builds, record_build_step,
+    search_text_entries, set_setting, translation_stats, update_text_entry_translation,
+    BuildSummary, ScriptDetail, ScriptSummary, SearchResult, TextEntrySummary, TranslationStats,
+    DEFAULT_DB_PATH,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DATA_BIN_PATH: &str = "originales/Data.bin";
+const ORIGINAL_ELF_PATH: &str = "originales/SLPS_256.11";
 const SCRIPTS_OUT_DIR: &str = "work/scripts_extraidos";
 const PATCHED_DATA_PATH: &str = "work/Data_patched.bin";
 const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
 const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
-const ORIGINAL_ELF_PATH: &str = "originales/SLPS_256.11";
 const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 
@@ -153,6 +154,9 @@ struct SettingsParams {
 struct ImportParams {
     status: Option<String>,
     count: Option<usize>,
+    scripts: Option<usize>,
+    texts: Option<usize>,
+    preserved: Option<usize>,
     error: Option<String>,
 }
 
@@ -187,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
         .route("/import", get(import_page).post(run_import))
+        .route("/import/db", post(import_db))
         .route("/build", get(build_page))
         .route("/build/export-csv", post(export_build_csv))
         .route("/build/prepare-data", post(prepare_data_bin))
@@ -314,13 +319,18 @@ async fn settings(
 }
 
 async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
-    let message = if params.status.as_deref() == Some("ok") {
-        format!(
+    let message = match params.status.as_deref() {
+        Some("ok") => format!(
             "Extraccion completada: {} scripts LZ77 escritos",
             params.count.unwrap_or(0)
-        )
-    } else {
-        String::new()
+        ),
+        Some("db") => format!(
+            "SQLite importado: {} scripts, {} textos, {} traducciones preservadas",
+            params.scripts.unwrap_or(0),
+            params.texts.unwrap_or(0),
+            params.preserved.unwrap_or(0)
+        ),
+        _ => String::new(),
     };
     let error = params.error.unwrap_or_default();
     let template = ImportTemplate {
@@ -578,6 +588,23 @@ async fn run_import() -> impl IntoResponse {
         Ok(Err(err)) => {
             Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
         }
+        Err(err) => {
+            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
+        }
+    }
+}
+
+async fn import_db(State(state): State<AppState>) -> impl IntoResponse {
+    if !FsPath::new(SCRIPTS_OUT_DIR).exists() {
+        return Redirect::to("/import?error=missing_dec_scripts").into_response();
+    }
+
+    match import_extracted_texts(&state.db, SCRIPTS_OUT_DIR, ORIGINAL_ELF_PATH).await {
+        Ok(report) => Redirect::to(&format!(
+            "/import?status=db&scripts={}&texts={}&preserved={}",
+            report.scripts_imported, report.texts_imported, report.translations_preserved
+        ))
+        .into_response(),
         Err(err) => {
             Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
         }

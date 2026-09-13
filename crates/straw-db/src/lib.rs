@@ -1,10 +1,13 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Row, SqlitePool,
+};
+use straw_core::{
+    analyze_script_dec, check_fit, extract_elf_strings, FitStatus, ImportedText, TextSource,
 };
 
 pub const DEFAULT_DB_PATH: &str = "work/translation_manager.db";
@@ -91,6 +94,14 @@ pub struct ExportedTranslation {
     pub translated_text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportReport {
+    pub scripts_imported: usize,
+    pub texts_imported: usize,
+    pub translations_preserved: usize,
+    pub elf_texts_imported: usize,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -121,6 +132,98 @@ pub async fn init_db(pool: &SqlitePool) -> Result<()> {
     seed_default_settings(pool).await?;
     rebuild_fts_if_empty(pool).await?;
     Ok(())
+}
+
+pub async fn import_extracted_texts(
+    pool: &SqlitePool,
+    scripts_dir: impl AsRef<Path>,
+    elf_path: impl AsRef<Path>,
+) -> Result<ImportReport> {
+    let scripts_dir = scripts_dir.as_ref();
+    let elf_path = elf_path.as_ref();
+
+    let translations = existing_translations(pool).await?;
+    let mut scripts = Vec::new();
+    if scripts_dir.exists() {
+        for entry in std::fs::read_dir(scripts_dir)
+            .with_context(|| format!("failed to read {}", scripts_dir.display()))?
+        {
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "dec") {
+                if let Some(script) = analyze_script_dec(&path)? {
+                    scripts.push(script);
+                }
+            }
+        }
+    }
+    scripts.sort_by_key(|script| script.script_id);
+
+    let elf_texts = if elf_path.exists() {
+        extract_elf_strings(elf_path)?
+    } else {
+        Vec::new()
+    };
+
+    let mut translations_preserved = 0;
+    let mut texts_imported = 0;
+
+    sqlx::query("DELETE FROM text_entries")
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM scripts").execute(pool).await?;
+
+    for script in &scripts {
+        sqlx::query(
+            r#"
+            INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
+            VALUES (?, 'SCRIPT', ?, ?, 1, ?, 0, ?)
+            "#,
+        )
+        .bind(script.script_id)
+        .bind(&script.script_type)
+        .bind(&script.variant)
+        .bind(script.texts.len() as i64)
+        .bind(script.total_sections)
+        .execute(pool)
+        .await?;
+
+        for text in &script.texts {
+            if insert_imported_text(pool, text, &translations).await? {
+                translations_preserved += 1;
+            }
+            texts_imported += 1;
+        }
+        refresh_script_translated_count(pool, script.script_id).await?;
+    }
+
+    if !elf_texts.is_empty() {
+        sqlx::query(
+            r#"
+            INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
+            VALUES (-1, 'ELF', 'ELF', '', 1, ?, 0, 1)
+            "#,
+        )
+        .bind(elf_texts.len() as i64)
+        .execute(pool)
+        .await?;
+
+        for text in &elf_texts {
+            if insert_imported_text(pool, text, &translations).await? {
+                translations_preserved += 1;
+            }
+            texts_imported += 1;
+        }
+        refresh_script_translated_count(pool, -1).await?;
+    }
+
+    rebuild_fts(pool).await?;
+
+    Ok(ImportReport {
+        scripts_imported: scripts.len() + usize::from(!elf_texts.is_empty()),
+        texts_imported,
+        translations_preserved,
+        elf_texts_imported: elf_texts.len(),
+    })
 }
 
 pub async fn get_setting<T>(pool: &SqlitePool, key: &str, default: T) -> Result<T>
@@ -566,6 +669,114 @@ async fn refresh_script_translated_count(pool: &SqlitePool, script_id: i64) -> R
     )
     .bind(script_id)
     .bind(script_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, String), String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT script_id, byte_offset, original_text, translated_text
+        FROM text_entries
+        WHERE translated_text IS NOT NULL AND translated_text != ''
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut translations = HashMap::new();
+    for row in rows {
+        translations.insert(
+            (
+                row.try_get("script_id")?,
+                row.try_get("byte_offset")?,
+                row.try_get::<String, _>("original_text")?,
+            ),
+            row.try_get("translated_text")?,
+        );
+    }
+    Ok(translations)
+}
+
+async fn insert_imported_text(
+    pool: &SqlitePool,
+    text: &ImportedText,
+    translations: &HashMap<(i64, i64, String), String>,
+) -> Result<bool> {
+    let translated = translations
+        .get(&(text.script_id, text.byte_offset, text.original_text.clone()))
+        .cloned()
+        .unwrap_or_default();
+    let is_translated = !translated.trim().is_empty();
+    let capacity = if text.segment_capacity > 0 {
+        text.segment_capacity
+    } else {
+        text.original_bytes
+    };
+    let source = if text.source == "ELF" {
+        TextSource::Elf
+    } else {
+        TextSource::Script
+    };
+    let fit = if is_translated {
+        check_fit(&translated, source, capacity as usize, None)
+    } else {
+        check_fit("", source, capacity as usize, None)
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO text_entries (
+            script_id, source, byte_offset, section_id, section_order,
+            original_text, translated_text, original_bytes, segment_start,
+            segment_capacity, is_translated, needs_shift, fit_status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(text.script_id)
+    .bind(&text.source)
+    .bind(text.byte_offset)
+    .bind(text.section_id)
+    .bind(text.section_order)
+    .bind(&text.original_text)
+    .bind(&translated)
+    .bind(text.original_bytes)
+    .bind(text.segment_start)
+    .bind(text.segment_capacity)
+    .bind(if is_translated { 1 } else { 0 })
+    .bind(if fit.status == FitStatus::NeedsShift {
+        1
+    } else {
+        0
+    })
+    .bind(fit_status_label(fit.status))
+    .execute(pool)
+    .await?;
+
+    Ok(is_translated)
+}
+
+fn fit_status_label(status: FitStatus) -> &'static str {
+    match status {
+        FitStatus::Unchecked => "unchecked",
+        FitStatus::Ok => "ok",
+        FitStatus::Tight => "tight",
+        FitStatus::NeedsShift => "needs_shift",
+    }
+}
+
+async fn rebuild_fts(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("DELETE FROM text_entries_fts")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO text_entries_fts(rowid, original_text, translated_text)
+        SELECT id, original_text, translated_text FROM text_entries
+        "#,
+    )
     .execute(pool)
     .await?;
     Ok(())

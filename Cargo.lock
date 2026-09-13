@@ -1685,6 +1685,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "straw-core",
  "tempfile",
  "tokio",
 ]
