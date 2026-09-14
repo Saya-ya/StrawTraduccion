@@ -78,13 +78,12 @@ pub fn analyze_script_dec(path: impl AsRef<Path>) -> Result<Option<AnalyzedScrip
     };
 
     let mut text_blocks = find_text_blocks(&data);
-    let mut seen_offsets = text_blocks
-        .iter()
-        .map(|block| block.text_offset)
-        .collect::<Vec<_>>();
     for block in find_text_blocks_fallback(&data) {
-        if block.text_offset % 2 == 0 && !seen_offsets.contains(&block.text_offset) {
-            seen_offsets.push(block.text_offset);
+        let has_groupable_existing = text_blocks.iter().any(|existing| {
+            existing.text_offset == block.text_offset
+                && (variant != "B" || existing.block_offset >= bytecode_ptr)
+        });
+        if block.text_offset % 2 == 0 && !has_groupable_existing {
             text_blocks.push(block);
         }
     }
@@ -318,7 +317,7 @@ fn find_text_blocks_fallback(data: &[u8]) -> Vec<TextBlock> {
 
 fn is_valid_jp(text: &str) -> bool {
     let len = text.chars().count();
-    if len < 4 {
+    if len < 3 {
         return false;
     }
     let hiragana = text
@@ -334,14 +333,17 @@ fn is_valid_jp(text: &str) -> bool {
         .filter(|&ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch))
         .count();
     let total = hiragana + katakana + kanji;
-    if total == 0 || total * 2 < len || (hiragana == 0 && kanji > 0) {
+    if total == 0 || total * 2 < len || (hiragana == 0 && katakana == 0 && kanji > 0) {
         return false;
     }
     let particles = [
         'の', 'は', 'が', 'に', 'を', 'て', 'で', 'と', 'か', 'な', 'だ', 'し', 'い', 'う', 'る',
         '？', '！', '、', '。', '「', '」', '…',
     ];
-    (len <= 8 && katakana + kanji == len) || text.chars().any(|ch| particles.contains(&ch))
+    (len <= 8 && katakana + kanji == len)
+        || (len <= 8 && total * 2 >= len && hiragana + katakana > 0)
+        || (katakana > 0 && kanji > 0 && total * 2 >= len)
+        || text.chars().any(|ch| particles.contains(&ch))
 }
 
 fn is_valid_elf_text(text: &str) -> bool {
@@ -445,5 +447,14 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].block_offset, block_start);
         assert_eq!(blocks[0].text, "こんにちは");
+    }
+
+    #[test]
+    fn accepts_short_fallback_labels() {
+        assert!(is_valid_jp("ウフフ＠"));
+        assert!(is_valid_jp("スピカへ"));
+        assert!(is_valid_jp("スピカ生徒"));
+        assert!(is_valid_jp("ル・リム生徒会・副会長"));
+        assert!(!is_valid_jp("ABC＠"));
     }
 }
