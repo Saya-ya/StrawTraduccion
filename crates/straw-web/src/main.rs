@@ -1,4 +1,6 @@
 use std::{
+    fs::OpenOptions,
+    io::Write,
     net::SocketAddr,
     path::Path as FsPath,
     sync::{
@@ -40,6 +42,7 @@ const ISO_OUT_PATH: &str = "work/Strawberry_translated.iso";
 const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
 const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
+const BUILD_LOG_PATH: &str = "work/build_temp/build.log";
 const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
 const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
 const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
@@ -142,6 +145,7 @@ struct BuildTemplate {
     build_csv_exists: bool,
     texture_inventory_exists: bool,
     texture_manifest_exists: bool,
+    build_log: String,
     message: String,
     error: String,
 }
@@ -203,6 +207,7 @@ struct BuildParams {
     texture_patches: Option<usize>,
     texture_injected: Option<usize>,
     full: Option<usize>,
+    started: Option<u8>,
     error: Option<String>,
 }
 
@@ -229,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/import", get(import_page).post(run_import))
         .route("/import/db", post(import_db))
         .route("/build", get(build_page))
+        .route("/build/log", get(build_log))
         .route("/build/export-csv", post(export_build_csv))
         .route("/build/prepare-data", post(prepare_data_bin))
         .route("/build/patch-scripts", post(patch_scripts))
@@ -445,6 +451,7 @@ async fn build_page(
             .join("textures.json")
             .exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
+        build_log: read_build_log(),
         message: params
             .exported
             .map(|count| format!("CSV exportado: {count} traducciones"))
@@ -495,6 +502,11 @@ async fn build_page(
                 params
                     .full
                     .map(|count| format!("Build completo finalizado: {count} pasos ejecutados"))
+            })
+            .or_else(|| {
+                params.started.map(|_| {
+                    "Build completo iniciado; el log se actualiza automaticamente".to_owned()
+                })
             })
             .unwrap_or_default(),
         error: params.error.unwrap_or_default(),
@@ -762,29 +774,38 @@ async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
-    let Ok(_guard) = acquire_build_guard(&state) else {
+    let Ok(guard) = acquire_build_guard(&state) else {
         return Redirect::to("/build?error=build_already_running").into_response();
     };
 
-    if let Err(err) = export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
-        return Redirect::to(&format!("/build?error={}", url_escape(&err.to_string())))
-            .into_response();
-    }
+    reset_build_log();
+    append_build_log("Build completo iniciado");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        append_build_log("Exportando CSV desde SQLite");
+        match export_translations_csv(&db, BUILD_CSV_PATH, true).await {
+            Ok(count) => append_build_log(&format!("CSV exportado correctamente: {count} filas")),
+            Err(err) => {
+                append_build_log(&format!("ERROR exportando CSV: {err}"));
+                return;
+            }
+        }
 
-    let result = tokio::task::spawn_blocking(run_full_build_steps).await;
+        match tokio::task::spawn_blocking(run_full_build_steps).await {
+            Ok(Ok(steps)) => {
+                append_build_log(&format!(
+                    "Build completo finalizado correctamente: {} pasos ejecutados",
+                    steps + 1
+                ));
+                record_build_success(&db, "full build", 100, ISO_OUT_PATH).await;
+            }
+            Ok(Err(err)) => append_build_log(&format!("ERROR en build completo: {err}")),
+            Err(err) => append_build_log(&format!("ERROR de tarea build: {err}")),
+        }
+    });
 
-    match result {
-        Ok(Ok(steps)) => {
-            record_build_success(&state.db, "full build", 100, ISO_OUT_PATH).await;
-            Redirect::to(&format!("/build?full={}", steps + 1)).into_response()
-        }
-        Ok(Err(err)) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-        Err(err) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-    }
+    Redirect::to("/build?started=1").into_response()
 }
 
 fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
@@ -796,6 +817,7 @@ fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
 }
 
 fn run_full_build_steps() -> anyhow::Result<usize> {
+    append_build_log("Validando prerequisitos");
     if !FsPath::new(DATA_BIN_PATH).exists() {
         anyhow::bail!("missing originales/Data.bin");
     }
@@ -810,9 +832,12 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
     }
 
     let mut steps = 0;
+    append_build_log("Copiando originales/Data.bin a work/Data_patched.bin");
     copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH)?;
+    append_build_log("Data_patched.bin preparado");
     steps += 1;
 
+    append_build_log("Parcheando scripts traducidos");
     let glyph_map = spanish_glyph_map();
     let script_report = patch_translated_scripts(
         PATCHED_DATA_PATH,
@@ -823,17 +848,27 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
     if !script_report.errors.is_empty() {
         anyhow::bail!(script_report.errors.join("; "));
     }
+    append_build_log(&format!(
+        "Scripts parcheados: {}",
+        script_report.scripts_patched
+    ));
     steps += 1;
 
-    patch_translated_elf(
+    append_build_log("Parcheando ELF traducido");
+    let elf_report = patch_translated_elf(
         ORIGINAL_ELF_PATH,
         TRANSLATED_ELF_PATH,
         BUILD_CSV_PATH,
         Some(&glyph_map),
     )?;
+    append_build_log(&format!(
+        "Entradas ELF parcheadas: {}",
+        elf_report.rows_patched
+    ));
     steps += 1;
 
     if FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
+        append_build_log("Parcheando texturas desde manifest.json");
         let texture_report = patch_textures_from_manifest(
             DATA_BIN_PATH,
             TEXTURE_MANIFEST_PATH,
@@ -842,19 +877,34 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
         if !texture_report.errors.is_empty() {
             anyhow::bail!(texture_report.errors.join("; "));
         }
+        append_build_log(&format!(
+            "Parches de textura aplicados: {}, streams escritos: {}",
+            texture_report.patches_applied, texture_report.streams_written
+        ));
         steps += 1;
 
+        append_build_log("Inyectando streams de textura en Data_patched.bin");
         let inject_report = inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)?;
         if !inject_report.errors.is_empty() {
             anyhow::bail!(inject_report.errors.join("; "));
         }
+        append_build_log(&format!(
+            "Streams de textura inyectados: {}, bytes escritos: {}",
+            inject_report.streams_injected, inject_report.bytes_written
+        ));
         steps += 1;
+    } else {
+        append_build_log("Sin texturas/manifest.json; etapa de texturas omitida");
     }
 
-    build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)?;
+    append_build_log("Generando ISO traducida");
+    let iso_bytes = build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)?;
+    append_build_log(&format!("Data.bin inyectado en ISO: {iso_bytes} bytes"));
     steps += 1;
 
-    inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)?;
+    append_build_log("Inyectando ELF traducido en ISO");
+    let elf_bytes = inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)?;
+    append_build_log(&format!("ELF inyectado en ISO: {elf_bytes} bytes"));
     steps += 1;
 
     Ok(steps)
@@ -899,6 +949,47 @@ async fn import_db(State(state): State<AppState>) -> impl IntoResponse {
             Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
+}
+
+fn read_build_log() -> String {
+    let Ok(contents) = std::fs::read_to_string(BUILD_LOG_PATH) else {
+        return String::new();
+    };
+    let lines = contents.lines().collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(300);
+    lines[start..].join("\n")
+}
+
+fn reset_build_log() {
+    if let Some(parent) = FsPath::new(BUILD_LOG_PATH).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(BUILD_LOG_PATH, "");
+}
+
+fn append_build_log(message: &str) {
+    if let Some(parent) = FsPath::new(BUILD_LOG_PATH).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let timestamp = build_log_timestamp();
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(BUILD_LOG_PATH)
+    {
+        let _ = writeln!(file, "[{timestamp}] {message}");
+    }
+}
+
+fn build_log_timestamp() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => format!("{}", duration.as_secs()),
+        Err(_) => "0".to_owned(),
+    }
+}
+
+async fn build_log() -> impl IntoResponse {
+    read_build_log()
 }
 
 fn count_dec_files(path: &FsPath) -> usize {

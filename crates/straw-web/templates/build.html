@@ -138,6 +138,21 @@
         <div class="mb-8 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
         {% endif %}
 
+        <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-950 p-6">
+            <div class="mb-4 flex items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-black">Log del build</h2>
+                    <p class="mt-1 text-sm text-slate-500">Archivo: <span class="font-mono text-pink-200">work/build_temp/build.log</span></p>
+                </div>
+                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-300 hover:border-pink-400 hover:text-pink-200">Actualizar</a>
+            </div>
+            {% if build_log.len() > 0 %}
+            <pre id="build-log" class="max-h-96 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{{ build_log }}</pre>
+            {% else %}
+            <pre id="build-log" class="max-h-96 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/40 p-4 font-mono text-xs leading-relaxed text-slate-500">Todavia no hay logs de build.</pre>
+            {% endif %}
+        </section>
+
         <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div>
@@ -274,5 +289,21 @@
             {% endif %}
         </section>
     </main>
+    <script>
+        const buildLog = document.getElementById('build-log');
+        async function refreshBuildLog() {
+            if (!buildLog) return;
+            try {
+                const response = await fetch('/build/log', { cache: 'no-store' });
+                const text = await response.text();
+                if (text.trim().length > 0 && buildLog.textContent !== text) {
+                    buildLog.textContent = text;
+                    buildLog.scrollTop = buildLog.scrollHeight;
+                }
+            } catch (_) {}
+        }
+        setInterval(refreshBuildLog, 2000);
+        refreshBuildLog();
+    </script>
 </body>
 </html>
