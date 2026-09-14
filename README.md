@@ -17,9 +17,11 @@ A complete translation toolchain and web-based management system for the PS2 vis
 
 ### Requirements
 
-- Python 3.10+
-- Dependencies are declared in `pyproject.toml`.
-- Create a virtual environment and install the required dependencies:
+- Rust stable toolchain.
+- Original game files copied locally. This repository does not distribute copyrighted game data.
+- Python is now legacy/reference tooling; the supported local web app is Rust.
+
+Optional legacy Python setup:
   ```bash
   python -m venv .venv
   source .venv/bin/activate      # Linux/macOS
@@ -37,17 +39,24 @@ A complete translation toolchain and web-based management system for the PS2 vis
 
 ### Quick Start
 
-1. Extract `Data.bin` and `SLPS_256.11` from your ISO into the `originales/` folder
-2. Start the web server (with the venv activated):
+1. Extract `Data.bin`, `SLPS_256.11`, and the base ISO into `originales/`:
+   - `originales/Data.bin`
+   - `originales/SLPS_256.11`
+   - `originales/Strawberry_patched.iso`
+2. Start the Rust web server:
    ```bash
-   python run_webapp.py
+   ./run_rust.sh
+   ```
+   Or run it directly:
+   ```bash
+   cargo run --bin strawtraduccion
    ```
 3. Open `http://127.0.0.1:8080`
-   The first startup creates the runtime folders used by the app (`originales/`, `work/`, `textos/`, `texturas/`, `work_texturas/`, and `Replacement/`).
-4. Go to **Import** and click **Extract and Import** to load texts into the database
+4. Go to **Import**:
+   - Extract LZ77 scripts.
+   - Import texts to SQLite.
 5. Use the **Scripts** and **Search** tabs to translate — click any text for inline editing (`Ctrl+Enter` to save)
-6. Go to **Build** and click **Build ISO** to generate the patched ISO at `work/Strawberry_translated.iso`
-7. Copy `Replacement/*.png` to PCSX2's texture folder (`textures/SLPS-25611/`), boot the game fresh (no savestates)
+6. Go to **Build** and click **Ejecutar build completo** to generate `work/Strawberry_translated.iso`
 
 ---
 
@@ -112,8 +121,8 @@ The custom map is saved to the database and applied automatically during patchin
 
 1. Translator edits texts in the webapp → saved to `text_entries` table in `translation_manager.db`
 2. Target language and glyph map are stored in the `settings` table
-3. The standalone **StrawPatcher** (`.exe`) reads the `.db` file, detects `target_lang` from `settings`, loads the correct glyph map, and applies it when rebuilding scripts and ELF data
-4. The patcher's GUI shows the active language and glyph mapping before starting
+3. The Rust build pipeline exports translated rows, applies the glyph map, patches scripts and ELF, then rebuilds the ISO
+4. The build history is recorded in SQLite and displayed from the Build page
 
 ---
 
@@ -133,12 +142,11 @@ When the manifest is generated, that filename becomes a patch entry with `lz77_o
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3, FastAPI, Uvicorn |
-| Database | SQLite + SQLAlchemy ORM + FTS5 full-text search |
-| Frontend | Jinja2 templates + HTMX + Tailwind CSS (CDN) |
-| I18N | Python dict-based string tables (ES/EN) |
-| CLI tools | Pure Python stdlib + `struct` for binary I/O |
-| Compression | PS2-native LZSS (4096-byte window, 12-byte header) |
+| Backend | Rust, Axum |
+| Database | SQLite + sqlx + FTS5 full-text search |
+| Frontend | Askama templates + Tailwind CSS (CDN) |
+| Core pipeline | Rust crates under `crates/` |
+| Compression | PS2-native LZSS/LZ77 compatible stream handling |
 
 The game stores text in two locations:
 
@@ -155,24 +163,23 @@ The game stores text in two locations:
 
 ```
 StrawTraduccion/
+├── crates/                          # Rust workspace
+│   ├── straw-core                   # binary formats, LZ77, TIM2, build logic
+│   ├── straw-db                     # SQLite schema and services
+│   └── straw-web                    # Axum web app and Askama templates
 ├── originales/                     # Original game files (NOT distributed)
 ├── work/                           # Working files (regenerable)
-├── tools/                          # Core pipeline: LZ77, FAT, rebuild, extraction
-├── traduccion_tools/               # High-level: ELF extraction, ISO building
-├── webapp/                         # FastAPI + SQLite + FTS5 + HTMX
-│   ├── main.py                     # App entry point, I18nMiddleware
-│   ├── i18n/                       # UI string tables (es.py, en.py)
-│   ├── routers/                    # scripts, texts, import, build, tools, settings
-│   ├── services/                   # builder, import_service, fit_checker, settings_service
-│   └── templates/                  # Jinja2 + Tailwind + HTMX templates
+├── tools/                          # Legacy Python reference tools
+├── traduccion_tools/               # Legacy Python reference tools
+├── webapp/                         # Legacy Python webapp
 ├── textos/                         # Generated CSVs
 ├── texturas/                       # Local edited PNGs + manifest (not distributed)
 ├── work_texturas/                  # Generated texture catalog (regenerable)
 ├── Replacement/                    # PCSX2 font texture replacements
 ├── docs/legado/                    # Legacy utilities
 ├── tests/                          # Automated tests
-├── build_worker.py                 # Standalone build worker
-├── run_webapp.py                   # Uvicorn launcher
+├── run_rust.sh                     # Rust launcher
+├── run_webapp.py                   # Legacy Python launcher
 └── README.md
 ```
 
@@ -191,9 +198,11 @@ Un sistema completo de traducción con interfaz web para la novela visual de PS2
 
 ### Requisitos
 
-- Python 3.10+
-- Las dependencias estan declaradas en `pyproject.toml`.
-- Crea un entorno virtual e instala las dependencias requeridas:
+- Toolchain estable de Rust.
+- Archivos originales del juego copiados localmente. Este repositorio no distribuye datos protegidos.
+- Python queda como tooling legado/de referencia; la web local soportada es Rust.
+
+Setup Python legado opcional:
   ```bash
   python -m venv .venv
   source .venv/bin/activate      # Linux/macOS
@@ -211,17 +220,24 @@ Un sistema completo de traducción con interfaz web para la novela visual de PS2
 
 ### Inicio Rápido
 
-1. Extrae `Data.bin` y `SLPS_256.11` de tu ISO a la carpeta `originales/`
-2. Inicia el servidor web (con el venv activado):
+1. Extrae `Data.bin`, `SLPS_256.11` y la ISO base a `originales/`:
+   - `originales/Data.bin`
+   - `originales/SLPS_256.11`
+   - `originales/Strawberry_patched.iso`
+2. Inicia el servidor web Rust:
    ```bash
-   python run_webapp.py
+   ./run_rust.sh
+   ```
+   O directamente:
+   ```bash
+   cargo run --bin strawtraduccion
    ```
 3. Abre `http://127.0.0.1:8080`
-   En el primer arranque se crean las carpetas de trabajo usadas por la app (`originales/`, `work/`, `textos/`, `texturas/`, `work_texturas/` y `Replacement/`).
-4. Ve a **Importar** y haz clic en **Extraer e Importar** para cargar los textos
+4. Ve a **Importar**:
+   - Extrae scripts LZ77.
+   - Importa textos a SQLite.
 5. Usa las pestañas **Scripts** y **Buscar** para traducir — clic en cualquier texto para editar (`Ctrl+Enter` para guardar)
-6. Ve a **Build** y haz clic en **Construir ISO** para generar la ISO parcheada en `work/Strawberry_translated.iso`
-7. Copia `Replacement/*.png` a la carpeta de texturas de PCSX2 (`textures/SLPS-25611/`), inicia el juego desde cero (sin savestates)
+6. Ve a **Build** y pulsa **Ejecutar build completo** para generar `work/Strawberry_translated.iso`
 
 ---
 
