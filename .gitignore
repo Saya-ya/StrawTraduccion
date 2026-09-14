@@ -11,8 +11,6 @@ IOP/
 # Archivos generados
 work/
 work_texturas/
-__pycache__/
-*.pyc
 *.p2s
 sstates/
 
@@ -43,8 +41,4 @@ dev/
 /texturas/manifest.json
 
 .env
-.python-version
-.venv/
-venv/
-*.egg-info/
 target/
