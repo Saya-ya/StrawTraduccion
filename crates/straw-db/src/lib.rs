@@ -131,6 +131,7 @@ pub async fn connect_path(path: impl AsRef<Path>) -> Result<SqlitePool> {
 pub async fn init_db(pool: &SqlitePool) -> Result<()> {
     create_schema(pool).await?;
     seed_default_settings(pool).await?;
+    normalize_stored_translation_linebreaks(pool).await?;
     rebuild_fts_if_empty(pool).await?;
     Ok(())
 }
@@ -404,6 +405,7 @@ pub async fn update_text_entry_translation(
     let Some(existing) = get_text_entry(pool, entry_id).await? else {
         return Ok(None);
     };
+    let translated_text = normalize_translation_linebreaks(translated_text);
     let is_translated = !translated_text.trim().is_empty();
 
     sqlx::query(
@@ -625,10 +627,84 @@ pub async fn exported_translations(
                     .unwrap_or_default(),
                 translated_text: row
                     .try_get::<Option<String>, _>("translated_text")?
+                    .map(|text| normalize_translation_linebreaks(&text))
                     .unwrap_or_default(),
             })
         })
         .collect()
+}
+
+pub async fn normalize_stored_translation_linebreaks(pool: &SqlitePool) -> Result<usize> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, source, translated_text, segment_capacity
+        FROM text_entries
+        WHERE translated_text IS NOT NULL
+          AND translated_text != ''
+          AND (
+              instr(translated_text, char(13)) > 0
+              OR instr(translated_text, char(10) || char(10)) > 0
+              OR (
+                  instr(translated_text, char(10)) > 0
+                  AND instr(substr(translated_text, instr(translated_text, char(10)) + 1), char(10)) > 0
+              )
+          )
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut updated = 0;
+    let mut tx = pool.begin().await?;
+    for row in rows {
+        let id: i64 = row.try_get("id")?;
+        let source = row
+            .try_get::<Option<String>, _>("source")?
+            .unwrap_or_else(|| "SCRIPT".to_owned());
+        let original: String = row.try_get("translated_text")?;
+        let normalized = normalize_translation_linebreaks(&original);
+        if normalized == original {
+            continue;
+        }
+
+        let text_source = if source == "ELF" {
+            TextSource::Elf
+        } else {
+            TextSource::Script
+        };
+        let capacity = row
+            .try_get::<Option<i64>, _>("segment_capacity")?
+            .unwrap_or(0)
+            .max(1) as usize;
+        let fit = check_fit(&normalized, text_source, capacity, None);
+
+        sqlx::query(
+            r#"
+            UPDATE text_entries
+            SET translated_text = ?,
+                is_translated = ?,
+                needs_shift = ?,
+                fit_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(&normalized)
+        .bind(if normalized.trim().is_empty() { 0 } else { 1 })
+        .bind(if fit.status == FitStatus::NeedsShift {
+            1
+        } else {
+            0
+        })
+        .bind(fit_status_label(fit.status))
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        updated += 1;
+    }
+    tx.commit().await?;
+
+    Ok(updated)
 }
 
 pub async fn export_translations_csv(
@@ -700,13 +776,14 @@ async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, S
 
     let mut translations = HashMap::new();
     for row in rows {
+        let translated_text: String = row.try_get("translated_text")?;
         translations.insert(
             (
                 row.try_get("script_id")?,
                 row.try_get("byte_offset")?,
                 row.try_get::<String, _>("original_text")?,
             ),
-            row.try_get("translated_text")?,
+            normalize_translation_linebreaks(&translated_text),
         );
     }
     Ok(translations)
@@ -778,6 +855,16 @@ fn fit_status_label(status: FitStatus) -> &'static str {
         FitStatus::Tight => "tight",
         FitStatus::NeedsShift => "needs_shift",
     }
+}
+
+pub fn normalize_translation_linebreaks(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    normalized
+        .split('\n')
+        .map(|line| line.trim_end_matches([' ', '\t']))
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn rebuild_fts(pool: &SqlitePool) -> Result<()> {
@@ -1136,6 +1223,45 @@ mod tests {
         assert_eq!(results[0].script_id, 1);
         assert_eq!(results[0].page, 2);
         assert_eq!(results[0].translated_text, "panic traducido");
+    }
+
+    #[test]
+    fn normalizes_blank_translation_lines() {
+        assert_eq!(
+            normalize_translation_linebreaks("hola\r\n  \nesta es la tercera fila"),
+            "hola\nesta es la tercera fila"
+        );
+        assert_eq!(
+            normalize_translation_linebreaks("uno\r\n\r\ndos\n \n tres  "),
+            "uno\ndos\n tres"
+        );
+    }
+
+    #[tokio::test]
+    async fn repairs_stored_blank_translation_lines() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, 'original', 'hola\r\n  \ntercera fila', 1, 120)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = normalize_stored_translation_linebreaks(&pool)
+            .await
+            .unwrap();
+        assert_eq!(updated, 1);
+
+        let text = get_text_entry(&pool, 1).await.unwrap().unwrap();
+        assert_eq!(text.translated_text, "hola\ntercera fila");
+        assert!(text.is_translated);
     }
 
     #[tokio::test]
