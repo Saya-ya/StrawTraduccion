@@ -7,7 +7,8 @@ use sqlx::{
     Row, SqlitePool,
 };
 use straw_core::{
-    analyze_script_dec, check_fit, extract_elf_strings, FitStatus, ImportedText, TextSource,
+    analyze_script_dec, check_fit, extract_elf_strings, spanish_glyph_map, FitStatus, ImportedText,
+    TextSource,
 };
 
 pub const DEFAULT_DB_PATH: &str = "work/translation_manager.db";
@@ -399,14 +400,27 @@ pub async fn update_text_entry_translation(
     pool: &SqlitePool,
     entry_id: i64,
     translated_text: &str,
-    fit_status: &str,
-    needs_shift: bool,
 ) -> Result<Option<TextEntrySummary>> {
     let Some(existing) = get_text_entry(pool, entry_id).await? else {
         return Ok(None);
     };
     let translated_text = normalize_translation_linebreaks(translated_text);
     let is_translated = !translated_text.trim().is_empty();
+    let source = if existing.source == "ELF" {
+        TextSource::Elf
+    } else {
+        TextSource::Script
+    };
+    let fallback_capacity = match source {
+        TextSource::Script => existing.original_text.encode_utf16().count() * 2 + 2,
+        TextSource::Elf => existing.original_text.len(),
+    };
+    let capacity = existing
+        .segment_capacity
+        .max(fallback_capacity as i64)
+        .max(1) as usize;
+    let glyph_map = spanish_glyph_map();
+    let fit = check_fit(&translated_text, source, capacity, Some(&glyph_map));
 
     sqlx::query(
         r#"
@@ -423,8 +437,12 @@ pub async fn update_text_entry_translation(
     )
     .bind(translated_text)
     .bind(if is_translated { 1 } else { 0 })
-    .bind(fit_status)
-    .bind(if needs_shift { 1 } else { 0 })
+    .bind(fit_status_label(fit.status))
+    .bind(if fit.status == FitStatus::NeedsShift {
+        1
+    } else {
+        0
+    })
     .bind(entry_id)
     .execute(pool)
     .await?;
@@ -1176,7 +1194,7 @@ mod tests {
         .await
         .unwrap();
 
-        let updated = update_text_entry_translation(&pool, 1, "traducido", "ok", false)
+        let updated = update_text_entry_translation(&pool, 1, "traducido")
             .await
             .unwrap()
             .unwrap();
@@ -1185,6 +1203,80 @@ mod tests {
 
         let script = get_script(&pool, 1).await.unwrap().unwrap();
         assert_eq!(script.translated_texts, 1);
+    }
+
+    #[tokio::test]
+    async fn editing_sequence_keeps_flags_and_counts_consistent() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 1, 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, 'original', '', 0, 20)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cases = [
+            ("   \n  ", "", false, "unchecked", false, 0),
+            ("hola", "hola", true, "tight", false, 1),
+            (
+                "este texto es demasiado largo",
+                "este texto es demasiado largo",
+                true,
+                "needs_shift",
+                true,
+                1,
+            ),
+            ("123456789\r\n  \n", "123456789", true, "tight", false, 1),
+            ("", "", false, "unchecked", false, 0),
+        ];
+
+        for (input, stored, is_translated, fit_status, needs_shift, translated_count) in cases {
+            let updated = update_text_entry_translation(&pool, 1, input)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(updated.translated_text, stored);
+            assert_eq!(updated.is_translated, is_translated);
+            assert_eq!(updated.fit_status, fit_status);
+            assert_eq!(updated.needs_shift, needs_shift);
+
+            let script = get_script(&pool, 1).await.unwrap().unwrap();
+            assert_eq!(script.translated_texts, translated_count);
+        }
+    }
+
+    #[tokio::test]
+    async fn normalized_save_recomputes_fit_from_stored_text() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 1, 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, 'original', '', 0, 20)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_text_entry_translation(&pool, 1, "123456789\n\n")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(updated.translated_text, "123456789");
+        assert_eq!(updated.fit_status, "tight");
+        assert!(!updated.needs_shift);
     }
 
     #[tokio::test]
@@ -1299,7 +1391,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO text_entries (script_id, source, byte_offset, section_id, section_order, original_text, translated_text, is_translated) \
-             VALUES (1, 'SCRIPT', 16, 0, 0, 'a', 'b', 1), (1, 'SCRIPT', 18, 0, 1, 'c', '', 0)",
+             VALUES (1, 'SCRIPT', 16, 0, 0, 'a', 'b\r\n  \nc', 1), (1, 'SCRIPT', 18, 0, 1, 'd', '', 0)",
         )
         .execute(&pool)
         .await
@@ -1309,7 +1401,22 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].file_id, "1");
         assert_eq!(rows[0].offset, "0x00010");
-        assert_eq!(rows[0].translated_text, "b");
+        assert_eq!(rows[0].translated_text, "b\nc");
+
+        let temp = tempfile::tempdir().unwrap();
+        let csv_path = temp.path().join("dialogo.csv");
+        let count = export_translations_csv(&pool, &csv_path, true)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let mut reader = csv::Reader::from_path(csv_path).unwrap();
+        let records = reader
+            .records()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].get(4), Some("b\nc"));
     }
 
     #[tokio::test]

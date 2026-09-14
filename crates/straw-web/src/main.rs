@@ -19,10 +19,10 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
+    build_iso_with_patched_data, copy_file_creating_parent, extract_lz77_scripts_to_dir,
     inject_elf_into_iso, inject_patched_texture_streams, patch_textures_from_manifest,
     patch_translated_elf, patch_translated_scripts, spanish_glyph_map, write_texture_inventory,
-    FitStatus, TextSource, TextureRecord,
+    TextureRecord,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
@@ -1138,49 +1138,7 @@ async fn update_text(
     Path(entry_id): Path<i64>,
     Form(form): Form<TextForm>,
 ) -> impl IntoResponse {
-    let existing = match get_text_entry(&state.db, entry_id).await {
-        Ok(Some(entry)) => entry,
-        Ok(None) => return (StatusCode::NOT_FOUND, "text not found").into_response(),
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to load text: {err}"),
-            )
-                .into_response()
-        }
-    };
-
-    let source = if existing.source == "SCRIPT" {
-        TextSource::Script
-    } else {
-        TextSource::Elf
-    };
-    let fallback_capacity = match source {
-        TextSource::Script => existing.original_text.encode_utf16().count() * 2 + 2,
-        TextSource::Elf => existing.original_text.len(),
-    };
-    let capacity = existing
-        .segment_capacity
-        .max(fallback_capacity as i64)
-        .max(1) as usize;
-    let glyph_map = spanish_glyph_map();
-    let fit = check_fit(&form.translated_text, source, capacity, Some(&glyph_map));
-    let fit_status = match fit.status {
-        FitStatus::Unchecked => "unchecked",
-        FitStatus::Ok => "ok",
-        FitStatus::Tight => "tight",
-        FitStatus::NeedsShift => "needs_shift",
-    };
-
-    match update_text_entry_translation(
-        &state.db,
-        entry_id,
-        &form.translated_text,
-        fit_status,
-        fit.status == FitStatus::NeedsShift,
-    )
-    .await
-    {
+    match update_text_entry_translation(&state.db, entry_id, &form.translated_text).await {
         Ok(Some(text)) => Html(
             TextRowTemplate { text }
                 .render()
