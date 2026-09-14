@@ -1,4 +1,11 @@
-use std::{net::SocketAddr, path::Path as FsPath};
+use std::{
+    net::SocketAddr,
+    path::Path as FsPath,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use askama::Template;
 use axum::{
@@ -40,6 +47,15 @@ const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 #[derive(Clone)]
 struct AppState {
     db: SqlitePool,
+    build_running: Arc<AtomicBool>,
+}
+
+struct BuildRunGuard(Arc<AtomicBool>);
+
+impl Drop for BuildRunGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Template)]
@@ -227,7 +243,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
         .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
-        .with_state(AppState { db });
+        .with_state(AppState {
+            db,
+            build_running: Arc::new(AtomicBool::new(false)),
+        });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
 
@@ -743,6 +762,10 @@ async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=build_already_running").into_response();
+    };
+
     if let Err(err) = export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
         return Redirect::to(&format!("/build?error={}", url_escape(&err.to_string())))
             .into_response();
@@ -762,6 +785,14 @@ async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
+}
+
+fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
+    state
+        .build_running
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .map(|_| BuildRunGuard(state.build_running.clone()))
+        .map_err(|_| ())
 }
 
 fn run_full_build_steps() -> anyhow::Result<usize> {
