@@ -55,6 +55,7 @@ pub struct ScriptDetail {
 pub struct SearchResult {
     pub id: i64,
     pub script_id: i64,
+    pub page: i64,
     pub byte_offset: i64,
     pub byte_offset_hex: String,
     pub section_id: i64,
@@ -444,7 +445,17 @@ pub async fn search_text_entries(
     let rows = sqlx::query(
         r#"
         SELECT te.id, te.script_id, te.byte_offset, te.section_id, te.section_order,
-               te.original_text, te.translated_text, te.is_translated, te.needs_shift
+               te.original_text, te.translated_text, te.is_translated, te.needs_shift,
+               (
+                   SELECT COUNT(*)
+                   FROM text_entries prev
+                   WHERE prev.script_id = te.script_id
+                     AND (
+                         prev.section_id < te.section_id
+                         OR (prev.section_id = te.section_id AND prev.section_order < te.section_order)
+                         OR (prev.section_id = te.section_id AND prev.section_order = te.section_order AND prev.id <= te.id)
+                     )
+               ) AS position_in_script
         FROM text_entries_fts fts
         JOIN text_entries te ON te.id = fts.rowid
         WHERE text_entries_fts MATCH ?
@@ -460,9 +471,11 @@ pub async fn search_text_entries(
     rows.into_iter()
         .map(|row| {
             let byte_offset: i64 = row.try_get("byte_offset")?;
+            let position_in_script: i64 = row.try_get("position_in_script")?;
             Ok(SearchResult {
                 id: row.try_get("id")?,
                 script_id: row.try_get("script_id")?,
+                page: ((position_in_script.max(1) - 1) / 50) + 1,
                 byte_offset,
                 byte_offset_hex: format!("0x{byte_offset:05X}"),
                 section_id: row.try_get::<Option<i64>, _>("section_id")?.unwrap_or(0),
@@ -1097,8 +1110,22 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO text_entries (script_id, byte_offset, original_text, translated_text, is_translated) \
-             VALUES (1, 16, 'strawberry original', 'panic traducido', 1)",
+            r#"
+            WITH RECURSIVE seq(n) AS (
+                VALUES(1)
+                UNION ALL
+                SELECT n + 1 FROM seq WHERE n < 50
+            )
+            INSERT INTO text_entries (script_id, section_id, section_order, byte_offset, original_text, translated_text, is_translated)
+            SELECT 1, 0, n, n, 'filler ' || n, '', 0 FROM seq
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, section_id, section_order, byte_offset, original_text, translated_text, is_translated) \
+             VALUES (1, 0, 51, 51, 'strawberry original', 'panic traducido', 1)",
         )
         .execute(&pool)
         .await
@@ -1107,6 +1134,7 @@ mod tests {
         let results = search_text_entries(&pool, "panic", 20).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].script_id, 1);
+        assert_eq!(results[0].page, 2);
         assert_eq!(results[0].translated_text, "panic traducido");
     }
 

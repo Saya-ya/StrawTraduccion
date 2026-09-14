@@ -1,5 +1,5 @@
 <article id="entry-{{ text.id }}"
-         class="cursor-pointer rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition hover:border-pink-400/40"
+         class="scroll-mt-8 cursor-pointer rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition target:border-pink-400 target:ring-2 target:ring-pink-400/30 hover:border-pink-400/40"
          hx-get="/api/texts/{{ text.id }}/edit"
          hx-target="#entry-{{ text.id }}"
          hx-swap="outerHTML">

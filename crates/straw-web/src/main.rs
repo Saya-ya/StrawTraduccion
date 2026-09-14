@@ -256,6 +256,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/build/run-full", post(run_full_build))
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
+        .route("/api/texts/:entry_id/view", get(text_row))
         .route("/api/texts/:entry_id", put(update_text))
         .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
         .with_state(AppState {
@@ -1104,6 +1105,23 @@ async fn text_editor(
             TextEditorTemplate { text }
                 .render()
                 .expect("text editor template renders"),
+        )
+        .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "text not found").into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load text: {err}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn text_row(State(state): State<AppState>, Path(entry_id): Path<i64>) -> impl IntoResponse {
+    match get_text_entry(&state.db, entry_id).await {
+        Ok(Some(text)) => Html(
+            TextRowTemplate { text }
+                .render()
+                .expect("text row template renders"),
         )
         .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "text not found").into_response(),
