@@ -1780,6 +1780,7 @@ dependencies = [
  "askama",
  "axum",
  "serde",
+ "serde_json",
  "sqlx",
  "straw-core",
  "straw-db",

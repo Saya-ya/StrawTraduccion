@@ -8,7 +8,7 @@ use crate::{
     size_field_write_offset, slot_capacity,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextureRecord {
     pub id: u32,
     pub fat_row: usize,

@@ -13,7 +13,7 @@ use straw_core::{
     build_iso_with_patched_data, check_fit, copy_file_creating_parent, extract_lz77_scripts_to_dir,
     inject_elf_into_iso, inject_patched_texture_streams, patch_textures_from_manifest,
     patch_translated_elf, patch_translated_scripts, spanish_glyph_map, write_texture_inventory,
-    FitStatus, TextSource,
+    FitStatus, TextSource, TextureRecord,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
@@ -22,6 +22,7 @@ use straw_db::{
     BuildSummary, ScriptDetail, ScriptSummary, SearchResult, TextEntrySummary, TranslationStats,
     DEFAULT_DB_PATH,
 };
+use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DATA_BIN_PATH: &str = "originales/Data.bin";
@@ -129,6 +130,14 @@ struct BuildTemplate {
     error: String,
 }
 
+#[derive(Template)]
+#[template(path = "textures.html")]
+struct TexturesTemplate {
+    records: Vec<TextureRecord>,
+    inventory_exists: bool,
+    png_count: usize,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
@@ -200,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts", get(scripts))
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
+        .route("/textures", get(textures_page))
         .route("/import", get(import_page).post(run_import))
         .route("/import/db", post(import_db))
         .route("/build", get(build_page))
@@ -216,6 +226,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id", put(update_text))
+        .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
         .with_state(AppState { db });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
@@ -307,6 +318,33 @@ async fn search(State(state): State<AppState>, Query(params): Query<SearchParams
         error,
     };
     Html(template.render().expect("search template renders"))
+}
+
+async fn textures_page() -> Html<String> {
+    let inventory_path = FsPath::new(TEXTURE_INVENTORY_DIR).join("textures.json");
+    let mut records = match tokio::fs::read_to_string(&inventory_path).await {
+        Ok(contents) => serde_json::from_str::<Vec<TextureRecord>>(&contents).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let inventory_exists = !records.is_empty();
+    let png_count = records
+        .iter()
+        .filter(|record| !record.png.is_empty())
+        .count();
+    records.sort_by(|a, b| {
+        b.score_ui
+            .cmp(&a.score_ui)
+            .then_with(|| b.score_font.cmp(&a.score_font))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    records.truncate(240);
+
+    let template = TexturesTemplate {
+        records,
+        inventory_exists,
+        png_count,
+    };
+    Html(template.render().expect("textures template renders"))
 }
 
 async fn settings(
