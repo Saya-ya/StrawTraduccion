@@ -99,6 +99,8 @@ Criterio de salida:
 
 ## Fase 2: scripts y traducciones
 
+Estado: implementado en Rust para el flujo principal.
+
 Portar logica de textos:
 
 - `tools/script_rebuilder.py`.
@@ -127,6 +129,8 @@ Criterio de salida:
 - Rust puede extraer/importar/reconstruir los scripts soportados sin llamar a Python.
 
 ## Fase 3: texturas y TIM2
+
+Estado: implementado en Rust para inventario, PNG, parcheo `preserve_palette` e inyeccion de streams parcheados.
 
 Portar pipeline de texturas:
 
@@ -220,6 +224,8 @@ Criterio de salida:
 
 ## Fase 6: build completo desde frontend
 
+Estado: implementado como accion `/build/run-full`; pendiente validacion de ISO final en PCSX2/hardware.
+
 El build debe ejecutarse solo desde la web local.
 
 Flujo requerido:
@@ -230,9 +236,10 @@ Flujo requerido:
 4. Inyectar scripts en `Data_patched.bin`.
 5. Aplicar traducciones ELF.
 6. Aplicar parches de textura.
-7. Generar `work/Strawberry_translated.iso`.
-8. Registrar `build_history`.
-9. Actualizar estado consultable por `/build/status`.
+7. Inyectar streams de textura en `Data_patched.bin`.
+8. Generar `work/Strawberry_translated.iso`.
+9. Inyectar ELF traducido en la ISO.
+10. Registrar `build_history`.
 
 Reglas:
 
@@ -248,6 +255,8 @@ Criterio de salida:
 ## Fase 7: retiro de Python
 
 Cuando Rust cubra todo:
+
+Estado: pendiente. Python ya no es llamado desde `crates/`, pero sigue en el repo como referencia y tooling legado.
 
 - Mover Python a documentacion legado o eliminarlo.
 - Actualizar README con instalacion y ejecucion Rust.
@@ -267,9 +276,9 @@ Cuando Rust cubra todo:
 8. Portar SQLite/services.
 9. Portar web Axum/Askama.
 10. Portar texturas/TIM2.
-11. Integrar build completo desde frontend.
-12. Validar ISO final.
-13. Retirar Python.
+11. Integrar build completo desde frontend. Hecho.
+12. Validar ISO final. Pendiente.
+13. Retirar Python. Pendiente.
 
 ## Riesgos principales
 
