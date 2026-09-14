@@ -145,6 +145,9 @@ struct BuildTemplate {
     build_csv_exists: bool,
     texture_inventory_exists: bool,
     texture_manifest_exists: bool,
+    build_running: bool,
+    default_workers: usize,
+    max_workers: usize,
     build_log: String,
     message: String,
     error: String,
@@ -209,6 +212,12 @@ struct BuildParams {
     full: Option<usize>,
     started: Option<u8>,
     error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FullBuildForm {
+    build_type: String,
+    workers: usize,
 }
 
 #[tokio::main]
@@ -451,6 +460,9 @@ async fn build_page(
             .join("textures.json")
             .exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
+        build_running: state.build_running.load(Ordering::Acquire),
+        default_workers: default_workers(),
+        max_workers: max_workers(),
         build_log: read_build_log(),
         message: params
             .exported
@@ -773,13 +785,21 @@ async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
+async fn run_full_build(
+    State(state): State<AppState>,
+    Form(form): Form<FullBuildForm>,
+) -> impl IntoResponse {
     let Ok(guard) = acquire_build_guard(&state) else {
         return Redirect::to("/build?error=build_already_running").into_response();
     };
 
     reset_build_log();
     append_build_log("Build completo iniciado");
+    let build_type = normalize_build_type(&form.build_type);
+    let workers = form.workers.clamp(1, max_workers());
+    append_build_log(&format!(
+        "Configuracion: tipo={build_type}, procesos={workers}"
+    ));
     let db = state.db.clone();
     tokio::spawn(async move {
         let _guard = guard;
@@ -792,7 +812,8 @@ async fn run_full_build(State(state): State<AppState>) -> impl IntoResponse {
             }
         }
 
-        match tokio::task::spawn_blocking(run_full_build_steps).await {
+        match tokio::task::spawn_blocking(move || run_full_build_steps(&build_type, workers)).await
+        {
             Ok(Ok(steps)) => {
                 append_build_log(&format!(
                     "Build completo finalizado correctamente: {} pasos ejecutados",
@@ -816,7 +837,7 @@ fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
         .map_err(|_| ())
 }
 
-fn run_full_build_steps() -> anyhow::Result<usize> {
+fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usize> {
     append_build_log("Validando prerequisitos");
     if !FsPath::new(DATA_BIN_PATH).exists() {
         anyhow::bail!("missing originales/Data.bin");
@@ -832,42 +853,50 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
     }
 
     let mut steps = 0;
+    append_build_log(&format!(
+        "Procesos seleccionados: {workers} (los pasos criticos de Data.bin se ejecutan con escritura segura)"
+    ));
     append_build_log("Copiando originales/Data.bin a work/Data_patched.bin");
     copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH)?;
     append_build_log("Data_patched.bin preparado");
     steps += 1;
 
-    append_build_log("Parcheando scripts traducidos");
     let glyph_map = spanish_glyph_map();
-    let script_report = patch_translated_scripts(
-        PATCHED_DATA_PATH,
-        SCRIPTS_OUT_DIR,
-        BUILD_CSV_PATH,
-        Some(&glyph_map),
-    )?;
-    if !script_report.errors.is_empty() {
-        anyhow::bail!(script_report.errors.join("; "));
+    if build_type != "images" {
+        append_build_log("Parcheando scripts traducidos");
+        let script_report = patch_translated_scripts(
+            PATCHED_DATA_PATH,
+            SCRIPTS_OUT_DIR,
+            BUILD_CSV_PATH,
+            Some(&glyph_map),
+        )?;
+        if !script_report.errors.is_empty() {
+            anyhow::bail!(script_report.errors.join("; "));
+        }
+        append_build_log(&format!(
+            "Scripts parcheados: {}",
+            script_report.scripts_patched
+        ));
+        steps += 1;
+
+        append_build_log("Parcheando ELF traducido");
+        let elf_report = patch_translated_elf(
+            ORIGINAL_ELF_PATH,
+            TRANSLATED_ELF_PATH,
+            BUILD_CSV_PATH,
+            Some(&glyph_map),
+        )?;
+        append_build_log(&format!(
+            "Entradas ELF parcheadas: {}",
+            elf_report.rows_patched
+        ));
+        steps += 1;
+    } else {
+        append_build_log("Build tipo imagenes: omitiendo scripts y ELF traducido");
+        copy_file_creating_parent(ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)?;
     }
-    append_build_log(&format!(
-        "Scripts parcheados: {}",
-        script_report.scripts_patched
-    ));
-    steps += 1;
 
-    append_build_log("Parcheando ELF traducido");
-    let elf_report = patch_translated_elf(
-        ORIGINAL_ELF_PATH,
-        TRANSLATED_ELF_PATH,
-        BUILD_CSV_PATH,
-        Some(&glyph_map),
-    )?;
-    append_build_log(&format!(
-        "Entradas ELF parcheadas: {}",
-        elf_report.rows_patched
-    ));
-    steps += 1;
-
-    if FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
+    if build_type != "texts" && FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
         append_build_log("Parcheando texturas desde manifest.json");
         let texture_report = patch_textures_from_manifest(
             DATA_BIN_PATH,
@@ -893,6 +922,8 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
             inject_report.streams_injected, inject_report.bytes_written
         ));
         steps += 1;
+    } else if build_type == "texts" {
+        append_build_log("Build tipo textos: etapa de texturas omitida");
     } else {
         append_build_log("Sin texturas/manifest.json; etapa de texturas omitida");
     }
@@ -908,6 +939,24 @@ fn run_full_build_steps() -> anyhow::Result<usize> {
     steps += 1;
 
     Ok(steps)
+}
+
+fn normalize_build_type(value: &str) -> String {
+    match value {
+        "texts" | "images" => value.to_owned(),
+        _ => "full".to_owned(),
+    }
+}
+
+fn max_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(2)
+        .clamp(1, 8)
+}
+
+fn default_workers() -> usize {
+    max_workers().min(2).max(1)
 }
 
 async fn record_build_success(db: &SqlitePool, step: &str, progress_pct: i64, iso_path: &str) {

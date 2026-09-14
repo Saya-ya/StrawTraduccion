@@ -8,6 +8,7 @@
         <span class="font-mono">{{ text.byte_offset_hex }}</span>
         <span>[{{ text.section_id }}:{{ text.section_order }}]</span>
         <span>{{ text.fit_status }}</span>
+        {% if text.segment_capacity > 0 %}<span class="rounded-full bg-slate-800 px-2 py-0.5 font-mono">lim {{ text.segment_capacity }}b</span>{% endif %}
         {% if text.needs_shift %}<span class="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">needs_shift</span>{% endif %}
         {% if text.is_translated %}<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">traducido</span>{% endif %}
     </div>
@@ -22,6 +23,19 @@
             <p class="rounded-xl border border-dashed border-slate-700 p-4 text-sm italic text-slate-600">Sin traducir</p>
             {% else %}
             <p class="whitespace-pre-wrap rounded-xl bg-slate-800/80 p-4 text-sm text-white">{{ text.translated_text }}</p>
+            {% endif %}
+            {% if text.segment_capacity > 0 %}
+            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800" title="Capacidad: {{ text.segment_capacity }} bytes">
+                {% if text.needs_shift %}
+                <div class="h-full w-full bg-red-500"></div>
+                {% else if text.fit_status == "tight" %}
+                <div class="h-full w-4/5 bg-yellow-400"></div>
+                {% else if text.is_translated %}
+                <div class="h-full w-1/2 bg-emerald-400"></div>
+                {% else %}
+                <div class="h-full w-0 bg-slate-700"></div>
+                {% endif %}
+            </div>
             {% endif %}
         </div>
     </div>

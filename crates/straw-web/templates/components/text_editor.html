@@ -11,12 +11,49 @@
             <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ text.original_text }}</p>
         </div>
         <div>
-            <label class="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500" for="translated-{{ text.id }}">Traduccion</label>
-            <textarea id="translated-{{ text.id }}" name="translated_text" rows="5" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400">{{ text.translated_text }}</textarea>
+            <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500" for="translated-{{ text.id }}">Traduccion</label>
+                <div id="counter-{{ text.id }}" class="rounded-full bg-slate-800 px-3 py-1 font-mono text-xs text-slate-300">0 / {{ text.segment_capacity }} bytes</div>
+            </div>
+            <textarea id="translated-{{ text.id }}" name="translated_text" rows="5" data-counter="counter-{{ text.id }}" data-capacity="{{ text.segment_capacity }}" data-source="{{ text.source }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400">{{ text.translated_text }}</textarea>
+            <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div id="meter-{{ text.id }}" class="h-full w-0 bg-emerald-400 transition-all"></div>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">Scripts: UTF-16LE + terminador. ELF: estimacion Shift-JIS/ASCII.</p>
         </div>
         <div class="flex gap-3">
             <button type="submit" class="rounded-full bg-pink-500 px-5 py-2 text-sm font-bold text-white hover:bg-pink-400">Guardar</button>
             <button type="button" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800" onclick="location.reload()">Cancelar</button>
         </div>
     </form>
+    <script>
+        (function() {
+            const textarea = document.getElementById('translated-{{ text.id }}');
+            const counter = document.getElementById('counter-{{ text.id }}');
+            const meter = document.getElementById('meter-{{ text.id }}');
+            if (!textarea || !counter || !meter) return;
+            const capacity = parseInt(textarea.dataset.capacity || '0', 10);
+            const source = textarea.dataset.source || 'SCRIPT';
+            function estimateBytes(value) {
+                if (!value.trim()) return 0;
+                if (source === 'ELF') {
+                    let total = 0;
+                    for (const ch of value) total += ch.charCodeAt(0) <= 0x7F ? 1 : 2;
+                    return total;
+                }
+                return Array.from(value).length * 2 + 2;
+            }
+            function refreshCounter() {
+                const used = estimateBytes(textarea.value);
+                const pct = capacity > 0 ? Math.min(100, Math.round((used / capacity) * 100)) : 0;
+                const remaining = capacity - used;
+                counter.textContent = capacity > 0 ? `${used} / ${capacity} bytes (${remaining} libres)` : `${used} bytes`;
+                meter.style.width = `${pct}%`;
+                meter.className = 'h-full transition-all ' + (capacity > 0 && used > capacity ? 'bg-red-500' : (capacity > 0 && remaining < 20 ? 'bg-yellow-400' : 'bg-emerald-400'));
+                counter.className = 'rounded-full px-3 py-1 font-mono text-xs ' + (capacity > 0 && used > capacity ? 'bg-red-500/20 text-red-200' : (capacity > 0 && remaining < 20 ? 'bg-yellow-500/20 text-yellow-100' : 'bg-slate-800 text-slate-300'));
+            }
+            textarea.addEventListener('input', refreshCounter);
+            refreshCounter();
+        })();
+    </script>
 </article>
