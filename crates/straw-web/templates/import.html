@@ -48,14 +48,17 @@
             {% if error.len() > 0 %}
             <div class="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
             {% endif %}
+            {% if import_running %}
+            <div class="mt-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm font-bold text-yellow-100">Hay una tarea de importacion corriendo. El log se actualiza en vivo.</div>
+            {% endif %}
 
-            <div class="mt-8 grid gap-4 lg:grid-cols-2">
-            <form method="post" action="/import" class="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+            <div class="mt-8 grid gap-4 lg:grid-cols-3">
+            <form method="post" action="/import" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
                 <div class="mb-4 flex items-start gap-3">
                     <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-pink-500 text-sm font-black text-white">1</span>
                     <div><h2 class="font-black text-white">Extraer scripts</h2><p class="mt-1 text-sm text-slate-400">Crea los `.dec` desde `Data.bin`.</p></div>
                 </div>
-                {% if data_bin_exists %}
+                {% if data_bin_exists && !import_running %}
                 <button class="w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white shadow-lg shadow-pink-950/40 hover:bg-pink-400">
                     Extraer scripts LZ77
                 </button>
@@ -66,12 +69,12 @@
                 {% endif %}
             </form>
 
-            <form method="post" action="/import/db" class="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+            <form method="post" action="/import/db" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
                 <div class="mb-4 flex items-start gap-3">
                     <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-black text-slate-950">2</span>
                     <div><h2 class="font-black text-white">Importar a SQLite</h2><p class="mt-1 text-sm text-slate-400">Llena la base de datos y preserva traducciones existentes.</p></div>
                 </div>
-                {% if existing_dec_count > 0 %}
+                {% if existing_dec_count > 0 && !import_running %}
                 <button class="w-full rounded-full bg-slate-100 px-6 py-3 font-bold text-slate-950 hover:bg-white">
                     Importar textos a SQLite
                 </button>
@@ -81,8 +84,54 @@
                 </button>
                 {% endif %}
             </form>
+
+            <form method="post" action="/import/translations-db" enctype="multipart/form-data" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+                <div class="mb-4 flex items-start gap-3">
+                    <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-sm font-black text-white">3</span>
+                    <div><h2 class="font-black text-white">Cargar DB traducida</h2><p class="mt-1 text-sm text-slate-400">Fusiona traducciones desde otra SQLite sin reemplazar esta base. Maximo: 512 MB.</p></div>
+                </div>
+                <input name="database" type="file" accept=".db,.sqlite,.sqlite3" class="mb-4 block w-full text-sm text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:font-bold file:text-slate-950">
+                {% if !import_running %}
+                <button class="w-full rounded-full bg-emerald-500 px-6 py-3 font-bold text-white hover:bg-emerald-400">Fusionar traducciones</button>
+                {% else %}
+                <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Importacion corriendo</button>
+                {% endif %}
+            </form>
             </div>
+
+            <section class="mt-6 rounded-3xl border border-slate-800 bg-slate-950 p-5">
+                <div class="mb-3 flex items-center justify-between gap-3">
+                    <div><h2 class="font-black text-white">Log de importacion</h2><p class="mt-1 text-xs text-slate-500">Archivo: <span class="font-mono text-pink-200">work/import_temp/import.log</span></p></div>
+                    <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:text-pink-200">Actualizar</a>
+                </div>
+                <pre id="import-log" class="max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{% if import_log.len() > 0 %}{{ import_log }}{% else %}Todavia no hay logs de importacion.{% endif %}</pre>
+            </section>
         </section>
     </main>
+    <script>
+        const importLog = document.getElementById('import-log');
+        async function refreshImportLog() {
+            if (!importLog) return;
+            try {
+                const response = await fetch('/import/log', { cache: 'no-store' });
+                const text = await response.text();
+                if (text.trim().length > 0 && importLog.textContent !== text) {
+                    importLog.textContent = text;
+                    importLog.scrollTop = importLog.scrollHeight;
+                }
+            } catch (_) {}
+        }
+        setInterval(refreshImportLog, 1500);
+        refreshImportLog();
+
+        document.querySelectorAll('form.import-action').forEach((form) => {
+            form.addEventListener('submit', () => {
+                form.querySelectorAll('button').forEach((button) => {
+                    button.disabled = true;
+                    button.textContent = 'Ejecutando...';
+                });
+            });
+        });
+    </script>
 </body>
 </html>

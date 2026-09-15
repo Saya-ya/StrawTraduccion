@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
@@ -104,6 +107,14 @@ pub struct ImportReport {
     pub elf_texts_imported: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranslationImportReport {
+    pub source_rows: usize,
+    pub imported: usize,
+    pub skipped_missing: usize,
+    pub skipped_unchanged: usize,
+}
+
 pub async fn connect(database_url: &str) -> Result<SqlitePool> {
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -142,17 +153,44 @@ pub async fn import_extracted_texts(
     scripts_dir: impl AsRef<Path>,
     elf_path: impl AsRef<Path>,
 ) -> Result<ImportReport> {
+    import_extracted_texts_with_progress(pool, scripts_dir, elf_path, |_| {}).await
+}
+
+pub async fn import_extracted_texts_with_progress<F>(
+    pool: &SqlitePool,
+    scripts_dir: impl AsRef<Path>,
+    elf_path: impl AsRef<Path>,
+    mut progress: F,
+) -> Result<ImportReport>
+where
+    F: FnMut(&str),
+{
     let scripts_dir = scripts_dir.as_ref();
     let elf_path = elf_path.as_ref();
 
+    progress("Leyendo traducciones existentes para preservarlas");
     let translations = existing_translations(pool).await?;
+    progress(&format!(
+        "Traducciones existentes detectadas: {}",
+        translations.len()
+    ));
+
+    progress(&format!(
+        "Escaneando scripts .dec en {}",
+        scripts_dir.display()
+    ));
     let mut scripts = Vec::new();
     if scripts_dir.exists() {
+        let mut scanned = 0;
         for entry in std::fs::read_dir(scripts_dir)
             .with_context(|| format!("failed to read {}", scripts_dir.display()))?
         {
             let path = entry?.path();
             if path.extension().is_some_and(|ext| ext == "dec") {
+                scanned += 1;
+                if scanned == 1 || scanned % 100 == 0 {
+                    progress(&format!("Analizando scripts .dec: {scanned}"));
+                }
                 if let Some(script) = analyze_script_dec(&path)? {
                     scripts.push(script);
                 }
@@ -160,22 +198,35 @@ pub async fn import_extracted_texts(
         }
     }
     scripts.sort_by_key(|script| script.script_id);
+    let script_text_count: usize = scripts.iter().map(|script| script.texts.len()).sum();
+    progress(&format!(
+        "Scripts analizables: {}, textos de script detectados: {}",
+        scripts.len(),
+        script_text_count
+    ));
 
+    progress(&format!(
+        "Extrayendo textos ELF desde {}",
+        elf_path.display()
+    ));
     let elf_texts = if elf_path.exists() {
         extract_elf_strings(elf_path)?
     } else {
         Vec::new()
     };
+    progress(&format!("Textos ELF detectados: {}", elf_texts.len()));
 
     let mut translations_preserved = 0;
     let mut texts_imported = 0;
 
+    progress("Limpiando tablas actuales text_entries y scripts");
     sqlx::query("DELETE FROM text_entries")
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM scripts").execute(pool).await?;
 
-    for script in &scripts {
+    progress("Insertando scripts y textos en SQLite");
+    for (script_index, script) in scripts.iter().enumerate() {
         sqlx::query(
             r#"
             INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
@@ -195,11 +246,26 @@ pub async fn import_extracted_texts(
                 translations_preserved += 1;
             }
             texts_imported += 1;
+            if texts_imported == 1 || texts_imported % 1000 == 0 {
+                progress(&format!(
+                    "Textos insertados: {texts_imported}/{script_text_count} (script {} de {})",
+                    script_index + 1,
+                    scripts.len()
+                ));
+            }
         }
         refresh_script_translated_count(pool, script.script_id).await?;
+        if script_index == 0 || (script_index + 1) % 100 == 0 || script_index + 1 == scripts.len() {
+            progress(&format!(
+                "Scripts insertados: {}/{}",
+                script_index + 1,
+                scripts.len()
+            ));
+        }
     }
 
     if !elf_texts.is_empty() {
+        progress("Insertando textos ELF en SQLite");
         sqlx::query(
             r#"
             INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
@@ -210,16 +276,28 @@ pub async fn import_extracted_texts(
         .execute(pool)
         .await?;
 
-        for text in &elf_texts {
+        for (index, text) in elf_texts.iter().enumerate() {
             if insert_imported_text(pool, text, &translations).await? {
                 translations_preserved += 1;
             }
             texts_imported += 1;
+            if index == 0 || (index + 1) % 100 == 0 || index + 1 == elf_texts.len() {
+                progress(&format!(
+                    "Textos ELF insertados: {}/{}",
+                    index + 1,
+                    elf_texts.len()
+                ));
+            }
         }
         refresh_script_translated_count(pool, -1).await?;
     }
 
+    progress("Reconstruyendo indice de busqueda FTS");
     rebuild_fts(pool).await?;
+    progress(&format!(
+        "Importacion SQLite terminada: {} textos, {} traducciones preservadas",
+        texts_imported, translations_preserved
+    ));
 
     Ok(ImportReport {
         scripts_imported: scripts.len() + usize::from(!elf_texts.is_empty()),
@@ -266,6 +344,145 @@ where
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn import_translations_from_db(
+    pool: &SqlitePool,
+    source_db_path: impl AsRef<Path>,
+) -> Result<TranslationImportReport> {
+    let source_db_path = source_db_path.as_ref();
+    let options = SqliteConnectOptions::new()
+        .filename(source_db_path)
+        .read_only(true);
+    let source_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to open source database {}",
+                source_db_path.display()
+            )
+        })?;
+
+    let source_rows = sqlx::query(
+        r#"
+        SELECT source, script_id, byte_offset, original_text, translated_text
+        FROM text_entries
+        WHERE translated_text IS NOT NULL AND trim(translated_text) != ''
+        ORDER BY script_id, byte_offset
+        "#,
+    )
+    .fetch_all(&source_pool)
+    .await
+    .with_context(|| {
+        format!(
+            "{} is not a compatible translation database",
+            source_db_path.display()
+        )
+    })?;
+
+    let mut report = TranslationImportReport {
+        source_rows: source_rows.len(),
+        imported: 0,
+        skipped_missing: 0,
+        skipped_unchanged: 0,
+    };
+    let glyph_map = spanish_glyph_map();
+    let mut touched_scripts = HashSet::new();
+    let mut tx = pool.begin().await?;
+
+    for row in source_rows {
+        let source = row
+            .try_get::<Option<String>, _>("source")?
+            .unwrap_or_else(|| "SCRIPT".to_owned());
+        let script_id: i64 = row.try_get("script_id")?;
+        let byte_offset: i64 = row.try_get("byte_offset")?;
+        let original_text: String = row.try_get("original_text")?;
+        let translated_text =
+            normalize_translation_linebreaks(&row.try_get::<String, _>("translated_text")?);
+        if translated_text.trim().is_empty() {
+            report.skipped_unchanged += 1;
+            continue;
+        }
+
+        let Some(target) = sqlx::query(
+            r#"
+            SELECT id, translated_text, original_text, segment_capacity
+            FROM text_entries
+            WHERE source = ? AND script_id = ? AND byte_offset = ? AND original_text = ?
+            "#,
+        )
+        .bind(&source)
+        .bind(script_id)
+        .bind(byte_offset)
+        .bind(&original_text)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            report.skipped_missing += 1;
+            continue;
+        };
+
+        let current = target
+            .try_get::<Option<String>, _>("translated_text")?
+            .map(|text| normalize_translation_linebreaks(&text))
+            .unwrap_or_default();
+        if current == translated_text {
+            report.skipped_unchanged += 1;
+            continue;
+        }
+
+        let id: i64 = target.try_get("id")?;
+        let original: String = target.try_get("original_text")?;
+        let text_source = if source == "ELF" {
+            TextSource::Elf
+        } else {
+            TextSource::Script
+        };
+        let fallback_capacity = match text_source {
+            TextSource::Script => original.encode_utf16().count() * 2 + 2,
+            TextSource::Elf => original.len(),
+        };
+        let capacity = target
+            .try_get::<Option<i64>, _>("segment_capacity")?
+            .unwrap_or(0)
+            .max(fallback_capacity as i64)
+            .max(1) as usize;
+        let fit = check_fit(&translated_text, text_source, capacity, Some(&glyph_map));
+
+        sqlx::query(
+            r#"
+            UPDATE text_entries
+            SET translated_text = ?,
+                is_translated = 1,
+                needs_shift = ?,
+                fit_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(&translated_text)
+        .bind(if fit.status == FitStatus::NeedsShift {
+            1
+        } else {
+            0
+        })
+        .bind(fit_status_label(fit.status))
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        report.imported += 1;
+        touched_scripts.insert(script_id);
+    }
+    tx.commit().await?;
+
+    for script_id in touched_scripts {
+        refresh_script_translated_count(pool, script_id).await?;
+    }
+    rebuild_fts(pool).await?;
+
+    Ok(report)
 }
 
 pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
@@ -1454,6 +1671,56 @@ mod tests {
             .unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].get(4), Some("b\nc"));
+    }
+
+    #[tokio::test]
+    async fn imports_translations_from_compatible_database() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 2, 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, 'original', '', 0, 40), \
+                    (1, 'SCRIPT', 18, 'otro', '', 0, 40)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("translated.db");
+        let source = connect_path(&source_path).await.unwrap();
+        init_db(&source).await.unwrap();
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 2, 1)")
+            .execute(&source)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, 'original', 'traducido', 1, 40), \
+                    (1, 'SCRIPT', 20, 'no existe', 'ignorado', 1, 40)",
+        )
+        .execute(&source)
+        .await
+        .unwrap();
+        source.close().await;
+
+        let report = import_translations_from_db(&pool, &source_path)
+            .await
+            .unwrap();
+        assert_eq!(report.source_rows, 2);
+        assert_eq!(report.imported, 1);
+        assert_eq!(report.skipped_missing, 1);
+
+        let text = get_text_entry(&pool, 1).await.unwrap().unwrap();
+        assert_eq!(text.translated_text, "traducido");
+        assert!(text.is_translated);
+        let script = get_script(&pool, 1).await.unwrap().unwrap();
+        assert_eq!(script.translated_texts, 1);
     }
 
     #[tokio::test]

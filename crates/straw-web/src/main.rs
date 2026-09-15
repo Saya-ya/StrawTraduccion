@@ -11,7 +11,7 @@ use std::{
 
 use askama::Template;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect},
     routing::{get, post, put},
@@ -26,10 +26,10 @@ use straw_core::{
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
-    import_extracted_texts, init_db, list_scripts, recent_builds, record_build_step,
-    search_text_entries, set_setting, translation_stats, update_text_entry_translation,
-    BuildSummary, ScriptDetail, ScriptSummary, SearchResult, TextEntrySummary, TranslationStats,
-    DEFAULT_DB_PATH,
+    import_extracted_texts_with_progress, import_translations_from_db, init_db, list_scripts,
+    recent_builds, record_build_step, search_text_entries, set_setting, translation_stats,
+    update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
+    TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -43,6 +43,9 @@ const BASE_ISO_PATH: &str = "originales/Strawberry_patched.iso";
 const TRANSLATED_ELF_PATH: &str = "work/SLPS_256.11_translated";
 const BUILD_CSV_PATH: &str = "work/build_temp/dialogo.csv";
 const BUILD_LOG_PATH: &str = "work/build_temp/build.log";
+const IMPORT_LOG_PATH: &str = "work/import_temp/import.log";
+const IMPORT_DB_UPLOAD_PATH: &str = "work/import_temp/imported_translation_manager.db";
+const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
 const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
 const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
@@ -51,6 +54,7 @@ const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 struct AppState {
     db: SqlitePool,
     build_running: Arc<AtomicBool>,
+    import_running: Arc<AtomicBool>,
 }
 
 struct BuildRunGuard(Arc<AtomicBool>);
@@ -123,6 +127,8 @@ struct ImportTemplate {
     scripts_out_dir: &'static str,
     data_bin_exists: bool,
     existing_dec_count: usize,
+    import_running: bool,
+    import_log: String,
     message: String,
     error: String,
 }
@@ -194,6 +200,8 @@ struct ImportParams {
     scripts: Option<usize>,
     texts: Option<usize>,
     preserved: Option<usize>,
+    translations: Option<usize>,
+    started: Option<String>,
     error: Option<String>,
 }
 
@@ -229,6 +237,8 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    print_startup_banner();
+
     let db = connect_path(DEFAULT_DB_PATH).await?;
     init_db(&db).await?;
 
@@ -241,6 +251,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/textures", get(textures_page))
         .route("/import", get(import_page).post(run_import))
         .route("/import/db", post(import_db))
+        .route("/import/log", get(import_log))
+        .route(
+            "/import/translations-db",
+            post(import_translations_db_upload),
+        )
         .route("/build", get(build_page))
         .route("/build/log", get(build_log))
         .route("/build/export-csv", post(export_build_csv))
@@ -258,16 +273,30 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/texts/:entry_id/view", get(text_row))
         .route("/api/texts/:entry_id", put(update_text))
         .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(AppState {
             db,
             build_running: Arc::new(AtomicBool::new(false)),
+            import_running: Arc::new(AtomicBool::new(false)),
         });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
+    println!("Servidor listo: http://127.0.0.1:8080");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn print_startup_banner() {
+    println!("============================================================");
+    println!("StrawTraduccion - servidor local Rust");
+    println!("Abre: http://127.0.0.1:8080");
+    println!("DB: {DEFAULT_DB_PATH}");
+    println!("Originales requeridos: {DATA_BIN_PATH}, {ORIGINAL_ELF_PATH}, {BASE_ISO_PATH}");
+    println!("Logs: {IMPORT_LOG_PATH} y {BUILD_LOG_PATH}");
+    println!("No cierres esta ventana mientras uses la aplicacion.");
+    println!("============================================================");
 }
 
 async fn index(State(state): State<AppState>) -> Html<String> {
@@ -403,7 +432,10 @@ async fn settings(
     Html(template.render().expect("settings template renders"))
 }
 
-async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
+async fn import_page(
+    State(state): State<AppState>,
+    Query(params): Query<ImportParams>,
+) -> Html<String> {
     let message = match params.status.as_deref() {
         Some("ok") => format!(
             "Extraccion completada: {} scripts LZ77 escritos",
@@ -415,6 +447,19 @@ async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
             params.texts.unwrap_or(0),
             params.preserved.unwrap_or(0)
         ),
+        Some("translations") => format!(
+            "Traducciones fusionadas desde DB externa: {} entradas actualizadas",
+            params.translations.unwrap_or(0)
+        ),
+        _ if params.started.as_deref() == Some("extract") => {
+            "Extraccion iniciada; el log se actualiza automaticamente".to_owned()
+        }
+        _ if params.started.as_deref() == Some("db") => {
+            "Importacion a SQLite iniciada; el log se actualiza automaticamente".to_owned()
+        }
+        _ if params.started.as_deref() == Some("translations") => {
+            "Fusion de DB traducida iniciada; el log se actualiza automaticamente".to_owned()
+        }
         _ => String::new(),
     };
     let error = params.error.unwrap_or_default();
@@ -423,6 +468,8 @@ async fn import_page(Query(params): Query<ImportParams>) -> Html<String> {
         scripts_out_dir: SCRIPTS_OUT_DIR,
         data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
         existing_dec_count: count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)),
+        import_running: state.import_running.load(Ordering::Acquire),
+        import_log: read_import_log(),
         message,
         error,
     };
@@ -962,45 +1009,194 @@ async fn record_build_success(db: &SqlitePool, step: &str, progress_pct: i64, is
     let _ = record_build_step(db, "success", "full", step, progress_pct, iso_path, "").await;
 }
 
-async fn run_import() -> impl IntoResponse {
+async fn run_import(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(guard) = acquire_import_guard(&state) else {
+        return Redirect::to("/import?error=import_already_running").into_response();
+    };
     if !FsPath::new(DATA_BIN_PATH).exists() {
         return Redirect::to("/import?error=missing_databin").into_response();
     }
 
-    let result =
-        tokio::task::spawn_blocking(|| extract_lz77_scripts_to_dir(DATA_BIN_PATH, SCRIPTS_OUT_DIR))
-            .await;
+    reset_import_log();
+    append_import_log("Extraccion LZ77 iniciada");
+    println!("[import] Extraccion LZ77 iniciada");
+    tokio::spawn(async move {
+        let _guard = guard;
+        append_import_log(&format!("Leyendo {DATA_BIN_PATH}"));
+        let result = tokio::task::spawn_blocking(|| {
+            extract_lz77_scripts_to_dir(DATA_BIN_PATH, SCRIPTS_OUT_DIR)
+        })
+        .await;
+        match result {
+            Ok(Ok(count)) => {
+                append_import_log(&format!("Extraccion completada: {count} scripts escritos"));
+                println!("[import] Extraccion completada: {count} scripts escritos");
+            }
+            Ok(Err(err)) => {
+                append_import_log(&format!("ERROR extrayendo scripts: {err}"));
+                eprintln!("[import] ERROR extrayendo scripts: {err}");
+            }
+            Err(err) => {
+                append_import_log(&format!("ERROR de tarea de extraccion: {err}"));
+                eprintln!("[import] ERROR de tarea de extraccion: {err}");
+            }
+        }
+    });
 
-    match result {
-        Ok(Ok(count)) => Redirect::to(&format!("/import?status=ok&count={count}")).into_response(),
-        Ok(Err(err)) => {
-            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
-        }
-        Err(err) => {
-            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
-        }
-    }
+    Redirect::to("/import?started=extract").into_response()
 }
 
 async fn import_db(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(guard) = acquire_import_guard(&state) else {
+        return Redirect::to("/import?error=import_already_running").into_response();
+    };
     if !FsPath::new(SCRIPTS_OUT_DIR).exists() {
         return Redirect::to("/import?error=missing_dec_scripts").into_response();
     }
 
-    match import_extracted_texts(&state.db, SCRIPTS_OUT_DIR, ORIGINAL_ELF_PATH).await {
-        Ok(report) => Redirect::to(&format!(
-            "/import?status=db&scripts={}&texts={}&preserved={}",
-            report.scripts_imported, report.texts_imported, report.translations_preserved
-        ))
-        .into_response(),
-        Err(err) => {
-            Redirect::to(&format!("/import?error={}", url_escape(&err.to_string()))).into_response()
+    reset_import_log();
+    append_import_log("Importacion a SQLite iniciada");
+    println!("[import] Importacion a SQLite iniciada");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        append_import_log(&format!("Leyendo scripts desde {SCRIPTS_OUT_DIR}"));
+        match import_extracted_texts_with_progress(
+            &db,
+            SCRIPTS_OUT_DIR,
+            ORIGINAL_ELF_PATH,
+            |message| {
+                append_import_log(message);
+                println!("[import] {message}");
+            },
+        )
+        .await
+        {
+            Ok(report) => {
+                append_import_log(&format!(
+                    "SQLite importado: {} scripts, {} textos, {} traducciones preservadas, {} textos ELF",
+                    report.scripts_imported,
+                    report.texts_imported,
+                    report.translations_preserved,
+                    report.elf_texts_imported
+                ));
+                println!(
+                    "[import] SQLite importado: {} scripts, {} textos",
+                    report.scripts_imported, report.texts_imported
+                );
+            }
+            Err(err) => {
+                append_import_log(&format!("ERROR importando a SQLite: {err}"));
+                eprintln!("[import] ERROR importando a SQLite: {err}");
+            }
+        }
+    });
+
+    Redirect::to("/import?started=db").into_response()
+}
+
+async fn import_translations_db_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let Ok(guard) = acquire_import_guard(&state) else {
+        return Redirect::to("/import?error=import_already_running").into_response();
+    };
+
+    reset_import_log();
+    append_import_log("Carga de DB traducida iniciada");
+    let mut saved = false;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() != Some("database") {
+            continue;
+        }
+        let file_name = field.file_name().unwrap_or("database").to_owned();
+        match field.bytes().await {
+            Ok(bytes) if !bytes.is_empty() => {
+                if let Some(parent) = FsPath::new(IMPORT_DB_UPLOAD_PATH).parent() {
+                    if let Err(err) = tokio::fs::create_dir_all(parent).await {
+                        return Redirect::to(&format!(
+                            "/import?error={}",
+                            url_escape(&format!("failed to create upload dir: {err}"))
+                        ))
+                        .into_response();
+                    }
+                }
+                if let Err(err) = tokio::fs::write(IMPORT_DB_UPLOAD_PATH, bytes).await {
+                    return Redirect::to(&format!(
+                        "/import?error={}",
+                        url_escape(&format!("failed to save uploaded database: {err}"))
+                    ))
+                    .into_response();
+                }
+                append_import_log(&format!("DB subida: {file_name}"));
+                saved = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                return Redirect::to(&format!(
+                    "/import?error={}",
+                    url_escape(&format!("failed to read uploaded database: {err}"))
+                ))
+                .into_response();
+            }
         }
     }
+
+    if !saved {
+        return Redirect::to("/import?error=missing_database_upload").into_response();
+    }
+
+    println!("[import] Fusion de DB traducida iniciada");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        append_import_log(
+            "Fusionando traducciones por source + script_id + offset + texto original",
+        );
+        match import_translations_from_db(&db, IMPORT_DB_UPLOAD_PATH).await {
+            Ok(report) => {
+                append_import_log(&format!(
+                    "Fusion completada: {} importadas, {} sin coincidencia, {} sin cambios, {} filas fuente",
+                    report.imported,
+                    report.skipped_missing,
+                    report.skipped_unchanged,
+                    report.source_rows
+                ));
+                println!(
+                    "[import] Fusion completada: {} traducciones importadas",
+                    report.imported
+                );
+            }
+            Err(err) => {
+                append_import_log(&format!("ERROR fusionando DB traducida: {err}"));
+                eprintln!("[import] ERROR fusionando DB traducida: {err}");
+            }
+        }
+    });
+
+    Redirect::to("/import?started=translations").into_response()
+}
+
+fn acquire_import_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
+    state
+        .import_running
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .map(|_| BuildRunGuard(state.import_running.clone()))
+        .map_err(|_| ())
 }
 
 fn read_build_log() -> String {
-    let Ok(contents) = std::fs::read_to_string(BUILD_LOG_PATH) else {
+    read_log(BUILD_LOG_PATH)
+}
+
+fn read_import_log() -> String {
+    read_log(IMPORT_LOG_PATH)
+}
+
+fn read_log(path: &str) -> String {
+    let Ok(contents) = std::fs::read_to_string(path) else {
         return String::new();
     };
     let lines = contents.lines().collect::<Vec<_>>();
@@ -1009,22 +1205,34 @@ fn read_build_log() -> String {
 }
 
 fn reset_build_log() {
-    if let Some(parent) = FsPath::new(BUILD_LOG_PATH).parent() {
+    reset_log(BUILD_LOG_PATH);
+}
+
+fn reset_import_log() {
+    reset_log(IMPORT_LOG_PATH);
+}
+
+fn reset_log(path: &str) {
+    if let Some(parent) = FsPath::new(path).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(BUILD_LOG_PATH, "");
+    let _ = std::fs::write(path, "");
 }
 
 fn append_build_log(message: &str) {
-    if let Some(parent) = FsPath::new(BUILD_LOG_PATH).parent() {
+    append_log(BUILD_LOG_PATH, message);
+}
+
+fn append_import_log(message: &str) {
+    append_log(IMPORT_LOG_PATH, message);
+}
+
+fn append_log(path: &str, message: &str) {
+    if let Some(parent) = FsPath::new(path).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let timestamp = build_log_timestamp();
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(BUILD_LOG_PATH)
-    {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "[{timestamp}] {message}");
     }
 }
@@ -1038,6 +1246,10 @@ fn build_log_timestamp() -> String {
 
 async fn build_log() -> impl IntoResponse {
     read_build_log()
+}
+
+async fn import_log() -> impl IntoResponse {
+    read_import_log()
 }
 
 fn count_dec_files(path: &FsPath) -> usize {
