@@ -7,17 +7,20 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto max-w-6xl px-6 py-10">
-        <nav class="mb-8 flex items-center justify-between">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">FTS5</span>
+            <div class="flex flex-wrap gap-2">
+                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Importar</a>
+                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Build</a>
+            </div>
         </nav>
 
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Busqueda</p>
             <h1 class="mt-2 text-4xl font-black tracking-tight">Buscar textos</h1>
             <form class="mt-6 flex flex-col gap-3 md:flex-row" method="get" action="/search">
-                <input name="q" value="{{ query }}" placeholder="original o traduccion..." class="min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <input name="q" value="{{ query }}" placeholder="original, traduccion, offset..." autofocus class="min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
                 <button class="rounded-2xl bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Buscar</button>
             </form>
             {% if error.len() > 0 %}
@@ -28,7 +31,8 @@
         <section class="space-y-4">
             {% if query.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
-                Escribe una consulta para buscar en originales y traducciones.
+                <p class="text-lg font-bold text-slate-200">Busca por texto original o traduccion.</p>
+                <p class="mt-2">Consejo: puedes abrir un resultado y volver directamente a la fila exacta.</p>
             </div>
             {% else if results.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">

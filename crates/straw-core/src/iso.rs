@@ -179,4 +179,28 @@ mod tests {
         let out_data = fs::read(&iso).unwrap();
         assert_eq!(&out_data[48..48 + translated.len()], translated);
     }
+
+    #[test]
+    fn rejects_empty_signature() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.bin");
+        fs::write(&file, b"data").unwrap();
+
+        let err = find_signature_offset(&file, b"").unwrap_err();
+        assert!(err.to_string().contains("signature cannot be empty"));
+    }
+
+    #[test]
+    fn build_iso_errors_when_data_signature_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("base.iso");
+        let patched = temp.path().join("Data_patched.bin");
+        let out = temp.path().join("out.iso");
+        fs::write(&base, b"no data signature here").unwrap();
+        fs::write(&patched, b"PATCHED").unwrap();
+
+        let err = build_iso_with_patched_data(&base, &patched, &out).unwrap_err();
+        assert!(err.to_string().contains("Data.bin signature not found"));
+        assert_eq!(fs::read(&out).unwrap(), b"no data signature here");
+    }
 }

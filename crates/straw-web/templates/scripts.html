@@ -7,13 +7,14 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto max-w-7xl px-6 py-10">
-        <nav class="mb-8 flex items-center justify-between">
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <a href="/" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">StrawTraduccion</a>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
                 <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Importar</a>
                 <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Build</a>
                 <a href="/search" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Buscar</a>
+                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Texturas</a>
                 <a href="/settings" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Config</a>
             </div>
         </nav>
@@ -24,7 +25,7 @@
                     <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Base de datos</p>
                     <h1 class="mt-2 text-4xl font-black tracking-tight">Scripts</h1>
                 </div>
-                <div class="grid grid-cols-3 gap-3 text-center">
+                <div class="grid grid-cols-3 gap-3 text-center max-sm:w-full">
                     <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
                         <div class="text-2xl font-black text-white">{{ scripts_count }}</div>
                         <div class="text-xs text-slate-500">scripts</div>
@@ -44,10 +45,13 @@
         <section class="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70">
             {% if scripts_count == 0 %}
             <div class="p-10 text-center text-slate-400">
-                No hay scripts importados todavia.
+                <p class="text-lg font-bold text-slate-200">No hay scripts importados todavia.</p>
+                <p class="mt-2">Primero extrae los scripts e importa textos a SQLite.</p>
+                <a href="/import" class="mt-5 inline-flex rounded-full bg-pink-500 px-5 py-3 text-sm font-bold text-white hover:bg-pink-400">Ir a importar</a>
             </div>
             {% else %}
-            <table class="w-full text-sm">
+            <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px] text-sm">
                 <thead class="bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
                     <tr>
                         <th class="px-5 py-3">ID</th>
@@ -60,7 +64,7 @@
                 </thead>
                 <tbody class="divide-y divide-slate-800">
                     {% for script in scripts %}
-                    <tr class="transition hover:bg-slate-800/50" onclick="location.href='/scripts/{{ script.id }}'">
+                    <tr class="cursor-pointer transition hover:bg-slate-800/50" onclick="location.href='/scripts/{{ script.id }}'" title="Abrir script {{ script.id }}">
                         <td class="px-5 py-3 font-mono text-pink-200">{{ script.id }}</td>
                         <td class="px-5 py-3 text-slate-300">{{ script.script_type }}</td>
                         <td class="px-5 py-3 font-mono text-slate-400">{{ script.variant }}</td>
@@ -77,6 +81,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </div>
             {% endif %}
         </section>
     </main>

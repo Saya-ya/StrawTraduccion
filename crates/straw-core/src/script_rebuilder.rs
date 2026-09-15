@@ -454,6 +454,74 @@ mod tests {
         assert_eq!(decode_utf16le(&rebuilt[0..6]).unwrap(), "aИo");
     }
 
+    #[test]
+    fn consumes_trailing_punctuation_when_translation_keeps_punctuation() {
+        let data = dec_with_text("あい。", 8);
+        let row = TranslationRow {
+            source: "SCRIPT".to_owned(),
+            file_id: 1,
+            offset: 0,
+            original_text: "あい".to_owned(),
+            translated_text: "Hola.".to_owned(),
+            csv_line: 2,
+        };
+
+        let (rebuilt, report) = rebuild_local_slack(&data, &[row], true, None).unwrap();
+        assert_eq!(decode_utf16le(&rebuilt[0..10]).unwrap(), "Hola.");
+        assert_eq!(report.segments[0].rows[0].consumed_chars, 1);
+    }
+
+    #[test]
+    fn keeps_trailing_punctuation_when_translation_has_no_punctuation() {
+        let data = dec_with_text("あい。", 8);
+        let row = TranslationRow {
+            source: "SCRIPT".to_owned(),
+            file_id: 1,
+            offset: 0,
+            original_text: "あい".to_owned(),
+            translated_text: "Hola".to_owned(),
+            csv_line: 2,
+        };
+
+        let (rebuilt, report) = rebuild_local_slack(&data, &[row], true, None).unwrap();
+        assert_eq!(decode_utf16le(&rebuilt[0..10]).unwrap(), "Hola。");
+        assert_eq!(report.segments[0].rows[0].consumed_chars, 0);
+    }
+
+    #[test]
+    fn rejects_overlapping_replacements() {
+        let data = dec_with_text("abcdef", 8);
+        let rows = [
+            TranslationRow {
+                source: "SCRIPT".to_owned(),
+                file_id: 1,
+                offset: 0,
+                original_text: "abc".to_owned(),
+                translated_text: "ABC".to_owned(),
+                csv_line: 2,
+            },
+            TranslationRow {
+                source: "SCRIPT".to_owned(),
+                file_id: 1,
+                offset: 4,
+                original_text: "cde".to_owned(),
+                translated_text: "CDE".to_owned(),
+                csv_line: 3,
+            },
+        ];
+
+        let err = rebuild_local_slack(&data, &rows, false, None).unwrap_err();
+        assert!(err.to_string().contains("overlapping replacements"));
+    }
+
+    #[test]
+    fn rejects_unaligned_offsets() {
+        let data = dec_with_text("abc", 8);
+
+        let err = find_segment_containing(&data, 1, "abc").unwrap_err();
+        assert!(err.to_string().contains("invalid UTF-16 offset"));
+    }
+
     fn dec_with_text(text: &str, slack: usize) -> Vec<u8> {
         let mut data = encode_utf16le(text);
         data.extend([0, 0]);

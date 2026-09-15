@@ -1127,6 +1127,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_setting_json_returns_default() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('broken', '{')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let value: serde_json::Value = get_setting(&pool, "broken", json!({ "fallback": true }))
+            .await
+            .unwrap();
+        assert_eq!(value, json!({ "fallback": true }));
+    }
+
+    #[tokio::test]
     async fn fts_triggers_track_text_entries() {
         let pool = connect("sqlite::memory:").await.unwrap();
         init_db(&pool).await.unwrap();
@@ -1315,6 +1331,27 @@ mod tests {
         assert_eq!(results[0].script_id, 1);
         assert_eq!(results[0].page, 2);
         assert_eq!(results[0].translated_text, "panic traducido");
+    }
+
+    #[tokio::test]
+    async fn empty_search_returns_no_results() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, byte_offset, original_text, translated_text) \
+             VALUES (1, 16, 'strawberry original', 'panic traducido')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = search_text_entries(&pool, "   ", 20).await.unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

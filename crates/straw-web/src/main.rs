@@ -65,7 +65,6 @@ impl Drop for BuildRunGuard {
 #[template(path = "index.html")]
 struct IndexTemplate<'a> {
     title: &'a str,
-    status: &'a str,
     db_path: &'a str,
     ui_lang: &'a str,
     target_lang: &'a str,
@@ -281,7 +280,6 @@ async fn index(State(state): State<AppState>) -> Html<String> {
 
     let template = IndexTemplate {
         title: "StrawTraduccion",
-        status: "Rust web server connected to SQLite",
         db_path: DEFAULT_DB_PATH,
         ui_lang: &ui_lang,
         target_lang: &target_lang,

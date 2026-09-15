@@ -1,4 +1,4 @@
-<article id="entry-{{ text.id }}" class="rounded-2xl border border-pink-400/40 bg-slate-900 p-5 shadow-lg shadow-pink-950/20">
+<article id="entry-{{ text.id }}" class="scroll-mt-8 rounded-2xl border border-pink-400/40 bg-slate-900 p-4 shadow-lg shadow-pink-950/20 sm:p-5">
     <form id="edit-form-{{ text.id }}" hx-put="/api/texts/{{ text.id }}" hx-target="#entry-{{ text.id }}" hx-swap="outerHTML" class="space-y-4">
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span class="font-mono text-pink-200">#{{ text.id }}</span>
@@ -18,13 +18,13 @@
                     <div id="counter-{{ text.id }}" class="rounded-full bg-slate-800 px-3 py-1 font-mono text-xs text-slate-300">0 / {{ text.segment_capacity }} bytes</div>
                 </div>
             </div>
-            <textarea id="translated-{{ text.id }}" name="translated_text" rows="5" data-counter="counter-{{ text.id }}" data-capacity="{{ text.segment_capacity }}" data-source="{{ text.source }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400">{{ text.translated_text }}</textarea>
+            <textarea id="translated-{{ text.id }}" name="translated_text" rows="6" data-counter="counter-{{ text.id }}" data-capacity="{{ text.segment_capacity }}" data-source="{{ text.source }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400" placeholder="Escribe la traduccion aqui...">{{ text.translated_text }}</textarea>
             <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
                 <div id="meter-{{ text.id }}" class="h-full w-0 bg-emerald-400 transition-all"></div>
             </div>
             <p class="mt-1 text-xs text-slate-500">Scripts: UTF-16LE + terminador. ELF: estimacion Shift-JIS/ASCII. Ctrl+Enter guarda.</p>
         </div>
-        <div class="flex flex-wrap gap-3">
+        <div class="sticky bottom-3 flex flex-wrap gap-3 rounded-2xl border border-slate-800 bg-slate-950/90 p-3 backdrop-blur">
             <button type="submit" class="rounded-full bg-pink-500 px-5 py-2 text-sm font-bold text-white hover:bg-pink-400">Guardar</button>
             <button type="button" id="copy-original-{{ text.id }}" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800">Copiar original</button>
             <button type="button" id="clear-translation-{{ text.id }}" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800">Limpiar</button>
@@ -70,6 +70,9 @@
                     event.preventDefault();
                     form.requestSubmit();
                 }
+            });
+            form.addEventListener('submit', function() {
+                form.querySelectorAll('button').forEach((button) => button.disabled = true);
             });
             if (copyOriginal && original) {
                 copyOriginal.addEventListener('click', function() {

@@ -135,4 +135,29 @@ mod tests {
         let patched = fs::read(&translated).unwrap();
         assert_eq!(&patched[6..12], b"Bye   ");
     }
+
+    #[test]
+    fn reports_skipped_elf_rows_without_modifying_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let original = temp.path().join("SLPS_256.11");
+        let translated = temp.path().join("SLPS_256.11_translated");
+        let csv = temp.path().join("dialogo.csv");
+
+        fs::write(&original, b"HEADERHiTAIL").unwrap();
+        fs::write(
+            &csv,
+            "source,file_id,offset,original_text,translated_text\r\n\
+             ELF,ELF,not_hex,Hi,Ok\r\n\
+             ELF,ELF,0x6,Hi,Too long\r\n\
+             SCRIPT,1,0x0,a,b\r\n",
+        )
+        .unwrap();
+
+        let report = patch_translated_elf(&original, &translated, &csv, None).unwrap();
+        assert_eq!(report.rows_processed, 2);
+        assert_eq!(report.rows_patched, 0);
+        assert_eq!(report.skipped_other, 1);
+        assert_eq!(report.skipped_too_large, 1);
+        assert_eq!(fs::read(&translated).unwrap(), b"HEADERHiTAIL");
+    }
 }

@@ -8,10 +8,14 @@
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto max-w-6xl px-6 py-10">
-        <nav class="mb-8 flex items-center justify-between">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Script #{{ detail.script.id }}</span>
+            <div class="flex flex-wrap gap-2">
+                <a href="/search" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Buscar</a>
+                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Build</a>
+                <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Script #{{ detail.script.id }}</span>
+            </div>
         </nav>
 
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
@@ -38,6 +42,10 @@
             </div>
         </section>
 
+        <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">
+            Haz click en una fila para editar. Usa <span class="font-mono text-pink-200">Ctrl+Enter</span> para guardar rapido.
+        </section>
+
         <section class="space-y-4">
             {% if detail.texts.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
@@ -50,7 +58,7 @@
             {% endif %}
         </section>
 
-        <nav class="mt-8 flex items-center justify-between text-sm">
+        <nav class="mt-8 flex items-center justify-between gap-3 text-sm">
             <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}">← Anterior</a>
             <span class="text-slate-500">Página {{ detail.page }} de {{ detail.total_pages }}</span>
             <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}">Siguiente →</a>

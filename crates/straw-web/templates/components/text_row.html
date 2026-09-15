@@ -1,5 +1,5 @@
 <article id="entry-{{ text.id }}"
-         class="scroll-mt-8 cursor-pointer rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition target:border-pink-400 target:ring-2 target:ring-pink-400/30 hover:border-pink-400/40"
+         class="scroll-mt-8 cursor-pointer rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/30 transition target:border-pink-400 target:ring-2 target:ring-pink-400/30 hover:border-pink-400/40 sm:p-5"
          hx-get="/api/texts/{{ text.id }}/edit"
          hx-target="#entry-{{ text.id }}"
          hx-swap="outerHTML">
@@ -7,7 +7,7 @@
         <span class="font-mono text-pink-200">#{{ text.id }}</span>
         <span class="font-mono">{{ text.byte_offset_hex }}</span>
         <span>[{{ text.section_id }}:{{ text.section_order }}]</span>
-        <span>{{ text.fit_status }}</span>
+        <span class="rounded-full bg-slate-800 px-2 py-0.5">{{ text.fit_status }}</span>
         {% if text.segment_capacity > 0 %}<span class="rounded-full bg-slate-800 px-2 py-0.5 font-mono">lim {{ text.segment_capacity }}b</span>{% endif %}
         {% if text.needs_shift %}<span class="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">needs_shift</span>{% endif %}
         {% if text.is_translated %}<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">traducido</span>{% endif %}
@@ -18,7 +18,7 @@
             <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ text.original_text }}</p>
         </div>
         <div>
-            <div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Traduccion</div>
+            <div class="mb-1 flex items-center justify-between gap-2 text-xs font-bold uppercase tracking-wider text-slate-500"><span>Traduccion</span><span class="normal-case tracking-normal text-pink-300">click para editar</span></div>
             {% if text.translated_text.len() == 0 %}
             <p class="rounded-xl border border-dashed border-slate-700 p-4 text-sm italic text-slate-600">Sin traducir</p>
             {% else %}

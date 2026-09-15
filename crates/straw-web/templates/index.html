@@ -7,11 +7,22 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto flex min-h-screen max-w-5xl items-center px-6 py-12">
-        <section class="w-full rounded-3xl border border-pink-400/20 bg-slate-900/80 p-8 shadow-2xl shadow-pink-950/30">
+    <main class="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-8 sm:px-6 sm:py-12">
+        <section class="w-full overflow-hidden rounded-3xl border border-pink-400/20 bg-slate-900/80 shadow-2xl shadow-pink-950/30">
+            <div class="border-b border-slate-800 bg-slate-950/50 px-5 py-4 sm:px-8">
+                <nav class="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                    <a href="/import" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Importar</a>
+                    <a href="/scripts" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Scripts</a>
+                    <a href="/search" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Buscar</a>
+                    <a href="/textures" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Texturas</a>
+                    <a href="/build" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Build</a>
+                    <a href="/settings" class="rounded-full border border-slate-700 px-3 py-2 hover:border-pink-400 hover:text-pink-200">Config</a>
+                </nav>
+            </div>
+            <div class="p-5 sm:p-8">
             <p class="mb-3 text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Strawberry Panic PS2</p>
             <h1 class="text-4xl font-black tracking-tight text-white md:text-6xl">{{ title }}</h1>
-            <p class="mt-5 max-w-2xl text-lg text-slate-300">{{ status }}</p>
+            <p class="mt-5 max-w-2xl text-lg text-slate-300">Editor local para importar textos, traducir, revisar texturas y generar la ISO parcheada desde el navegador.</p>
             <dl class="mt-6 grid gap-3 rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-sm md:grid-cols-3">
                 <div>
                     <dt class="text-slate-500">DB</dt>
@@ -28,33 +39,27 @@
             </dl>
             <div class="mt-8 grid gap-4 md:grid-cols-3">
                 <div class="rounded-2xl border border-slate-700 bg-slate-800/70 p-5">
-                    <h2 class="font-bold text-pink-200">Core</h2>
-                    <p class="mt-2 text-sm text-slate-400">Glyph maps and fit checker are moving to Rust.</p>
+                    <div class="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-pink-500 text-sm font-black text-white">1</div>
+                    <h2 class="font-bold text-pink-200">Importa</h2>
+                    <p class="mt-2 text-sm text-slate-400">Extrae scripts LZ77 y carga textos/ELF en SQLite.</p>
                 </div>
                 <div class="rounded-2xl border border-slate-700 bg-slate-800/70 p-5">
-                    <h2 class="font-bold text-pink-200">Web</h2>
-                    <p class="mt-2 text-sm text-slate-400">Axum and Askama will replace FastAPI and Jinja.</p>
+                    <div class="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-pink-500 text-sm font-black text-white">2</div>
+                    <h2 class="font-bold text-pink-200">Traduce</h2>
+                    <p class="mt-2 text-sm text-slate-400">Edita por script o busca frases concretas con FTS.</p>
                 </div>
                 <div class="rounded-2xl border border-slate-700 bg-slate-800/70 p-5">
-                    <h2 class="font-bold text-pink-200">Build</h2>
-                    <p class="mt-2 text-sm text-slate-400">The final flow will stay fully driven from the browser.</p>
+                    <div class="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-pink-500 text-sm font-black text-white">3</div>
+                    <h2 class="font-bold text-pink-200">Construye</h2>
+                    <p class="mt-2 text-sm text-slate-400">Genera Data parcheado, ISO final y logs de build.</p>
                 </div>
             </div>
-            <a href="/scripts" class="mt-8 inline-flex rounded-full bg-pink-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-pink-950/40 transition hover:bg-pink-400">
-                Abrir scripts
-            </a>
-            <a href="/search" class="mt-8 ml-3 inline-flex rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">
-                Buscar textos
-            </a>
-            <a href="/import" class="mt-8 ml-3 inline-flex rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">
-                Importar
-            </a>
-            <a href="/build" class="mt-8 ml-3 inline-flex rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">
-                Build
-            </a>
-            <a href="/settings" class="mt-8 ml-3 inline-flex rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">
-                Configuracion
-            </a>
+            <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <a href="/import" class="inline-flex justify-center rounded-full bg-pink-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-pink-950/40 transition hover:bg-pink-400">Empezar importando</a>
+                <a href="/scripts" class="inline-flex justify-center rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">Abrir scripts</a>
+                <a href="/build" class="inline-flex justify-center rounded-full border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-800">Ir a build</a>
+            </div>
+            </div>
         </section>
     </main>
 </body>
