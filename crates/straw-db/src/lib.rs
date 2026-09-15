@@ -545,6 +545,16 @@ pub async fn get_script_detail(
     page: i64,
     limit: i64,
 ) -> Result<Option<ScriptDetail>> {
+    get_script_detail_filtered(pool, script_id, page, limit, "all").await
+}
+
+pub async fn get_script_detail_filtered(
+    pool: &SqlitePool,
+    script_id: i64,
+    page: i64,
+    limit: i64,
+    status_filter: &str,
+) -> Result<Option<ScriptDetail>> {
     let Some(script) = get_script(pool, script_id).await? else {
         return Ok(None);
     };
@@ -552,29 +562,34 @@ pub async fn get_script_detail(
     let page = page.max(1);
     let limit = limit.clamp(1, 200);
     let offset = (page - 1) * limit;
+    let status_condition = status_filter_condition(status_filter);
 
-    let total: i64 = sqlx::query("SELECT COUNT(*) AS count FROM text_entries WHERE script_id = ?")
+    let total_sql = format!(
+        "SELECT COUNT(*) AS count FROM text_entries WHERE script_id = ? {status_condition}"
+    );
+    let total: i64 = sqlx::query(&total_sql)
         .bind(script_id)
         .fetch_one(pool)
         .await?
         .try_get("count")?;
 
-    let rows = sqlx::query(
+    let rows_sql = format!(
         r#"
         SELECT id, script_id, source, byte_offset, section_id, section_order,
                original_text, translated_text, is_translated, needs_shift,
                fit_status, segment_capacity
         FROM text_entries
-        WHERE script_id = ?
+        WHERE script_id = ? {status_condition}
         ORDER BY section_id, section_order
         LIMIT ? OFFSET ?
-        "#,
-    )
-    .bind(script_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&rows_sql)
+        .bind(script_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let texts = rows
         .into_iter()
@@ -673,13 +688,29 @@ pub async fn search_text_entries(
     query: &str,
     limit: i64,
 ) -> Result<Vec<SearchResult>> {
+    search_text_entries_filtered(pool, query, limit, None, "all").await
+}
+
+pub async fn search_text_entries_filtered(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+    script_id: Option<i64>,
+    status_filter: &str,
+) -> Result<Vec<SearchResult>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
     }
     let limit = limit.clamp(1, 200);
+    let status_condition = status_filter_condition(status_filter);
+    let script_condition = if script_id.is_some() {
+        " AND te.script_id = ?"
+    } else {
+        ""
+    };
 
-    let rows = sqlx::query(
+    let sql = format!(
         r#"
         SELECT te.id, te.script_id, te.byte_offset, te.section_id, te.section_order,
                te.original_text, te.translated_text, te.is_translated, te.needs_shift,
@@ -695,15 +726,16 @@ pub async fn search_text_entries(
                ) AS position_in_script
         FROM text_entries_fts fts
         JOIN text_entries te ON te.id = fts.rowid
-        WHERE text_entries_fts MATCH ?
+        WHERE text_entries_fts MATCH ? {script_condition} {status_condition}
         ORDER BY te.script_id, te.section_id, te.section_order
         LIMIT ?
-        "#,
-    )
-    .bind(query)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let mut query_builder = sqlx::query(&sql).bind(query);
+    if let Some(script_id) = script_id {
+        query_builder = query_builder.bind(script_id);
+    }
+    let rows = query_builder.bind(limit).fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -728,6 +760,16 @@ pub async fn search_text_entries(
             })
         })
         .collect()
+}
+
+fn status_filter_condition(status_filter: &str) -> &'static str {
+    match status_filter {
+        "translated" => " AND is_translated = 1 AND needs_shift = 0 AND fit_status != 'tight'",
+        "warning" => " AND is_translated = 1 AND needs_shift = 0 AND fit_status = 'tight'",
+        "needs_shift" => " AND needs_shift = 1",
+        "untranslated" => " AND is_translated = 0",
+        _ => "",
+    }
 }
 
 pub async fn translation_stats(pool: &SqlitePool) -> Result<TranslationStats> {
@@ -1569,6 +1611,92 @@ mod tests {
 
         let results = search_text_entries(&pool, "   ", 20).await.unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn script_detail_filters_by_translation_status() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id, total_texts, translated_texts) VALUES (1, 4, 3)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, section_id, section_order, original_text, translated_text, is_translated, needs_shift, fit_status) \
+             VALUES (1, 'SCRIPT', 16, 0, 0, 'clean original', 'clean translated', 1, 0, 'ok'), \
+                    (1, 'SCRIPT', 18, 0, 1, 'warning original', 'warning translated', 1, 0, 'tight'), \
+                    (1, 'SCRIPT', 20, 0, 2, 'shift original', 'shift translated', 1, 1, 'needs_shift'), \
+                    (1, 'SCRIPT', 22, 0, 3, 'pending original', '', 0, 0, 'unchecked')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let translated = get_script_detail_filtered(&pool, 1, 1, 50, "translated")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(translated.total, 1);
+        assert_eq!(translated.texts[0].original_text, "clean original");
+
+        let warning = get_script_detail_filtered(&pool, 1, 1, 50, "warning")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(warning.total, 1);
+        assert_eq!(warning.texts[0].fit_status, "tight");
+
+        let needs_shift = get_script_detail_filtered(&pool, 1, 1, 50, "needs_shift")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(needs_shift.total, 1);
+        assert!(needs_shift.texts[0].needs_shift);
+
+        let untranslated = get_script_detail_filtered(&pool, 1, 1, 50, "untranslated")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(untranslated.total, 1);
+        assert!(!untranslated.texts[0].is_translated);
+    }
+
+    #[tokio::test]
+    async fn search_filters_by_script_and_status() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO scripts (id) VALUES (1), (2)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, section_id, section_order, original_text, translated_text, is_translated, needs_shift, fit_status) \
+             VALUES (1, 'SCRIPT', 16, 0, 0, 'panic clean', 'panic limpio', 1, 0, 'ok'), \
+                    (1, 'SCRIPT', 18, 0, 1, 'panic warning', 'panic justo', 1, 0, 'tight'), \
+                    (2, 'SCRIPT', 20, 0, 0, 'panic clean other', 'panic otro', 1, 0, 'ok')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let all = search_text_entries_filtered(&pool, "panic", 20, None, "all")
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        let script_one = search_text_entries_filtered(&pool, "panic", 20, Some(1), "all")
+            .await
+            .unwrap();
+        assert_eq!(script_one.len(), 2);
+        assert!(script_one.iter().all(|result| result.script_id == 1));
+
+        let warning = search_text_entries_filtered(&pool, "panic", 20, Some(1), "warning")
+            .await
+            .unwrap();
+        assert_eq!(warning.len(), 1);
+        assert_eq!(warning[0].original_text, "panic warning");
     }
 
     #[test]

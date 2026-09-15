@@ -7,25 +7,74 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto max-w-7xl px-6 py-10">
-        <nav class="mb-8 flex items-center justify-between">
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <a href="/build" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Build</a>
-            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-slate-400 hover:text-pink-200">Scripts</a>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/scripts" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Scripts</a>
+                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Importar</a>
+            </div>
         </nav>
 
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">TIM2</p>
-            <h1 class="mt-2 text-4xl font-black tracking-tight">Inventario de texturas</h1>
-            <p class="mt-3 max-w-3xl text-slate-400">Muestra las primeras texturas ordenadas por score de UI. Genera o actualiza el inventario desde Build → Inventario TIM2.</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Imagenes y texturas</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">Extrae y analiza texturas TIM2, genera PNGs, aplica parches desde manifest e inyecta streams en Data_patched.bin desde esta pagina.</p>
             <div class="mt-5 flex flex-wrap gap-3 text-sm">
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">Registros visibles: {{ records.len() }}</span>
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">PNGs: {{ png_count }}</span>
+                {% if texture_running %}<span class="rounded-full border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 font-bold text-yellow-100">Tarea en curso</span>{% endif %}
             </div>
+        </section>
+
+        <section class="mb-6 grid gap-3 md:grid-cols-4">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
+                {% if data_bin_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-red-300">Falta</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Inventario</div>
+                {% if inventory_exists %}<div class="mt-2 font-bold text-emerald-300">Existe</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Manifest</div>
+                {% if texture_manifest_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data parcheado</div>
+                {% if patched_data_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+        </section>
+
+        <section class="mb-6 grid gap-4 lg:grid-cols-3">
+            <form method="post" action="/textures/inventory" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                <h2 class="text-xl font-black">1. Extraer y analizar</h2>
+                <p class="mt-2 text-sm text-slate-400">Genera inventario TIM2, JSON/CSV y PNGs en <span class="font-mono text-pink-200">work_texturas/output/all_textures</span>.</p>
+                {% if data_bin_exists && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Generar inventario</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Data.bin requerido{% endif %}</button>{% endif %}
+            </form>
+            <form method="post" action="/textures/patch" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                <h2 class="text-xl font-black">2. Parchear texturas</h2>
+                <p class="mt-2 text-sm text-slate-400">Usa <span class="font-mono text-pink-200">texturas/manifest.json</span> y escribe streams en <span class="font-mono text-pink-200">work_texturas/patched</span>.</p>
+                {% if data_bin_exists && texture_manifest_exists && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear texturas</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Requiere Data y manifest{% endif %}</button>{% endif %}
+            </form>
+            <form method="post" action="/textures/inject" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                <h2 class="text-xl font-black">3. Inyectar en Data</h2>
+                <p class="mt-2 text-sm text-slate-400">Inserta streams parcheados en <span class="font-mono text-pink-200">work/Data_patched.bin</span>.</p>
+                {% if patched_data_exists && patched_streams_exist && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Inyectar texturas</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Requiere Data parcheado y streams{% endif %}</button>{% endif %}
+            </form>
+        </section>
+
+        <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-950 p-5">
+            <div class="mb-3 flex items-center justify-between gap-3">
+                <div><h2 class="font-black text-white">Log de imagenes</h2><p class="mt-1 text-xs text-slate-500">Archivo: <span class="font-mono text-pink-200">work_texturas/texture.log</span></p></div>
+                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:text-pink-200">Actualizar</a>
+            </div>
+            <pre id="texture-log" class="max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{% if texture_log.len() > 0 %}{{ texture_log }}{% else %}Todavia no hay logs de imagenes.{% endif %}</pre>
         </section>
 
         {% if !inventory_exists %}
         <section class="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-100">
-            No hay inventario TIM2 todavía. Ejecuta “Generar inventario” en <a class="font-bold underline" href="/build">/build</a>.
+            No hay inventario TIM2 todavía. Ejecuta “Generar inventario” arriba.
         </section>
         {% else %}
         <section class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -54,5 +103,30 @@
         </section>
         {% endif %}
     </main>
+    <script>
+        const textureLog = document.getElementById('texture-log');
+        async function refreshTextureLog() {
+            if (!textureLog) return;
+            try {
+                const response = await fetch('/textures/log', { cache: 'no-store' });
+                const text = await response.text();
+                if (text.trim().length > 0 && textureLog.textContent !== text) {
+                    textureLog.textContent = text;
+                    textureLog.scrollTop = textureLog.scrollHeight;
+                }
+            } catch (_) {}
+        }
+        setInterval(refreshTextureLog, 1500);
+        refreshTextureLog();
+
+        document.querySelectorAll('form.texture-action').forEach((form) => {
+            form.addEventListener('submit', () => {
+                form.querySelectorAll('button').forEach((button) => {
+                    button.disabled = true;
+                    button.textContent = 'Ejecutando...';
+                });
+            });
+        });
+    </script>
 </body>
 </html>

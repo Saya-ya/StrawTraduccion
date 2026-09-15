@@ -46,10 +46,31 @@
             Haz click en una fila para editar. Usa <span class="font-mono text-pink-200">Ctrl+Enter</span> para guardar rapido.
         </section>
 
+        <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+            <div class="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="font-black text-white">Filtros del script</h2>
+                    <p class="mt-1 text-sm text-slate-500">Filtra esta lista sin salir del script.</p>
+                </div>
+                <form class="flex min-w-0 flex-col gap-2 sm:flex-row" method="get" action="/search">
+                    <input type="hidden" name="script_id" value="{{ detail.script.id }}">
+                    <input name="q" placeholder="buscar dentro del script..." class="min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-pink-400">
+                    <button class="rounded-xl bg-pink-500 px-4 py-2 text-sm font-bold text-white hover:bg-pink-400">Buscar aqui</button>
+                </form>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-bold">
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}" class="rounded-full border px-3 py-2 {% if status_filter == "all" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">Todos</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=untranslated" class="rounded-full border px-3 py-2 {% if status_filter == "untranslated" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">No traducidos</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=translated" class="rounded-full border px-3 py-2 {% if status_filter == "translated" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">Traducidos OK</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=warning" class="rounded-full border px-3 py-2 {% if status_filter == "warning" %}border-yellow-400 bg-yellow-500 text-slate-950{% else %}border-slate-700 text-slate-300 hover:border-yellow-400 hover:text-yellow-200{% endif %}">Warning</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=needs_shift" class="rounded-full border px-3 py-2 {% if status_filter == "needs_shift" %}border-red-400 bg-red-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-red-400 hover:text-red-200{% endif %}">Needs shift</a>
+            </div>
+        </section>
+
         <section class="space-y-4">
             {% if detail.texts.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
-                Este script no tiene textos importados.
+                No hay filas para este filtro.
             </div>
             {% else %}
             {% for text in detail.texts %}
@@ -59,9 +80,9 @@
         </section>
 
         <nav class="mt-8 flex items-center justify-between gap-3 text-sm">
-            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}">← Anterior</a>
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
             <span class="text-slate-500">Página {{ detail.page }} de {{ detail.total_pages }}</span>
-            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}">Siguiente →</a>
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
         </nav>
     </main>
 </body>

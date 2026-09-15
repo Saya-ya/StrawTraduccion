@@ -19,10 +19,19 @@
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Busqueda</p>
             <h1 class="mt-2 text-4xl font-black tracking-tight">Buscar textos</h1>
-            <form class="mt-6 flex flex-col gap-3 md:flex-row" method="get" action="/search">
-                <input name="q" value="{{ query }}" placeholder="original, traduccion, offset..." autofocus class="min-w-0 flex-1 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+            <form class="mt-6 grid gap-3 lg:grid-cols-[1fr_160px_180px_auto]" method="get" action="/search">
+                <input name="q" value="{{ query }}" placeholder="original, traduccion, offset..." autofocus class="min-w-0 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <input name="script_id" value="{{ script_id }}" placeholder="script ID" class="min-w-0 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <select name="status" class="rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                    <option value="all" {% if status_filter == "all" %}selected{% endif %}>Todos</option>
+                    <option value="untranslated" {% if status_filter == "untranslated" %}selected{% endif %}>No traducidos</option>
+                    <option value="translated" {% if status_filter == "translated" %}selected{% endif %}>Traducidos OK</option>
+                    <option value="warning" {% if status_filter == "warning" %}selected{% endif %}>Warning</option>
+                    <option value="needs_shift" {% if status_filter == "needs_shift" %}selected{% endif %}>Needs shift</option>
+                </select>
                 <button class="rounded-2xl bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Buscar</button>
             </form>
+            <p class="mt-3 text-sm text-slate-500">Deja Script ID vacio para buscar globalmente, o escribe un ID para buscar solo dentro de ese script.</p>
             {% if error.len() > 0 %}
             <div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
             {% endif %}

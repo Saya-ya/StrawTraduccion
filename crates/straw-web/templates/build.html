@@ -134,23 +134,14 @@
         </section>
 
         <section id="tab-textures" class="tab-panel hidden">
-            <div class="grid gap-4 lg:grid-cols-3">
-                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                    <h2 class="text-xl font-black">Inventario TIM2</h2>
-                    <p class="mt-2 text-sm text-slate-400">Genera metadatos y PNGs en <span class="font-mono text-pink-200">work_texturas/output/all_textures</span>.</p>
-                    {% if texture_inventory_exists %}<p class="mt-2 text-xs font-bold text-emerald-300">Inventario existente detectado.</p>{% endif %}
-                    <form method="post" action="/build/texture-inventory" class="build-action mt-4">{% if data_bin_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Generar inventario</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Data.bin requerido</button>{% endif %}</form>
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                <h2 class="text-2xl font-black">Imagenes y texturas</h2>
+                <p class="mt-2 max-w-3xl text-sm text-slate-400">La extraccion, analisis, parcheo e inyeccion de texturas ahora vive en una pagina dedicada con su propio log para que no se mezcle ni se borre el log del build.</p>
+                <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+                    {% if texture_inventory_exists %}<span class="rounded-full bg-emerald-500/15 px-3 py-2 text-emerald-300">Inventario existente</span>{% endif %}
+                    {% if texture_manifest_exists %}<span class="rounded-full bg-emerald-500/15 px-3 py-2 text-emerald-300">Manifest detectado</span>{% endif %}
                 </div>
-                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                    <h2 class="text-xl font-black">Parchear texturas</h2>
-                    <p class="mt-2 text-sm text-slate-400">Usa <span class="font-mono text-pink-200">texturas/manifest.json</span>.</p>
-                    <form method="post" action="/build/patch-textures" class="build-action mt-4">{% if data_bin_exists && texture_manifest_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear texturas</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere Data y manifiesto</button>{% endif %}</form>
-                </div>
-                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                    <h2 class="text-xl font-black">Inyectar texturas</h2>
-                    <p class="mt-2 text-sm text-slate-400">Inserta streams parcheados en Data_patched.bin.</p>
-                    <form method="post" action="/build/inject-textures" class="build-action mt-4">{% if patched_data_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Inyectar texturas</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere Data parcheado</button>{% endif %}</form>
-                </div>
+                <a href="/textures" class="mt-5 inline-flex rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Abrir pagina de imagenes</a>
             </div>
         </section>
 

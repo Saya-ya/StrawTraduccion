@@ -25,9 +25,9 @@ use straw_core::{
     TextureRecord,
 };
 use straw_db::{
-    connect_path, export_translations_csv, get_script_detail, get_setting, get_text_entry,
+    connect_path, export_translations_csv, get_script_detail_filtered, get_setting, get_text_entry,
     import_extracted_texts_with_progress, import_translations_from_db, init_db, list_scripts,
-    recent_builds, record_build_step, search_text_entries, set_setting, translation_stats,
+    recent_builds, record_build_step, search_text_entries_filtered, set_setting, translation_stats,
     update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
     TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
@@ -49,12 +49,14 @@ const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
 const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
 const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
+const TEXTURE_LOG_PATH: &str = "work_texturas/texture.log";
 
 #[derive(Clone)]
 struct AppState {
     db: SqlitePool,
     build_running: Arc<AtomicBool>,
     import_running: Arc<AtomicBool>,
+    texture_running: Arc<AtomicBool>,
 }
 
 struct BuildRunGuard(Arc<AtomicBool>);
@@ -90,6 +92,8 @@ struct ScriptDetailTemplate {
     detail: ScriptDetail,
     prev_page: i64,
     next_page: i64,
+    status_filter: String,
+    status_query: String,
 }
 
 #[derive(Template)]
@@ -108,6 +112,8 @@ struct TextEditorTemplate {
 #[template(path = "search.html")]
 struct SearchTemplate {
     query: String,
+    script_id: String,
+    status_filter: String,
     results: Vec<SearchResult>,
     error: String,
 }
@@ -164,17 +170,26 @@ struct TexturesTemplate {
     records: Vec<TextureRecord>,
     inventory_exists: bool,
     png_count: usize,
+    data_bin_exists: bool,
+    patched_data_exists: bool,
+    texture_manifest_exists: bool,
+    patched_streams_exist: bool,
+    texture_running: bool,
+    texture_log: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct PageParams {
     page: Option<i64>,
     limit: Option<i64>,
+    status: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct SearchParams {
     q: Option<String>,
+    script_id: Option<String>,
+    status: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -249,6 +264,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
         .route("/textures", get(textures_page))
+        .route("/textures/log", get(texture_log))
+        .route("/textures/inventory", post(texture_inventory))
+        .route("/textures/patch", post(patch_textures))
+        .route("/textures/inject", post(inject_textures))
         .route("/import", get(import_page).post(run_import))
         .route("/import/db", post(import_db))
         .route("/import/log", get(import_log))
@@ -278,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
             db,
             build_running: Arc::new(AtomicBool::new(false)),
             import_running: Arc::new(AtomicBool::new(false)),
+            texture_running: Arc::new(AtomicBool::new(false)),
         });
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::info!(%addr, "starting StrawTraduccion web server");
@@ -294,7 +314,7 @@ fn print_startup_banner() {
     println!("Abre: http://127.0.0.1:8080");
     println!("DB: {DEFAULT_DB_PATH}");
     println!("Originales requeridos: {DATA_BIN_PATH}, {ORIGINAL_ELF_PATH}, {BASE_ISO_PATH}");
-    println!("Logs: {IMPORT_LOG_PATH} y {BUILD_LOG_PATH}");
+    println!("Logs: {IMPORT_LOG_PATH}, {BUILD_LOG_PATH} y {TEXTURE_LOG_PATH}");
     println!("No cierres esta ventana mientras uses la aplicacion.");
     println!("============================================================");
 }
@@ -348,14 +368,18 @@ async fn script_detail(
 ) -> impl IntoResponse {
     let page = params.page.unwrap_or(1);
     let limit = params.limit.unwrap_or(50);
-    match get_script_detail(&state.db, script_id, page, limit).await {
+    let status_filter = normalize_status_filter(params.status.as_deref());
+    match get_script_detail_filtered(&state.db, script_id, page, limit, &status_filter).await {
         Ok(Some(detail)) => {
             let prev_page = (detail.page - 1).max(1);
             let next_page = (detail.page + 1).min(detail.total_pages);
+            let status_query = status_filter_query(&status_filter);
             let template = ScriptDetailTemplate {
                 detail,
                 prev_page,
                 next_page,
+                status_filter,
+                status_query,
             };
             Html(template.render().expect("script detail template renders")).into_response()
         }
@@ -370,19 +394,31 @@ async fn script_detail(
 
 async fn search(State(state): State<AppState>, Query(params): Query<SearchParams>) -> Html<String> {
     let query = params.q.unwrap_or_default();
-    let (results, error) = match search_text_entries(&state.db, &query, 100).await {
-        Ok(results) => (results, String::new()),
-        Err(err) => (Vec::new(), format!("No se pudo buscar: {err}")),
-    };
+    let status_filter = normalize_status_filter(params.status.as_deref());
+    let script_id = params
+        .script_id
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .parse::<i64>()
+        .ok();
+    let (results, error) =
+        match search_text_entries_filtered(&state.db, &query, 100, script_id, &status_filter).await
+        {
+            Ok(results) => (results, String::new()),
+            Err(err) => (Vec::new(), format!("No se pudo buscar: {err}")),
+        };
     let template = SearchTemplate {
         query,
+        script_id: script_id.map(|id| id.to_string()).unwrap_or_default(),
+        status_filter,
         results,
         error,
     };
     Html(template.render().expect("search template renders"))
 }
 
-async fn textures_page() -> Html<String> {
+async fn textures_page(State(state): State<AppState>) -> Html<String> {
     let inventory_path = FsPath::new(TEXTURE_INVENTORY_DIR).join("textures.json");
     let mut records = match tokio::fs::read_to_string(&inventory_path).await {
         Ok(contents) => serde_json::from_str::<Vec<TextureRecord>>(&contents).unwrap_or_default(),
@@ -405,6 +441,12 @@ async fn textures_page() -> Html<String> {
         records,
         inventory_exists,
         png_count,
+        data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
+        patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
+        texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
+        patched_streams_exist: FsPath::new(TEXTURE_PATCHED_DIR).exists(),
+        texture_running: state.texture_running.load(Ordering::Acquire),
+        texture_log: read_texture_log(),
     };
     Html(template.render().expect("textures template renders"))
 }
@@ -573,12 +615,18 @@ async fn build_page(
 }
 
 async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
+    append_build_log("Paso manual: exportar CSV iniciado");
+    println!("[build] Exportando CSV a {BUILD_CSV_PATH}");
     match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
         Ok(count) => {
+            append_build_log(&format!("CSV exportado: {count} filas en {BUILD_CSV_PATH}"));
+            println!("[build] CSV exportado: {count} filas");
             record_build_success(&state.db, "export csv", 20, "").await;
             Redirect::to(&format!("/build?exported={count}")).into_response()
         }
         Err(err) => {
+            append_build_log(&format!("ERROR exportando CSV: {err}"));
+            eprintln!("[build] ERROR exportando CSV: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
@@ -589,19 +637,35 @@ async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
         return Redirect::to("/build?error=missing_databin").into_response();
     }
 
+    append_build_log(&format!(
+        "Paso manual: copiando {DATA_BIN_PATH} a {PATCHED_DATA_PATH} ({})",
+        file_size_label(DATA_BIN_PATH)
+    ));
+    println!("[build] Preparando Data_patched.bin");
     let result =
         tokio::task::spawn_blocking(|| copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH))
             .await;
 
     match result {
         Ok(Ok(bytes)) => {
+            append_build_log(&format!(
+                "Data_patched.bin preparado: {} MB copiados",
+                bytes / 1024 / 1024
+            ));
+            println!("[build] Data_patched.bin preparado: {bytes} bytes");
             record_build_success(&state.db, "prepare Data.bin", 35, "").await;
             Redirect::to(&format!("/build?prepared={bytes}")).into_response()
         }
         Ok(Err(err)) => {
+            append_build_log(&format!("ERROR preparando Data_patched.bin: {err}"));
+            eprintln!("[build] ERROR preparando Data_patched.bin: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
         Err(err) => {
+            append_build_log(&format!(
+                "ERROR de tarea preparando Data_patched.bin: {err}"
+            ));
+            eprintln!("[build] ERROR de tarea preparando Data_patched.bin: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
@@ -615,6 +679,11 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
         return Redirect::to("/build?error=missing_build_csv").into_response();
     }
 
+    append_build_log(&format!(
+        "Paso manual: parcheando scripts desde {BUILD_CSV_PATH}; .dec disponibles: {}",
+        count_dec_files(FsPath::new(SCRIPTS_OUT_DIR))
+    ));
+    println!("[build] Parcheando scripts traducidos");
     let result = tokio::task::spawn_blocking(|| {
         let glyph_map = spanish_glyph_map();
         patch_translated_scripts(
@@ -628,18 +697,36 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
 
     match result {
         Ok(Ok(report)) if report.errors.is_empty() => {
+            append_build_log(&format!(
+                "Scripts parcheados: {}/{} scripts, {}/{} filas aplicadas",
+                report.scripts_patched,
+                report.scripts_total,
+                report.rows_applied,
+                report.rows_total
+            ));
+            println!("[build] Scripts parcheados: {}", report.scripts_patched);
             record_build_success(&state.db, "patch scripts", 55, "").await;
             Redirect::to(&format!("/build?patched={}", report.scripts_patched)).into_response()
         }
-        Ok(Ok(report)) => Redirect::to(&format!(
-            "/build?error={}",
-            url_escape(&report.errors.join("; "))
-        ))
-        .into_response(),
+        Ok(Ok(report)) => {
+            append_build_log(&format!(
+                "ERROR parcheando scripts: {}",
+                report.errors.join("; ")
+            ));
+            Redirect::to(&format!(
+                "/build?error={}",
+                url_escape(&report.errors.join("; "))
+            ))
+            .into_response()
+        }
         Ok(Err(err)) => {
+            append_build_log(&format!("ERROR parcheando scripts: {err}"));
+            eprintln!("[build] ERROR parcheando scripts: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
         Err(err) => {
+            append_build_log(&format!("ERROR de tarea parcheando scripts: {err}"));
+            eprintln!("[build] ERROR de tarea parcheando scripts: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
@@ -653,6 +740,10 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
         return Redirect::to("/build?error=missing_build_csv").into_response();
     }
 
+    append_build_log(&format!(
+        "Paso manual: parcheando ELF {ORIGINAL_ELF_PATH} -> {TRANSLATED_ELF_PATH}"
+    ));
+    println!("[build] Parcheando ELF traducido");
     let result = tokio::task::spawn_blocking(|| {
         let glyph_map = spanish_glyph_map();
         patch_translated_elf(
@@ -666,13 +757,22 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
 
     match result {
         Ok(Ok(report)) => {
+            append_build_log(&format!(
+                "ELF parcheado: {} filas aplicadas, {} demasiado largas, {} omitidas, {} bytes escritos",
+                report.rows_patched, report.skipped_too_large, report.skipped_other, report.bytes_written
+            ));
+            println!("[build] ELF parcheado: {} filas", report.rows_patched);
             record_build_success(&state.db, "patch ELF", 65, "").await;
             Redirect::to(&format!("/build?elf_patched={}", report.rows_patched)).into_response()
         }
         Ok(Err(err)) => {
+            append_build_log(&format!("ERROR parcheando ELF: {err}"));
+            eprintln!("[build] ERROR parcheando ELF: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
         Err(err) => {
+            append_build_log(&format!("ERROR de tarea parcheando ELF: {err}"));
+            eprintln!("[build] ERROR de tarea parcheando ELF: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
@@ -686,6 +786,12 @@ async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
         return Redirect::to("/build?error=missing_patched_data").into_response();
     }
 
+    append_build_log(&format!(
+        "Paso manual: generando ISO {ISO_OUT_PATH}; base {}, Data {}",
+        file_size_label(BASE_ISO_PATH),
+        file_size_label(PATCHED_DATA_PATH)
+    ));
+    println!("[build] Generando ISO traducida");
     let result = tokio::task::spawn_blocking(|| {
         build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)
     })
@@ -693,13 +799,21 @@ async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
 
     match result {
         Ok(Ok(bytes)) => {
+            append_build_log(&format!(
+                "ISO generada: {bytes} bytes de Data.bin inyectados en {ISO_OUT_PATH}"
+            ));
+            println!("[build] ISO generada: {ISO_OUT_PATH}");
             record_build_success(&state.db, "build ISO", 85, ISO_OUT_PATH).await;
             Redirect::to(&format!("/build?iso={bytes}")).into_response()
         }
         Ok(Err(err)) => {
+            append_build_log(&format!("ERROR generando ISO: {err}"));
+            eprintln!("[build] ERROR generando ISO: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
         Err(err) => {
+            append_build_log(&format!("ERROR de tarea generando ISO: {err}"));
+            eprintln!("[build] ERROR de tarea generando ISO: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
@@ -716,6 +830,10 @@ async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
         return Redirect::to("/build?error=missing_translated_elf").into_response();
     }
 
+    append_build_log(&format!(
+        "Paso manual: inyectando ELF {TRANSLATED_ELF_PATH} en {ISO_OUT_PATH}"
+    ));
+    println!("[build] Inyectando ELF en ISO");
     let result = tokio::task::spawn_blocking(|| {
         inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)
     })
@@ -723,112 +841,191 @@ async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
 
     match result {
         Ok(Ok(bytes)) => {
+            append_build_log(&format!("ELF inyectado en ISO: {bytes} bytes escritos"));
+            println!("[build] ELF inyectado: {bytes} bytes");
             record_build_success(&state.db, "inject ELF", 100, ISO_OUT_PATH).await;
             Redirect::to(&format!("/build?elf={bytes}")).into_response()
         }
         Ok(Err(err)) => {
+            append_build_log(&format!("ERROR inyectando ELF: {err}"));
+            eprintln!("[build] ERROR inyectando ELF: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
         Err(err) => {
+            append_build_log(&format!("ERROR de tarea inyectando ELF: {err}"));
+            eprintln!("[build] ERROR de tarea inyectando ELF: {err}");
             Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
         }
     }
 }
 
 async fn texture_inventory(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures?error=texture_task_running").into_response();
+    };
     if !FsPath::new(DATA_BIN_PATH).exists() {
-        return Redirect::to("/build?error=missing_databin").into_response();
+        return Redirect::to("/textures?error=missing_databin").into_response();
     }
 
-    let result = tokio::task::spawn_blocking(|| {
-        write_texture_inventory(DATA_BIN_PATH, TEXTURE_INVENTORY_DIR)
-    })
-    .await;
+    reset_texture_log();
+    append_texture_log(&format!(
+        "Paso manual: generando inventario TIM2 desde {DATA_BIN_PATH} hacia {TEXTURE_INVENTORY_DIR}"
+    ));
+    println!("[textures] Generando inventario TIM2");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let result = tokio::task::spawn_blocking(|| {
+            write_texture_inventory(DATA_BIN_PATH, TEXTURE_INVENTORY_DIR)
+        })
+        .await;
 
-    match result {
-        Ok(Ok(records)) => {
-            record_build_success(&state.db, "texture inventory", 15, "").await;
-            Redirect::to(&format!("/build?textures={}", records.len())).into_response()
+        match result {
+            Ok(Ok(records)) => {
+                let with_png = records
+                    .iter()
+                    .filter(|record| !record.png.is_empty())
+                    .count();
+                let nested = records
+                    .iter()
+                    .filter(|record| record.nested_lz77_offset.is_some())
+                    .count();
+                append_texture_log(&format!(
+                    "Inventario TIM2 generado: {} texturas, {} PNGs, {} con LZ77 anidado",
+                    records.len(),
+                    with_png,
+                    nested
+                ));
+                println!(
+                    "[textures] Inventario TIM2 generado: {} texturas",
+                    records.len()
+                );
+                record_build_success(&db, "texture inventory", 15, "").await;
+            }
+            Ok(Err(err)) => {
+                append_texture_log(&format!("ERROR generando inventario TIM2: {err}"));
+                eprintln!("[textures] ERROR generando inventario TIM2: {err}");
+            }
+            Err(err) => {
+                append_texture_log(&format!("ERROR de tarea generando inventario TIM2: {err}"));
+                eprintln!("[textures] ERROR de tarea generando inventario TIM2: {err}");
+            }
         }
-        Ok(Err(err)) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-        Err(err) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-    }
+    });
+
+    Redirect::to("/textures?started=inventory").into_response()
 }
 
 async fn patch_textures(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures?error=texture_task_running").into_response();
+    };
     if !FsPath::new(DATA_BIN_PATH).exists() {
-        return Redirect::to("/build?error=missing_databin").into_response();
+        return Redirect::to("/textures?error=missing_databin").into_response();
     }
     if !FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
-        return Redirect::to("/build?error=missing_texture_manifest").into_response();
+        return Redirect::to("/textures?error=missing_texture_manifest").into_response();
     }
 
-    let result = tokio::task::spawn_blocking(|| {
-        patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, TEXTURE_PATCHED_DIR)
-    })
-    .await;
+    reset_texture_log();
+    append_texture_log(&format!(
+        "Paso manual: parcheando texturas usando {TEXTURE_MANIFEST_PATH}; salida {TEXTURE_PATCHED_DIR}"
+    ));
+    println!("[textures] Parcheando texturas desde manifest");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let result = tokio::task::spawn_blocking(|| {
+            patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, TEXTURE_PATCHED_DIR)
+        })
+        .await;
 
-    match result {
-        Ok(Ok(report)) if report.errors.is_empty() => {
-            record_build_success(&state.db, "patch textures", 70, "").await;
-            Redirect::to(&format!(
-                "/build?texture_patches={}",
-                report.patches_applied
-            ))
-            .into_response()
+        match result {
+            Ok(Ok(report)) if report.errors.is_empty() => {
+                append_texture_log(&format!(
+                    "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos",
+                    report.files_processed, report.patches_applied, report.streams_written
+                ));
+                println!(
+                    "[textures] Texturas parcheadas: {} parches",
+                    report.patches_applied
+                );
+                record_build_success(&db, "patch textures", 70, "").await;
+            }
+            Ok(Ok(report)) => {
+                append_texture_log(&format!(
+                    "ERROR parcheando texturas: {}",
+                    report.errors.join("; ")
+                ));
+            }
+            Ok(Err(err)) => {
+                append_texture_log(&format!("ERROR parcheando texturas: {err}"));
+                eprintln!("[textures] ERROR parcheando texturas: {err}");
+            }
+            Err(err) => {
+                append_texture_log(&format!("ERROR de tarea parcheando texturas: {err}"));
+                eprintln!("[textures] ERROR de tarea parcheando texturas: {err}");
+            }
         }
-        Ok(Ok(report)) => Redirect::to(&format!(
-            "/build?error={}",
-            url_escape(&report.errors.join("; "))
-        ))
-        .into_response(),
-        Ok(Err(err)) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-        Err(err) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-    }
+    });
+
+    Redirect::to("/textures?started=patch").into_response()
 }
 
 async fn inject_textures(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures?error=texture_task_running").into_response();
+    };
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
-        return Redirect::to("/build?error=missing_patched_data").into_response();
+        return Redirect::to("/textures?error=missing_patched_data").into_response();
     }
     if !FsPath::new(TEXTURE_PATCHED_DIR).exists() {
-        return Redirect::to("/build?error=missing_patched_texture_streams").into_response();
+        return Redirect::to("/textures?error=missing_patched_texture_streams").into_response();
     }
 
-    let result = tokio::task::spawn_blocking(|| {
-        inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)
-    })
-    .await;
+    reset_texture_log();
+    append_texture_log(&format!(
+        "Paso manual: inyectando streams de textura desde {TEXTURE_PATCHED_DIR} en {PATCHED_DATA_PATH}"
+    ));
+    println!("[textures] Inyectando streams de textura");
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let result = tokio::task::spawn_blocking(|| {
+            inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)
+        })
+        .await;
 
-    match result {
-        Ok(Ok(report)) if report.errors.is_empty() => {
-            record_build_success(&state.db, "inject textures", 75, "").await;
-            Redirect::to(&format!(
-                "/build?texture_injected={}",
-                report.streams_injected
-            ))
-            .into_response()
+        match result {
+            Ok(Ok(report)) if report.errors.is_empty() => {
+                append_texture_log(&format!(
+                    "Streams de textura inyectados: {}, bytes escritos: {}",
+                    report.streams_injected, report.bytes_written
+                ));
+                println!(
+                    "[textures] Streams de textura inyectados: {}",
+                    report.streams_injected
+                );
+                record_build_success(&db, "inject textures", 75, "").await;
+            }
+            Ok(Ok(report)) => {
+                append_texture_log(&format!(
+                    "ERROR inyectando texturas: {}",
+                    report.errors.join("; ")
+                ));
+            }
+            Ok(Err(err)) => {
+                append_texture_log(&format!("ERROR inyectando texturas: {err}"));
+                eprintln!("[textures] ERROR inyectando texturas: {err}");
+            }
+            Err(err) => {
+                append_texture_log(&format!("ERROR de tarea inyectando texturas: {err}"));
+                eprintln!("[textures] ERROR de tarea inyectando texturas: {err}");
+            }
         }
-        Ok(Ok(report)) => Redirect::to(&format!(
-            "/build?error={}",
-            url_escape(&report.errors.join("; "))
-        ))
-        .into_response(),
-        Ok(Err(err)) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-        Err(err) => {
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
-        }
-    }
+    });
+
+    Redirect::to("/textures?started=inject").into_response()
 }
 
 async fn run_full_build(
@@ -902,14 +1099,27 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
     append_build_log(&format!(
         "Procesos seleccionados: {workers} (los pasos criticos de Data.bin se ejecutan con escritura segura)"
     ));
-    append_build_log("Copiando originales/Data.bin a work/Data_patched.bin");
+    append_build_log(&format!(
+        "Prerequisitos OK: Data {}, ISO base {}, ELF {}, .dec {}",
+        file_size_label(DATA_BIN_PATH),
+        file_size_label(BASE_ISO_PATH),
+        file_size_label(ORIGINAL_ELF_PATH),
+        count_dec_files(FsPath::new(SCRIPTS_OUT_DIR))
+    ));
+    append_build_log(&format!("Copiando {DATA_BIN_PATH} a {PATCHED_DATA_PATH}"));
     copy_file_creating_parent(DATA_BIN_PATH, PATCHED_DATA_PATH)?;
-    append_build_log("Data_patched.bin preparado");
+    append_build_log(&format!(
+        "Data_patched.bin preparado: {}",
+        file_size_label(PATCHED_DATA_PATH)
+    ));
     steps += 1;
 
     let glyph_map = spanish_glyph_map();
     if build_type != "images" {
-        append_build_log("Parcheando scripts traducidos");
+        append_build_log(&format!(
+            "Parcheando scripts traducidos desde {BUILD_CSV_PATH}; .dec disponibles: {}",
+            count_dec_files(FsPath::new(SCRIPTS_OUT_DIR))
+        ));
         let script_report = patch_translated_scripts(
             PATCHED_DATA_PATH,
             SCRIPTS_OUT_DIR,
@@ -920,12 +1130,17 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
             anyhow::bail!(script_report.errors.join("; "));
         }
         append_build_log(&format!(
-            "Scripts parcheados: {}",
-            script_report.scripts_patched
+            "Scripts parcheados: {}/{} scripts, {}/{} filas aplicadas",
+            script_report.scripts_patched,
+            script_report.scripts_total,
+            script_report.rows_applied,
+            script_report.rows_total
         ));
         steps += 1;
 
-        append_build_log("Parcheando ELF traducido");
+        append_build_log(&format!(
+            "Parcheando ELF traducido: {ORIGINAL_ELF_PATH} -> {TRANSLATED_ELF_PATH}"
+        ));
         let elf_report = patch_translated_elf(
             ORIGINAL_ELF_PATH,
             TRANSLATED_ELF_PATH,
@@ -933,8 +1148,11 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
             Some(&glyph_map),
         )?;
         append_build_log(&format!(
-            "Entradas ELF parcheadas: {}",
-            elf_report.rows_patched
+            "Entradas ELF parcheadas: {}, demasiado largas: {}, omitidas: {}, bytes escritos: {}",
+            elf_report.rows_patched,
+            elf_report.skipped_too_large,
+            elf_report.skipped_other,
+            elf_report.bytes_written
         ));
         steps += 1;
     } else {
@@ -943,7 +1161,9 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
     }
 
     if build_type != "texts" && FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
-        append_build_log("Parcheando texturas desde manifest.json");
+        append_build_log(&format!(
+            "Parcheando texturas desde {TEXTURE_MANIFEST_PATH}; salida {TEXTURE_PATCHED_DIR}"
+        ));
         let texture_report = patch_textures_from_manifest(
             DATA_BIN_PATH,
             TEXTURE_MANIFEST_PATH,
@@ -953,12 +1173,16 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
             anyhow::bail!(texture_report.errors.join("; "));
         }
         append_build_log(&format!(
-            "Parches de textura aplicados: {}, streams escritos: {}",
-            texture_report.patches_applied, texture_report.streams_written
+            "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos",
+            texture_report.files_processed,
+            texture_report.patches_applied,
+            texture_report.streams_written
         ));
         steps += 1;
 
-        append_build_log("Inyectando streams de textura en Data_patched.bin");
+        append_build_log(&format!(
+            "Inyectando streams de textura desde {TEXTURE_PATCHED_DIR} en {PATCHED_DATA_PATH}"
+        ));
         let inject_report = inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)?;
         if !inject_report.errors.is_empty() {
             anyhow::bail!(inject_report.errors.join("; "));
@@ -974,12 +1198,22 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
         append_build_log("Sin texturas/manifest.json; etapa de texturas omitida");
     }
 
-    append_build_log("Generando ISO traducida");
+    append_build_log(&format!(
+        "Generando ISO traducida {ISO_OUT_PATH} desde base {} y Data {}",
+        file_size_label(BASE_ISO_PATH),
+        file_size_label(PATCHED_DATA_PATH)
+    ));
     let iso_bytes = build_iso_with_patched_data(BASE_ISO_PATH, PATCHED_DATA_PATH, ISO_OUT_PATH)?;
-    append_build_log(&format!("Data.bin inyectado en ISO: {iso_bytes} bytes"));
+    append_build_log(&format!(
+        "Data.bin inyectado en ISO: {iso_bytes} bytes; ISO final {}",
+        file_size_label(ISO_OUT_PATH)
+    ));
     steps += 1;
 
-    append_build_log("Inyectando ELF traducido en ISO");
+    append_build_log(&format!(
+        "Inyectando ELF traducido {} en {ISO_OUT_PATH}",
+        file_size_label(TRANSLATED_ELF_PATH)
+    ));
     let elf_bytes = inject_elf_into_iso(ISO_OUT_PATH, ORIGINAL_ELF_PATH, TRANSLATED_ELF_PATH)?;
     append_build_log(&format!("ELF inyectado en ISO: {elf_bytes} bytes"));
     steps += 1;
@@ -1005,6 +1239,13 @@ fn default_workers() -> usize {
     max_workers().min(2).max(1)
 }
 
+fn file_size_label(path: &str) -> String {
+    match std::fs::metadata(path) {
+        Ok(metadata) => format!("{} MB", metadata.len() / 1024 / 1024),
+        Err(_) => "no disponible".to_owned(),
+    }
+}
+
 async fn record_build_success(db: &SqlitePool, step: &str, progress_pct: i64, iso_path: &str) {
     let _ = record_build_step(db, "success", "full", step, progress_pct, iso_path, "").await;
 }
@@ -1022,14 +1263,21 @@ async fn run_import(State(state): State<AppState>) -> impl IntoResponse {
     println!("[import] Extraccion LZ77 iniciada");
     tokio::spawn(async move {
         let _guard = guard;
-        append_import_log(&format!("Leyendo {DATA_BIN_PATH}"));
+        let before = count_dec_files(FsPath::new(SCRIPTS_OUT_DIR));
+        append_import_log(&format!(
+            "Leyendo {DATA_BIN_PATH} ({}) ; .dec existentes antes: {before}",
+            file_size_label(DATA_BIN_PATH)
+        ));
         let result = tokio::task::spawn_blocking(|| {
             extract_lz77_scripts_to_dir(DATA_BIN_PATH, SCRIPTS_OUT_DIR)
         })
         .await;
         match result {
             Ok(Ok(count)) => {
-                append_import_log(&format!("Extraccion completada: {count} scripts escritos"));
+                let after = count_dec_files(FsPath::new(SCRIPTS_OUT_DIR));
+                append_import_log(&format!(
+                    "Extraccion completada: {count} scripts escritos; .dec actuales: {after}"
+                ));
                 println!("[import] Extraccion completada: {count} scripts escritos");
             }
             Ok(Err(err)) => {
@@ -1187,12 +1435,24 @@ fn acquire_import_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
         .map_err(|_| ())
 }
 
+fn acquire_texture_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
+    state
+        .texture_running
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .map(|_| BuildRunGuard(state.texture_running.clone()))
+        .map_err(|_| ())
+}
+
 fn read_build_log() -> String {
     read_log(BUILD_LOG_PATH)
 }
 
 fn read_import_log() -> String {
     read_log(IMPORT_LOG_PATH)
+}
+
+fn read_texture_log() -> String {
+    read_log(TEXTURE_LOG_PATH)
 }
 
 fn read_log(path: &str) -> String {
@@ -1212,6 +1472,10 @@ fn reset_import_log() {
     reset_log(IMPORT_LOG_PATH);
 }
 
+fn reset_texture_log() {
+    reset_log(TEXTURE_LOG_PATH);
+}
+
 fn reset_log(path: &str) {
     if let Some(parent) = FsPath::new(path).parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -1225,6 +1489,10 @@ fn append_build_log(message: &str) {
 
 fn append_import_log(message: &str) {
     append_log(IMPORT_LOG_PATH, message);
+}
+
+fn append_texture_log(message: &str) {
+    append_log(TEXTURE_LOG_PATH, message);
 }
 
 fn append_log(path: &str, message: &str) {
@@ -1252,6 +1520,10 @@ async fn import_log() -> impl IntoResponse {
     read_import_log()
 }
 
+async fn texture_log() -> impl IntoResponse {
+    read_texture_log()
+}
+
 fn count_dec_files(path: &FsPath) -> usize {
     let Ok(entries) = std::fs::read_dir(path) else {
         return 0;
@@ -1271,6 +1543,23 @@ fn url_escape(value: &str) -> String {
             _ => format!("%{:02X}", ch as u32).chars().collect(),
         })
         .collect()
+}
+
+fn normalize_status_filter(value: Option<&str>) -> String {
+    match value.unwrap_or("all") {
+        "translated" | "warning" | "needs_shift" | "untranslated" => {
+            value.unwrap_or("all").to_owned()
+        }
+        _ => "all".to_owned(),
+    }
+}
+
+fn status_filter_query(status_filter: &str) -> String {
+    if status_filter == "all" {
+        String::new()
+    } else {
+        format!("&status={status_filter}")
+    }
 }
 
 async fn save_settings(
