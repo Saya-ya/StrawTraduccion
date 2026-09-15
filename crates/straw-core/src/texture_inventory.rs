@@ -4,8 +4,9 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    compress_lz77, datafat::parse_entries_from_data, decompress_lz77, find_row, read_entries,
-    size_field_write_offset, slot_capacity,
+    compress_lz77,
+    datafat::{parse_entries_from_data, FatEntry},
+    decompress_lz77, find_row, read_entries, size_field_write_offset, slot_capacity,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,7 +84,10 @@ pub fn write_texture_inventory(
     out_dir: impl AsRef<Path>,
 ) -> Result<Vec<TextureRecord>> {
     let data_bin = data_bin.as_ref();
-    let records = texture_inventory(data_bin)?;
+    let data =
+        fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
+    let rows = read_entries(data_bin)?;
+    let records = texture_inventory_from_data(&data, rows);
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -93,7 +97,7 @@ pub fn write_texture_inventory(
 
     let mut records = records;
     for record in &mut records {
-        if let Some(png_path) = write_record_png(data_bin, &png_dir, record)? {
+        if let Some(png_path) = write_record_png(&data, &png_dir, record)? {
             record.png = format!(
                 "png/{}",
                 png_path.file_name().unwrap_or_default().to_string_lossy()
@@ -255,11 +259,7 @@ fn parse_patched_stream_id(path: &Path) -> Option<u32> {
         .ok()
 }
 
-fn texture_inventory(data_bin: impl AsRef<Path>) -> Result<Vec<TextureRecord>> {
-    let data_bin = data_bin.as_ref();
-    let data =
-        fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
-    let rows = read_entries(data_bin)?;
+fn texture_inventory_from_data(data: &[u8], rows: Vec<FatEntry>) -> Vec<TextureRecord> {
     let mut records = Vec::new();
 
     for row in rows.into_iter().filter(|row| row.is_file && row.size > 0) {
@@ -312,7 +312,7 @@ fn texture_inventory(data_bin: impl AsRef<Path>) -> Result<Vec<TextureRecord>> {
         }
     }
 
-    Ok(records)
+    records
 }
 
 fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Vec<u8>, usize)> {
@@ -514,12 +514,10 @@ fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
 }
 
 fn write_record_png(
-    data_bin: &Path,
+    data: &[u8],
     png_dir: &Path,
     record: &TextureRecord,
 ) -> Result<Option<std::path::PathBuf>> {
-    let data =
-        fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
     let start = record.file_offset as usize;
     let end = start
         .saturating_add(record.raw_size as usize)
