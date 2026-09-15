@@ -1311,6 +1311,10 @@ async fn create_schema(pool: &SqlitePool) -> Result<()> {
 async fn seed_default_settings(pool: &SqlitePool) -> Result<()> {
     set_default_setting(pool, "ui_lang", "es").await?;
     set_default_setting(pool, "target_lang", "es").await?;
+    set_default_setting(pool, "default_build_type", "full").await?;
+    set_default_setting(pool, "default_workers", &2_usize).await?;
+    set_default_setting(pool, "script_page_limit", &50_i64).await?;
+    set_default_setting(pool, "search_result_limit", &100_i64).await?;
     set_default_setting(pool, "custom_glyph_map", &serde_json::json!({})).await?;
     Ok(())
 }

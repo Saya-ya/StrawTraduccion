@@ -74,9 +74,9 @@
                         <label class="block text-sm">
                             <span class="font-bold text-pink-100">Tipo</span>
                             <select name="build_type" class="mt-1 w-full rounded-xl border border-pink-400/30 bg-slate-950 px-3 py-2 text-white">
-                                <option value="full">Completo: textos + texturas</option>
-                                <option value="texts">Solo textos</option>
-                                <option value="images">Solo texturas</option>
+                                <option value="full"{% if default_build_type == "full" %} selected{% endif %}>Completo: textos + texturas</option>
+                                <option value="texts"{% if default_build_type == "texts" %} selected{% endif %}>Solo textos</option>
+                                <option value="images"{% if default_build_type == "images" %} selected{% endif %}>Solo texturas</option>
                             </select>
                         </label>
                         <label class="block text-sm">

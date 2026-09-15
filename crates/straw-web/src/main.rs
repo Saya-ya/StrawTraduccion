@@ -19,10 +19,10 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    build_iso_with_patched_data, copy_file_creating_parent, extract_lz77_scripts_to_dir,
-    inject_elf_into_iso, inject_patched_texture_streams, patch_textures_from_manifest,
-    patch_translated_elf, patch_translated_scripts, spanish_glyph_map, write_texture_inventory,
-    TextureRecord,
+    build_iso_with_patched_data, copy_file_creating_parent, english_glyph_map,
+    extract_lz77_scripts_to_dir, inject_elf_into_iso, inject_patched_texture_streams,
+    patch_textures_from_manifest, patch_translated_elf, patch_translated_scripts,
+    spanish_glyph_map, write_texture_inventory, GlyphMap, TextureRecord,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail_filtered, get_setting, get_text_entry,
@@ -123,6 +123,11 @@ struct SearchTemplate {
 struct SettingsTemplate {
     ui_lang: String,
     target_lang: String,
+    default_build_type: String,
+    default_workers_setting: usize,
+    script_page_limit: i64,
+    search_result_limit: i64,
+    max_workers: usize,
     message: String,
 }
 
@@ -157,6 +162,7 @@ struct BuildTemplate {
     texture_inventory_exists: bool,
     texture_manifest_exists: bool,
     build_running: bool,
+    default_build_type: String,
     default_workers: usize,
     max_workers: usize,
     build_log: String,
@@ -201,6 +207,10 @@ struct TextForm {
 struct SettingsForm {
     ui_lang: String,
     target_lang: String,
+    default_build_type: String,
+    default_workers: usize,
+    script_page_limit: i64,
+    search_result_limit: i64,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -367,7 +377,11 @@ async fn script_detail(
     Query(params): Query<PageParams>,
 ) -> impl IntoResponse {
     let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
+    let default_limit: i64 = get_setting(&state.db, "script_page_limit", 50_i64)
+        .await
+        .unwrap_or(50)
+        .clamp(10, 200);
+    let limit = params.limit.unwrap_or(default_limit);
     let status_filter = normalize_status_filter(params.status.as_deref());
     match get_script_detail_filtered(&state.db, script_id, page, limit, &status_filter).await {
         Ok(Some(detail)) => {
@@ -395,6 +409,10 @@ async fn script_detail(
 async fn search(State(state): State<AppState>, Query(params): Query<SearchParams>) -> Html<String> {
     let query = params.q.unwrap_or_default();
     let status_filter = normalize_status_filter(params.status.as_deref());
+    let search_limit: i64 = get_setting(&state.db, "search_result_limit", 100_i64)
+        .await
+        .unwrap_or(100)
+        .clamp(10, 500);
     let script_id = params
         .script_id
         .as_deref()
@@ -402,12 +420,18 @@ async fn search(State(state): State<AppState>, Query(params): Query<SearchParams
         .trim()
         .parse::<i64>()
         .ok();
-    let (results, error) =
-        match search_text_entries_filtered(&state.db, &query, 100, script_id, &status_filter).await
-        {
-            Ok(results) => (results, String::new()),
-            Err(err) => (Vec::new(), format!("No se pudo buscar: {err}")),
-        };
+    let (results, error) = match search_text_entries_filtered(
+        &state.db,
+        &query,
+        search_limit,
+        script_id,
+        &status_filter,
+    )
+    .await
+    {
+        Ok(results) => (results, String::new()),
+        Err(err) => (Vec::new(), format!("No se pudo buscar: {err}")),
+    };
     let template = SearchTemplate {
         query,
         script_id: script_id.map(|id| id.to_string()).unwrap_or_default(),
@@ -461,6 +485,23 @@ async fn settings(
     let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
         .await
         .unwrap_or_else(|_| "es".to_owned());
+    let default_build_type: String =
+        get_setting(&state.db, "default_build_type", "full".to_owned())
+            .await
+            .unwrap_or_else(|_| "full".to_owned());
+    let default_workers_setting: usize =
+        get_setting(&state.db, "default_workers", default_workers())
+            .await
+            .unwrap_or_else(|_| default_workers())
+            .clamp(1, max_workers());
+    let script_page_limit: i64 = get_setting(&state.db, "script_page_limit", 50_i64)
+        .await
+        .unwrap_or(50)
+        .clamp(10, 200);
+    let search_result_limit: i64 = get_setting(&state.db, "search_result_limit", 100_i64)
+        .await
+        .unwrap_or(100)
+        .clamp(10, 500);
     let message = if params.saved.as_deref() == Some("1") {
         "Configuracion guardada".to_owned()
     } else {
@@ -469,6 +510,11 @@ async fn settings(
     let template = SettingsTemplate {
         ui_lang,
         target_lang,
+        default_build_type: normalize_build_type(&default_build_type),
+        default_workers_setting,
+        script_page_limit,
+        search_result_limit,
+        max_workers: max_workers(),
         message,
     };
     Html(template.render().expect("settings template renders"))
@@ -531,6 +577,15 @@ async fn build_page(
             needs_shift_entries: 0,
         });
     let builds = recent_builds(&state.db, 10).await.unwrap_or_default();
+    let default_build_type: String =
+        get_setting(&state.db, "default_build_type", "full".to_owned())
+            .await
+            .unwrap_or_else(|_| "full".to_owned());
+    let default_workers_setting: usize =
+        get_setting(&state.db, "default_workers", default_workers())
+            .await
+            .unwrap_or_else(|_| default_workers())
+            .clamp(1, max_workers());
     let template = BuildTemplate {
         stats,
         builds,
@@ -549,7 +604,8 @@ async fn build_page(
             .exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
         build_running: state.build_running.load(Ordering::Acquire),
-        default_workers: default_workers(),
+        default_build_type: normalize_build_type(&default_build_type),
+        default_workers: default_workers_setting,
         max_workers: max_workers(),
         build_log: read_build_log(),
         message: params
@@ -684,8 +740,11 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
         count_dec_files(FsPath::new(SCRIPTS_OUT_DIR))
     ));
     println!("[build] Parcheando scripts traducidos");
-    let result = tokio::task::spawn_blocking(|| {
-        let glyph_map = spanish_glyph_map();
+    let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
+    let result = tokio::task::spawn_blocking(move || {
+        let glyph_map = glyph_map_for_target(&target_lang);
         patch_translated_scripts(
             PATCHED_DATA_PATH,
             SCRIPTS_OUT_DIR,
@@ -744,8 +803,11 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
         "Paso manual: parcheando ELF {ORIGINAL_ELF_PATH} -> {TRANSLATED_ELF_PATH}"
     ));
     println!("[build] Parcheando ELF traducido");
-    let result = tokio::task::spawn_blocking(|| {
-        let glyph_map = spanish_glyph_map();
+    let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
+    let result = tokio::task::spawn_blocking(move || {
+        let glyph_map = glyph_map_for_target(&target_lang);
         patch_translated_elf(
             ORIGINAL_ELF_PATH,
             TRANSLATED_ELF_PATH,
@@ -1044,6 +1106,9 @@ async fn run_full_build(
         "Configuracion: tipo={build_type}, procesos={workers}"
     ));
     let db = state.db.clone();
+    let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
     tokio::spawn(async move {
         let _guard = guard;
         append_build_log("Exportando CSV desde SQLite");
@@ -1055,7 +1120,10 @@ async fn run_full_build(
             }
         }
 
-        match tokio::task::spawn_blocking(move || run_full_build_steps(&build_type, workers)).await
+        match tokio::task::spawn_blocking(move || {
+            run_full_build_steps(&build_type, workers, &target_lang)
+        })
+        .await
         {
             Ok(Ok(steps)) => {
                 append_build_log(&format!(
@@ -1080,7 +1148,11 @@ fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
         .map_err(|_| ())
 }
 
-fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usize> {
+fn run_full_build_steps(
+    build_type: &str,
+    workers: usize,
+    target_lang: &str,
+) -> anyhow::Result<usize> {
     append_build_log("Validando prerequisitos");
     if !FsPath::new(DATA_BIN_PATH).exists() {
         anyhow::bail!("missing originales/Data.bin");
@@ -1114,7 +1186,8 @@ fn run_full_build_steps(build_type: &str, workers: usize) -> anyhow::Result<usiz
     ));
     steps += 1;
 
-    let glyph_map = spanish_glyph_map();
+    append_build_log(&format!("Idioma objetivo/glyph map: {target_lang}"));
+    let glyph_map = glyph_map_for_target(target_lang);
     if build_type != "images" {
         append_build_log(&format!(
             "Parcheando scripts traducidos desde {BUILD_CSV_PATH}; .dec disponibles: {}",
@@ -1225,6 +1298,13 @@ fn normalize_build_type(value: &str) -> String {
     match value {
         "texts" | "images" => value.to_owned(),
         _ => "full".to_owned(),
+    }
+}
+
+fn glyph_map_for_target(target_lang: &str) -> GlyphMap {
+    match target_lang {
+        "en" => english_glyph_map(),
+        _ => spanish_glyph_map(),
     }
 }
 
@@ -1576,6 +1656,10 @@ async fn save_settings(
     } else {
         "es".to_owned()
     };
+    let default_build_type = normalize_build_type(&form.default_build_type);
+    let default_workers_setting = form.default_workers.clamp(1, max_workers());
+    let script_page_limit = form.script_page_limit.clamp(10, 200);
+    let search_result_limit = form.search_result_limit.clamp(10, 500);
 
     if let Err(err) = set_setting(&state.db, "ui_lang", &ui_lang).await {
         return (
@@ -1590,6 +1674,32 @@ async fn save_settings(
             format!("failed to save target_lang: {err}"),
         )
             .into_response();
+    }
+    for (key, result) in [
+        (
+            "default_build_type",
+            set_setting(&state.db, "default_build_type", &default_build_type).await,
+        ),
+        (
+            "default_workers",
+            set_setting(&state.db, "default_workers", &default_workers_setting).await,
+        ),
+        (
+            "script_page_limit",
+            set_setting(&state.db, "script_page_limit", &script_page_limit).await,
+        ),
+        (
+            "search_result_limit",
+            set_setting(&state.db, "search_result_limit", &search_result_limit).await,
+        ),
+    ] {
+        if let Err(err) = result {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to save {key}: {err}"),
+            )
+                .into_response();
+        }
     }
 
     Redirect::to("/settings?saved=1").into_response()

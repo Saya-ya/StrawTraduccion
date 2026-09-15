@@ -7,15 +7,19 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
-    <main class="mx-auto max-w-4xl px-6 py-10">
-        <nav class="mb-8 flex items-center justify-between">
+    <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">SQLite settings</span>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Build</a>
+                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Imagenes</a>
+            </div>
         </nav>
 
         <section class="rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Preferencias</p>
             <h1 class="mt-2 text-4xl font-black tracking-tight">Configuracion</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">Estos valores se guardan en SQLite y afectan busqueda, paginacion y defaults de build.</p>
 
             {% if message.len() > 0 %}
             <div class="mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>
@@ -37,6 +41,31 @@
                             <option value="en" {% if target_lang == "en" %}selected{% endif %}>English</option>
                             <option value="custom" {% if target_lang == "custom" %}selected{% endif %}>Personalizado</option>
                         </select>
+                        <span class="mt-2 block text-xs text-slate-500">Afecta el glyph map usado al parchear scripts/ELF. ES/custom usan mapa español; EN no remapea glifos.</span>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Build por defecto</span>
+                        <select name="default_build_type" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="full" {% if default_build_type == "full" %}selected{% endif %}>Completo: textos + texturas</option>
+                            <option value="texts" {% if default_build_type == "texts" %}selected{% endif %}>Solo textos</option>
+                            <option value="images" {% if default_build_type == "images" %}selected{% endif %}>Solo imagenes</option>
+                        </select>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Procesos por defecto</span>
+                        <select name="default_workers" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            {% for n in 1..=max_workers %}
+                            <option value="{{ n }}" {% if n == default_workers_setting %}selected{% endif %}>{{ n }} proceso{% if n != 1 %}s{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Filas por pagina de script</span>
+                        <input name="script_page_limit" type="number" min="10" max="200" value="{{ script_page_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Resultados maximos de busqueda</span>
+                        <input name="search_result_limit" type="number" min="10" max="500" value="{{ search_result_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
                     </label>
                 </div>
                 <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Guardar cambios</button>
