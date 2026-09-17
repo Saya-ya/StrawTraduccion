@@ -1364,6 +1364,9 @@ fn run_full_build_steps(
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
         anyhow::bail!("missing originales/SLPS_256.11");
     }
+    if build_type == "images" && !FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
+        anyhow::bail!("missing texturas/manifest.json; upload or create texture patches first");
+    }
     if build_type != "images" && count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)) == 0 {
         anyhow::bail!("missing extracted .dec scripts; run import first");
     }

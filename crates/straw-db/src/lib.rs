@@ -699,10 +699,10 @@ pub async fn search_text_entries_filtered(
     status_filter: &str,
 ) -> Result<Vec<SearchResult>> {
     let query = query.trim();
-    if query.is_empty() {
+    if query.is_empty() && script_id.is_none() && status_filter == "all" {
         return Ok(Vec::new());
     }
-    let limit = limit.clamp(1, 200);
+    let limit = limit.clamp(1, 500);
     let status_condition = status_filter_condition(status_filter);
     let script_condition = if script_id.is_some() {
         " AND te.script_id = ?"
@@ -710,8 +710,30 @@ pub async fn search_text_entries_filtered(
         ""
     };
 
-    let sql = format!(
-        r#"
+    let sql = if query.is_empty() {
+        format!(
+            r#"
+        SELECT te.id, te.script_id, te.byte_offset, te.section_id, te.section_order,
+               te.original_text, te.translated_text, te.is_translated, te.needs_shift,
+               (
+                   SELECT COUNT(*)
+                   FROM text_entries prev
+                   WHERE prev.script_id = te.script_id
+                     AND (
+                         prev.section_id < te.section_id
+                         OR (prev.section_id = te.section_id AND prev.section_order < te.section_order)
+                         OR (prev.section_id = te.section_id AND prev.section_order = te.section_order AND prev.id <= te.id)
+                     )
+               ) AS position_in_script
+        FROM text_entries te
+        WHERE 1 = 1 {script_condition} {status_condition}
+        ORDER BY te.script_id, te.section_id, te.section_order
+        LIMIT ?
+        "#
+        )
+    } else {
+        format!(
+            r#"
         SELECT te.id, te.script_id, te.byte_offset, te.section_id, te.section_order,
                te.original_text, te.translated_text, te.is_translated, te.needs_shift,
                (
@@ -730,8 +752,12 @@ pub async fn search_text_entries_filtered(
         ORDER BY te.script_id, te.section_id, te.section_order
         LIMIT ?
         "#
-    );
-    let mut query_builder = sqlx::query(&sql).bind(query);
+        )
+    };
+    let mut query_builder = sqlx::query(&sql);
+    if !query.is_empty() {
+        query_builder = query_builder.bind(query);
+    }
     if let Some(script_id) = script_id {
         query_builder = query_builder.bind(script_id);
     }
@@ -1701,6 +1727,12 @@ mod tests {
             .unwrap();
         assert_eq!(warning.len(), 1);
         assert_eq!(warning[0].original_text, "panic warning");
+
+        let status_only = search_text_entries_filtered(&pool, "", 20, Some(1), "warning")
+            .await
+            .unwrap();
+        assert_eq!(status_only.len(), 1);
+        assert_eq!(status_only[0].original_text, "panic warning");
     }
 
     #[test]

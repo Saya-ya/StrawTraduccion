@@ -89,7 +89,7 @@
                             </select>
                             <span class="mt-1 block text-xs text-pink-100/60">Usa 1-2 si quieres menos carga.</span>
                         </label>
-                        <button id="full-build-button" class="w-full rounded-full px-7 py-3 font-black shadow-lg shadow-pink-950/40" data-base-ready="{% if data_bin_exists && base_iso_exists && original_elf_exists %}1{% else %}0{% endif %}" data-text-ready="{% if dec_count > 0 %}1{% else %}0{% endif %}" data-running="{% if build_running %}1{% else %}0{% endif %}">Ejecutar build completo</button>
+                        <button id="full-build-button" class="w-full rounded-full px-7 py-3 font-black shadow-lg shadow-pink-950/40" data-base-ready="{% if data_bin_exists && base_iso_exists && original_elf_exists %}1{% else %}0{% endif %}" data-text-ready="{% if dec_count > 0 %}1{% else %}0{% endif %}" data-image-ready="{% if texture_manifest_exists %}1{% else %}0{% endif %}" data-running="{% if build_running %}1{% else %}0{% endif %}">Ejecutar build completo</button>
                     </form>
                 </div>
             </div>
@@ -226,11 +226,14 @@
             if (!buildType || !fullBuildButton) return;
             const baseReady = fullBuildButton.dataset.baseReady === '1';
             const textReady = fullBuildButton.dataset.textReady === '1';
+            const imageReady = fullBuildButton.dataset.imageReady === '1';
             const running = fullBuildButton.dataset.running === '1';
             const imagesOnly = buildType.value === 'images';
-            const ready = baseReady && (imagesOnly || textReady) && !running;
+            const ready = baseReady && (imagesOnly ? imageReady : textReady) && !running;
             fullBuildButton.disabled = !ready;
-            fullBuildButton.textContent = running ? 'Build corriendo' : (ready ? 'Ejecutar build completo' : (baseReady && !textReady && !imagesOnly ? 'Importa scripts primero' : 'Faltan prerequisitos'));
+            fullBuildButton.textContent = running
+                ? 'Build corriendo'
+                : (ready ? 'Ejecutar build completo' : (imagesOnly && !imageReady ? 'Falta manifest de texturas' : (baseReady && !textReady && !imagesOnly ? 'Importa scripts primero' : 'Faltan prerequisitos')));
             fullBuildButton.className = ready
                 ? 'w-full rounded-full bg-white px-7 py-3 font-black text-slate-950 shadow-lg shadow-pink-950/40 hover:bg-pink-100'
                 : 'w-full rounded-full bg-slate-700 px-7 py-3 font-black text-slate-400 shadow-lg shadow-pink-950/40';

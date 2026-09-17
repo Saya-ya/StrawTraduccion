@@ -64,7 +64,7 @@
                 </button>
                 {% else %}
                 <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>
-                    Data.bin requerido
+                    {% if import_running %}Importacion corriendo{% else %}Data.bin requerido{% endif %}
                 </button>
                 {% endif %}
             </form>
@@ -80,7 +80,7 @@
                 </button>
                 {% else %}
                 <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>
-                    Requiere scripts .dec
+                    {% if import_running %}Importacion corriendo{% else %}Requiere scripts .dec{% endif %}
                 </button>
                 {% endif %}
             </form>
