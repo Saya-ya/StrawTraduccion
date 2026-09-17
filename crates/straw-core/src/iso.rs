@@ -95,6 +95,18 @@ fn inject_file_at_offset(target: &Path, source: &Path, offset: u64) -> Result<u6
         .with_context(|| format!("failed to open {}", target.display()))?;
     let mut source_file =
         fs::File::open(source).with_context(|| format!("failed to open {}", source.display()))?;
+    let target_len = target_file.metadata()?.len();
+    let source_len = source_file.metadata()?.len();
+    let end = offset
+        .checked_add(source_len)
+        .with_context(|| "injection range overflows u64")?;
+    if end > target_len {
+        bail!(
+            "source {} does not fit in target {} at offset {offset}: end {end} > target size {target_len}",
+            source.display(),
+            target.display()
+        );
+    }
 
     target_file.seek(SeekFrom::Start(offset))?;
     let written = std::io::copy(&mut source_file, &mut target_file)?;
@@ -202,5 +214,22 @@ mod tests {
         let err = build_iso_with_patched_data(&base, &patched, &out).unwrap_err();
         assert!(err.to_string().contains("Data.bin signature not found"));
         assert_eq!(fs::read(&out).unwrap(), b"no data signature here");
+    }
+
+    #[test]
+    fn rejects_data_injection_that_would_extend_iso() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("base.iso");
+        let patched = temp.path().join("Data_patched.bin");
+        let out = temp.path().join("out.iso");
+
+        let mut iso_data = vec![0xAA; 8];
+        iso_data.extend(DATA_BIN_SIGNATURE);
+        fs::write(&base, &iso_data).unwrap();
+        fs::write(&patched, vec![0xCC; 64]).unwrap();
+
+        let err = build_iso_with_patched_data(&base, &patched, &out).unwrap_err();
+        assert!(err.to_string().contains("does not fit in target"));
+        assert_eq!(fs::read(&out).unwrap(), iso_data);
     }
 }

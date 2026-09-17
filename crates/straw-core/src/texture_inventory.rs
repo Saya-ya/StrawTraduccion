@@ -251,16 +251,30 @@ pub fn inject_patched_texture_streams(
             continue;
         }
         let start = target.offset as usize;
-        let end = start + capacity as usize;
+        let Some(end) = start.checked_add(capacity as usize) else {
+            report
+                .errors
+                .push(format!("ID {file_id} slot range overflows"));
+            continue;
+        };
         if end > data.len() {
             report
                 .errors
                 .push(format!("ID {file_id} slot outside Data.bin"));
             continue;
         }
+        let size_offset = size_field_write_offset(target);
+        if size_offset
+            .checked_add(4)
+            .is_none_or(|end| end > data.len())
+        {
+            report
+                .errors
+                .push(format!("ID {file_id} size field outside Data.bin"));
+            continue;
+        }
         data[start..start + stream.len()].copy_from_slice(&stream);
         data[start + stream.len()..end].fill(0);
-        let size_offset = size_field_write_offset(target);
         data[size_offset..size_offset + 4].copy_from_slice(&(stream.len() as u32).to_le_bytes());
         report.streams_injected += 1;
         report.bytes_written += stream.len();
@@ -668,7 +682,12 @@ fn read_png_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
 }
 
 fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
-    if stream.get(offset..offset + 4) != Some(b"LZ77") || offset + 12 > stream.len() {
+    let Some(header_end) = offset.checked_add(4) else {
+        bail!("no valid LZ77 stream at 0x{offset:X}");
+    };
+    if stream.get(offset..header_end) != Some(b"LZ77")
+        || offset.checked_add(12).is_none_or(|end| end > stream.len())
+    {
         bail!("no valid LZ77 stream at 0x{offset:X}");
     }
     let comp_size = u32::from_le_bytes([
@@ -677,8 +696,14 @@ fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
         stream[offset + 10],
         stream[offset + 11],
     ]) as usize;
-    let size = 12 + comp_size;
-    if comp_size == 0 || offset + size > stream.len() {
+    let size = 12_usize
+        .checked_add(comp_size)
+        .with_context(|| format!("LZ77 stream size overflow at 0x{offset:X}"))?;
+    if comp_size == 0
+        || offset
+            .checked_add(size)
+            .is_none_or(|end| end > stream.len())
+    {
         bail!("truncated LZ77 stream at 0x{offset:X}");
     }
     Ok(size)
@@ -1146,5 +1171,11 @@ mod tests {
         data.extend([0; 24]);
 
         assert!(find_tim2_files(&data).is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_lz77_offset_without_overflow() {
+        let err = lz77_stream_size(b"LZ77", usize::MAX - 1).unwrap_err();
+        assert!(err.to_string().contains("no valid LZ77 stream"));
     }
 }
