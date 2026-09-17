@@ -196,6 +196,7 @@ struct TextureCatalogTemplate {
     total_records: usize,
     filtered_records: usize,
     png_count: usize,
+    missing_hash_count: usize,
     query: String,
     limit: usize,
 }
@@ -559,6 +560,10 @@ async fn texture_catalog(Query(params): Query<TextureCatalogParams>) -> Html<Str
         .iter()
         .filter(|record| !record.png.is_empty())
         .count();
+    let missing_hash_count = records
+        .iter()
+        .filter(|record| record.texture_hash.is_empty())
+        .count();
     let query = params.q.unwrap_or_default().trim().to_owned();
     if !query.is_empty() {
         let needle = query.to_ascii_lowercase();
@@ -585,6 +590,7 @@ async fn texture_catalog(Query(params): Query<TextureCatalogParams>) -> Html<Str
         total_records,
         filtered_records,
         png_count,
+        missing_hash_count,
         query,
         limit,
     };
