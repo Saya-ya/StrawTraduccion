@@ -21,9 +21,20 @@
             <h1 class="mt-2 text-4xl font-black tracking-tight">Imagenes y texturas</h1>
             <p class="mt-3 max-w-3xl text-slate-400">Extrae y analiza texturas TIM2, genera PNGs, aplica parches desde manifest e inyecta streams en Data_patched.bin desde esta pagina.</p>
             <div class="mt-5 flex flex-wrap gap-3 text-sm">
-                <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">Registros visibles: {{ records.len() }}</span>
+                <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">Texturas detectadas: {{ total_records }}</span>
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">PNGs: {{ png_count }}</span>
+                <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">Duplicados: {{ duplicate_groups_count }} grupos / {{ duplicate_records_count }} texturas</span>
                 {% if texture_running %}<span class="rounded-full border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 font-bold text-yellow-100">Tarea en curso</span>{% endif %}
+            </div>
+            {% if missing_hash_count > 0 %}
+            <div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                Este inventario no tiene hash en {{ missing_hash_count }} textura(s). Regenera inventario para activar duplicados y upload automatico.
+            </div>
+            {% endif %}
+            <div class="mt-5 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/textures/catalog" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Catalogo completo</a>
+                <a href="/textures/duplicates" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Duplicados</a>
+                <a href="/textures/upload" class="rounded-full border border-pink-400/40 bg-pink-500/10 px-4 py-2 text-pink-100 hover:bg-pink-500/20">Subir PNG</a>
             </div>
         </section>
 
@@ -76,35 +87,25 @@
         <section class="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-100">
             No hay inventario TIM2 todavía. Ejecuta “Generar inventario” arriba.
         </section>
-        {% else %}
-        <section class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {% for record in records %}
-            <article class="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80">
-                <div class="flex h-48 items-center justify-center bg-slate-950/80 p-3">
-                    {% if record.png.len() > 0 %}
-                    <img src="/texture-assets/{{ record.png }}" alt="ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}" class="max-h-full max-w-full object-contain [image-rendering:pixelated]">
-                    {% else %}
-                    <span class="text-sm font-bold text-slate-500">Sin PNG</span>
-                    {% endif %}
-                </div>
-                <div class="space-y-2 p-4 text-sm">
-                    <div class="flex items-center justify-between gap-3">
-                        <div class="font-mono font-black text-pink-200">ID {{ record.id }}</div>
-                        <div class="rounded-full bg-pink-500/10 px-3 py-1 text-xs font-bold text-pink-200">UI {{ record.score_ui }}</div>
-                    </div>
-                    <div class="text-slate-300">T{{ record.tim2_index }} P{{ record.picture_index }} · {{ record.width }}x{{ record.height }}</div>
-                    <div class="text-slate-500">{{ record.image_type_name }} · font {{ record.score_font }}</div>
-                    {% if record.nested_lz77_offset.is_some() %}
-                    <div class="text-xs font-bold text-amber-300">LZ77 anidado</div>
-                    {% endif %}
-                </div>
-            </article>
-            {% endfor %}
-        </section>
         {% endif %}
     </main>
     <script>
         const textureLog = document.getElementById('texture-log');
+        const textureWasRunning = {% if texture_running %}true{% else %}false{% endif %};
+        let textureReloadScheduled = false;
+
+        function textureTaskFinished(text) {
+            return text.includes('Inventario TIM2 generado:')
+                || text.includes('Texturas parcheadas:')
+                || text.includes('Streams de textura inyectados:')
+                || text.includes('ERROR generando inventario TIM2:')
+                || text.includes('ERROR parcheando texturas:')
+                || text.includes('ERROR inyectando texturas:')
+                || text.includes('ERROR de tarea generando inventario TIM2:')
+                || text.includes('ERROR de tarea parcheando texturas:')
+                || text.includes('ERROR de tarea inyectando texturas:');
+        }
+
         async function refreshTextureLog() {
             if (!textureLog) return;
             try {
@@ -113,6 +114,10 @@
                 if (text.trim().length > 0 && textureLog.textContent !== text) {
                     textureLog.textContent = text;
                     textureLog.scrollTop = textureLog.scrollHeight;
+                }
+                if (textureWasRunning && !textureReloadScheduled && textureTaskFinished(text)) {
+                    textureReloadScheduled = true;
+                    setTimeout(() => window.location.href = '/textures', 700);
                 }
             } catch (_) {}
         }

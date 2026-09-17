@@ -12,6 +12,7 @@
             <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
             <div class="flex flex-wrap gap-2">
                 <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Importar</a>
+                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Texturas</a>
                 <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Build</a>
             </div>
         </nav>
@@ -32,6 +33,11 @@
                 <button class="rounded-2xl bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Buscar</button>
             </form>
             <p class="mt-3 text-sm text-slate-500">Deja Script ID vacio para buscar globalmente, o escribe un ID para buscar solo dentro de ese script.</p>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/search?status=untranslated" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">No traducidos</a>
+                <a href="/search?status=warning" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Warnings</a>
+                <a href="/search?status=needs_shift" class="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-red-100 hover:bg-red-500/20">Needs shift</a>
+            </div>
             {% if error.len() > 0 %}
             <div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
             {% endif %}
@@ -41,7 +47,7 @@
             {% if query.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
                 <p class="text-lg font-bold text-slate-200">Busca por texto original o traduccion.</p>
-                <p class="mt-2">Consejo: puedes abrir un resultado y volver directamente a la fila exacta.</p>
+                <p class="mt-2">Tambien puedes usar los accesos rapidos de estado para encontrar pendientes.</p>
             </div>
             {% else if results.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">

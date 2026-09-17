@@ -1,5 +1,6 @@
 use std::{
-    fs::OpenOptions,
+    collections::BTreeMap,
+    fs::{self, OpenOptions},
     io::Write,
     net::SocketAddr,
     path::Path as FsPath,
@@ -22,7 +23,7 @@ use straw_core::{
     build_iso_with_patched_data, copy_file_creating_parent, english_glyph_map,
     extract_lz77_scripts_to_dir, inject_elf_into_iso, inject_patched_texture_streams,
     patch_textures_from_manifest, patch_translated_elf, patch_translated_scripts,
-    spanish_glyph_map, write_texture_inventory, GlyphMap, TextureRecord,
+    spanish_glyph_map, write_texture_inventory_with_progress, GlyphMap, TextureRecord,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail_filtered, get_setting, get_text_entry,
@@ -50,6 +51,7 @@ const TEXTURE_INVENTORY_DIR: &str = "work_texturas/output/all_textures";
 const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
 const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 const TEXTURE_LOG_PATH: &str = "work_texturas/texture.log";
+const TEXTURE_UPLOAD_DIR: &str = "texturas/uploads";
 
 #[derive(Clone)]
 struct AppState {
@@ -173,15 +175,66 @@ struct BuildTemplate {
 #[derive(Template)]
 #[template(path = "textures.html")]
 struct TexturesTemplate {
-    records: Vec<TextureRecord>,
+    total_records: usize,
     inventory_exists: bool,
     png_count: usize,
+    duplicate_groups_count: usize,
+    duplicate_records_count: usize,
+    missing_hash_count: usize,
     data_bin_exists: bool,
     patched_data_exists: bool,
     texture_manifest_exists: bool,
     patched_streams_exist: bool,
     texture_running: bool,
     texture_log: String,
+}
+
+#[derive(Template)]
+#[template(path = "texture_catalog.html")]
+struct TextureCatalogTemplate {
+    records: Vec<TextureRecord>,
+    total_records: usize,
+    filtered_records: usize,
+    png_count: usize,
+    query: String,
+    limit: usize,
+}
+
+#[derive(Clone)]
+struct TextureDuplicateGroup {
+    hash: String,
+    records: Vec<TextureRecord>,
+    preview_png: String,
+}
+
+#[derive(Template)]
+#[template(path = "texture_duplicates.html")]
+struct TextureDuplicatesTemplate {
+    groups: Vec<TextureDuplicateGroup>,
+    total_duplicate_records: usize,
+}
+
+#[derive(Template)]
+#[template(path = "texture_upload.html")]
+struct TextureUploadTemplate {
+    groups: Vec<TextureDuplicateGroup>,
+    selected_hash: String,
+    selected_records: Vec<TextureRecord>,
+    uploaded_files: Vec<String>,
+    missing_hash_count: usize,
+    manifest_exists: bool,
+    message: String,
+    error: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TextureManifestEntry {
+    file_id: u32,
+    tim2_index: usize,
+    picture_index: usize,
+    png: String,
+    mode: String,
+    lz77_offset: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -231,6 +284,20 @@ struct ImportParams {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct TextureUploadParams {
+    hash: Option<String>,
+    status: Option<String>,
+    count: Option<usize>,
+    error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TextureCatalogParams {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct BuildParams {
     exported: Option<usize>,
     prepared: Option<u64>,
@@ -274,6 +341,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/scripts/:script_id", get(script_detail))
         .route("/search", get(search))
         .route("/textures", get(textures_page))
+        .route("/textures/catalog", get(texture_catalog))
+        .route("/textures/duplicates", get(texture_duplicates))
+        .route(
+            "/textures/upload",
+            get(texture_upload_page).post(texture_upload),
+        )
         .route("/textures/log", get(texture_log))
         .route("/textures/inventory", post(texture_inventory))
         .route("/textures/patch", post(patch_textures))
@@ -302,6 +375,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/texts/:entry_id/view", get(text_row))
         .route("/api/texts/:entry_id", put(update_text))
         .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
+        .nest_service("/texture-uploads", ServeDir::new(TEXTURE_UPLOAD_DIR))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(AppState {
             db,
@@ -443,28 +517,31 @@ async fn search(State(state): State<AppState>, Query(params): Query<SearchParams
 }
 
 async fn textures_page(State(state): State<AppState>) -> Html<String> {
-    let inventory_path = FsPath::new(TEXTURE_INVENTORY_DIR).join("textures.json");
-    let mut records = match tokio::fs::read_to_string(&inventory_path).await {
-        Ok(contents) => serde_json::from_str::<Vec<TextureRecord>>(&contents).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let records = read_texture_records().await;
     let inventory_exists = !records.is_empty();
     let png_count = records
         .iter()
         .filter(|record| !record.png.is_empty())
         .count();
-    records.sort_by(|a, b| {
-        b.score_ui
-            .cmp(&a.score_ui)
-            .then_with(|| b.score_font.cmp(&a.score_font))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    records.truncate(240);
+    let total_records = records.len();
+    let missing_hash_count = records
+        .iter()
+        .filter(|record| record.texture_hash.is_empty())
+        .count();
+    let duplicate_groups = texture_duplicate_groups(records);
+    let duplicate_groups_count = duplicate_groups.len();
+    let duplicate_records_count = duplicate_groups
+        .iter()
+        .map(|group| group.records.len())
+        .sum();
 
     let template = TexturesTemplate {
-        records,
+        total_records,
         inventory_exists,
         png_count,
+        duplicate_groups_count,
+        duplicate_records_count,
+        missing_hash_count,
         data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
         patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
@@ -473,6 +550,122 @@ async fn textures_page(State(state): State<AppState>) -> Html<String> {
         texture_log: read_texture_log(),
     };
     Html(template.render().expect("textures template renders"))
+}
+
+async fn texture_catalog(Query(params): Query<TextureCatalogParams>) -> Html<String> {
+    let mut records = read_texture_records().await;
+    let total_records = records.len();
+    let png_count = records
+        .iter()
+        .filter(|record| !record.png.is_empty())
+        .count();
+    let query = params.q.unwrap_or_default().trim().to_owned();
+    if !query.is_empty() {
+        let needle = query.to_ascii_lowercase();
+        records.retain(|record| {
+            record.id.to_string().contains(&needle)
+                || record.texture_hash.to_ascii_lowercase().contains(&needle)
+                || record
+                    .image_type_name
+                    .to_ascii_lowercase()
+                    .contains(&needle)
+        });
+    }
+    let filtered_records = records.len();
+    let limit = params.limit.unwrap_or(240).clamp(24, 1000);
+    records.sort_by(|a, b| {
+        b.score_ui
+            .cmp(&a.score_ui)
+            .then_with(|| b.score_font.cmp(&a.score_font))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    records.truncate(limit);
+    let template = TextureCatalogTemplate {
+        records,
+        total_records,
+        filtered_records,
+        png_count,
+        query,
+        limit,
+    };
+    Html(template.render().expect("texture catalog template renders"))
+}
+
+async fn texture_duplicates() -> Html<String> {
+    let groups = texture_duplicate_groups(read_texture_records().await);
+    let total_duplicate_records = groups.iter().map(|group| group.records.len()).sum();
+    let template = TextureDuplicatesTemplate {
+        groups,
+        total_duplicate_records,
+    };
+    Html(
+        template
+            .render()
+            .expect("texture duplicates template renders"),
+    )
+}
+
+async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<String> {
+    let records = read_texture_records().await;
+    let selected_hash = params.hash.unwrap_or_default();
+    let selected_records = if selected_hash.is_empty() {
+        Vec::new()
+    } else {
+        records
+            .iter()
+            .filter(|record| record.texture_hash == selected_hash)
+            .cloned()
+            .collect()
+    };
+    let missing_hash_count = records
+        .iter()
+        .filter(|record| record.texture_hash.is_empty())
+        .count();
+    let template = TextureUploadTemplate {
+        groups: texture_duplicate_groups(records),
+        selected_hash,
+        selected_records,
+        uploaded_files: list_uploaded_texture_files(),
+        missing_hash_count,
+        manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
+        message: upload_message(params.status.as_deref(), params.count),
+        error: params.error.unwrap_or_default(),
+    };
+    Html(template.render().expect("texture upload template renders"))
+}
+
+async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
+    let mut texture_hash = String::new();
+    let mut png_bytes = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or_default().to_owned();
+        if name == "texture_hash" {
+            texture_hash = field.text().await.unwrap_or_default();
+        } else if name == "png" {
+            png_bytes = field
+                .bytes()
+                .await
+                .map(|bytes| bytes.to_vec())
+                .unwrap_or_default();
+        }
+    }
+
+    let texture_hash = texture_hash.trim();
+    if texture_hash.is_empty() || png_bytes.is_empty() {
+        return Redirect::to("/textures/upload?error=missing_upload_fields").into_response();
+    }
+
+    match apply_texture_upload(texture_hash, &png_bytes).await {
+        Ok(count) => {
+            Redirect::to(&format!("/textures/upload?status=ok&count={count}")).into_response()
+        }
+        Err(err) => Redirect::to(&format!(
+            "/textures/upload?error={}",
+            url_escape(&err.to_string())
+        ))
+        .into_response(),
+    }
 }
 
 async fn settings(
@@ -938,7 +1131,9 @@ async fn texture_inventory(State(state): State<AppState>) -> impl IntoResponse {
     tokio::spawn(async move {
         let _guard = guard;
         let result = tokio::task::spawn_blocking(|| {
-            write_texture_inventory(DATA_BIN_PATH, TEXTURE_INVENTORY_DIR)
+            write_texture_inventory_with_progress(DATA_BIN_PATH, TEXTURE_INVENTORY_DIR, |message| {
+                append_texture_log(&message);
+            })
         })
         .await;
 
@@ -1163,7 +1358,7 @@ fn run_full_build_steps(
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
         anyhow::bail!("missing originales/SLPS_256.11");
     }
-    if count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)) == 0 {
+    if build_type != "images" && count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)) == 0 {
         anyhow::bail!("missing extracted .dec scripts; run import first");
     }
 
@@ -1533,6 +1728,170 @@ fn read_import_log() -> String {
 
 fn read_texture_log() -> String {
     read_log(TEXTURE_LOG_PATH)
+}
+
+async fn read_texture_records() -> Vec<TextureRecord> {
+    let inventory_path = FsPath::new(TEXTURE_INVENTORY_DIR).join("textures.json");
+    match tokio::fs::read_to_string(&inventory_path).await {
+        Ok(contents) => serde_json::from_str::<Vec<TextureRecord>>(&contents).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn texture_duplicate_groups(records: Vec<TextureRecord>) -> Vec<TextureDuplicateGroup> {
+    let mut by_hash: BTreeMap<String, Vec<TextureRecord>> = BTreeMap::new();
+    for record in records
+        .into_iter()
+        .filter(|record| !record.texture_hash.is_empty())
+    {
+        by_hash
+            .entry(record.texture_hash.clone())
+            .or_default()
+            .push(record);
+    }
+    let mut groups = by_hash
+        .into_iter()
+        .filter_map(|(hash, mut records)| {
+            if records.len() < 2 {
+                return None;
+            }
+            records.sort_by_key(|record| {
+                (
+                    record.fat_row,
+                    record.nested_lz77_offset.unwrap_or(0),
+                    record.tim2_index,
+                    record.picture_index,
+                )
+            });
+            let preview_png = records
+                .iter()
+                .find(|record| !record.png.is_empty())
+                .map(|record| record.png.clone())
+                .unwrap_or_default();
+            Some(TextureDuplicateGroup {
+                hash,
+                records,
+                preview_png,
+            })
+        })
+        .collect::<Vec<_>>();
+    groups.sort_by(|a, b| {
+        b.records
+            .len()
+            .cmp(&a.records.len())
+            .then_with(|| a.hash.cmp(&b.hash))
+    });
+    groups
+}
+
+async fn apply_texture_upload(texture_hash: &str, png_bytes: &[u8]) -> anyhow::Result<usize> {
+    let records = read_texture_records().await;
+    let targets = records
+        .into_iter()
+        .filter(|record| record.texture_hash == texture_hash)
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        anyhow::bail!("hash de textura no encontrado; regenera el inventario si es viejo");
+    }
+    let (width, height) = png_dimensions(png_bytes)?;
+    let first = &targets[0];
+    if width != u32::from(first.width) || height != u32::from(first.height) {
+        anyhow::bail!(
+            "PNG {}x{} no coincide con textura {}x{}",
+            width,
+            height,
+            first.width,
+            first.height
+        );
+    }
+
+    tokio::fs::create_dir_all(TEXTURE_UPLOAD_DIR).await?;
+    if let Some(parent) = FsPath::new(TEXTURE_MANIFEST_PATH).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut manifest = read_texture_manifest();
+    for target in &targets {
+        manifest.retain(|entry| {
+            !(entry.file_id == target.id
+                && entry.tim2_index == target.tim2_index
+                && entry.picture_index == target.picture_index
+                && entry.lz77_offset == target.nested_lz77_offset)
+        });
+        let filename = uploaded_texture_filename(target);
+        let path = FsPath::new(TEXTURE_UPLOAD_DIR).join(&filename);
+        tokio::fs::write(&path, png_bytes).await?;
+        manifest.push(TextureManifestEntry {
+            file_id: target.id,
+            tim2_index: target.tim2_index,
+            picture_index: target.picture_index,
+            png: path.to_string_lossy().replace('\\', "/"),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: target.nested_lz77_offset,
+        });
+    }
+    manifest.sort_by_key(|entry| {
+        (
+            entry.file_id,
+            entry.lz77_offset.unwrap_or(0),
+            entry.tim2_index,
+            entry.picture_index,
+        )
+    });
+    tokio::fs::write(
+        TEXTURE_MANIFEST_PATH,
+        serde_json::to_string_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(targets.len())
+}
+
+fn read_texture_manifest() -> Vec<TextureManifestEntry> {
+    match fs::read_to_string(TEXTURE_MANIFEST_PATH) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn uploaded_texture_filename(record: &TextureRecord) -> String {
+    let nested = record
+        .nested_lz77_offset
+        .map(|offset| format!("_L{offset:06X}"))
+        .unwrap_or_default();
+    format!(
+        "ID_{:05}{}_T{:03}_P{:02}_{}x{}.png",
+        record.id, nested, record.tim2_index, record.picture_index, record.width, record.height
+    )
+}
+
+fn png_dimensions(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let reader = decoder.read_info()?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
+
+fn list_uploaded_texture_files() -> Vec<String> {
+    let Ok(entries) = fs::read_dir(TEXTURE_UPLOAD_DIR) else {
+        return Vec::new();
+    };
+    let mut files = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".png"))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+fn upload_message(status: Option<&str>, count: Option<usize>) -> String {
+    match status {
+        Some("ok") => format!(
+            "PNG aplicado a {} textura(s) duplicada(s) y manifest actualizado",
+            count.unwrap_or(0)
+        ),
+        _ => String::new(),
+    }
 }
 
 fn read_log(path: &str) -> String {

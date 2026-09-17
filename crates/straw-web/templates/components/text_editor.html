@@ -18,7 +18,7 @@
                     <div id="counter-{{ text.id }}" class="rounded-full bg-slate-800 px-3 py-1 font-mono text-xs text-slate-300">0 / {{ text.segment_capacity }} bytes</div>
                 </div>
             </div>
-            <textarea id="translated-{{ text.id }}" name="translated_text" rows="6" data-counter="counter-{{ text.id }}" data-capacity="{{ text.segment_capacity }}" data-source="{{ text.source }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400" placeholder="Escribe la traduccion aqui...">{{ text.translated_text }}</textarea>
+            <textarea id="translated-{{ text.id }}" name="translated_text" rows="4" data-counter="counter-{{ text.id }}" data-capacity="{{ text.segment_capacity }}" data-source="{{ text.source }}" class="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm text-white outline-none transition focus:border-pink-400" placeholder="Escribe la traduccion aqui...">{{ text.translated_text }}</textarea>
             <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
                 <div id="meter-{{ text.id }}" class="h-full w-0 bg-emerald-400 transition-all"></div>
             </div>
@@ -28,7 +28,7 @@
             <button type="submit" class="rounded-full bg-pink-500 px-5 py-2 text-sm font-bold text-white hover:bg-pink-400">Guardar</button>
             <button type="button" id="copy-original-{{ text.id }}" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800">Copiar original</button>
             <button type="button" id="clear-translation-{{ text.id }}" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800">Limpiar</button>
-            <button type="button" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800" hx-get="/api/texts/{{ text.id }}/view" hx-target="#entry-{{ text.id }}" hx-swap="outerHTML">Cancelar</button>
+            <button type="button" id="cancel-edit-{{ text.id }}" class="rounded-full border border-slate-700 px-5 py-2 text-sm font-bold text-slate-300 hover:bg-slate-800" hx-get="/api/texts/{{ text.id }}/view" hx-target="#entry-{{ text.id }}" hx-swap="outerHTML">Cancelar</button>
         </div>
     </form>
     <script>
@@ -40,6 +40,7 @@
             const form = document.getElementById('edit-form-{{ text.id }}');
             const copyOriginal = document.getElementById('copy-original-{{ text.id }}');
             const clearTranslation = document.getElementById('clear-translation-{{ text.id }}');
+            const cancelEdit = document.getElementById('cancel-edit-{{ text.id }}');
             const original = document.getElementById('original-{{ text.id }}');
             if (!textarea || !counter || !meter || !dirty || !form) return;
             const capacity = parseInt(textarea.dataset.capacity || '0', 10);
@@ -55,6 +56,8 @@
                 return Array.from(value).length * 2 + 2;
             }
             function refreshCounter() {
+                textarea.style.height = 'auto';
+                textarea.style.height = `${Math.max(120, textarea.scrollHeight)}px`;
                 const used = estimateBytes(textarea.value);
                 const pct = capacity > 0 ? Math.min(100, Math.round((used / capacity) * 100)) : 0;
                 const remaining = capacity - used;
@@ -69,6 +72,9 @@
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                     event.preventDefault();
                     form.requestSubmit();
+                } else if (event.key === 'Escape' && cancelEdit) {
+                    event.preventDefault();
+                    cancelEdit.click();
                 }
             });
             form.addEventListener('submit', function() {

@@ -110,6 +110,19 @@
     </main>
     <script>
         const importLog = document.getElementById('import-log');
+        const importWasRunning = {% if import_running %}true{% else %}false{% endif %};
+        let importReloadScheduled = false;
+
+        function importTaskFinished(text) {
+            return text.includes('Extraccion completada:')
+                || text.includes('SQLite importado:')
+                || text.includes('Fusion completada:')
+                || text.includes('ERROR extrayendo scripts:')
+                || text.includes('ERROR importando a SQLite:')
+                || text.includes('ERROR fusionando DB traducida:')
+                || text.includes('ERROR de tarea');
+        }
+
         async function refreshImportLog() {
             if (!importLog) return;
             try {
@@ -118,6 +131,10 @@
                 if (text.trim().length > 0 && importLog.textContent !== text) {
                     importLog.textContent = text;
                     importLog.scrollTop = importLog.scrollHeight;
+                }
+                if (importWasRunning && !importReloadScheduled && importTaskFinished(text)) {
+                    importReloadScheduled = true;
+                    setTimeout(() => window.location.href = '/import', 700);
                 }
             } catch (_) {}
         }

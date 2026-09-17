@@ -1797,6 +1797,7 @@ dependencies = [
  "anyhow",
  "askama",
  "axum",
+ "png",
  "serde",
  "serde_json",
  "sqlx",

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Catalogo de texturas - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-wrap items-center justify-between gap-3">
+            <a href="/textures" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Texturas</a>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/textures/duplicates" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Duplicados</a>
+                <a href="/textures/upload" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Subir PNG</a>
+            </div>
+        </nav>
+        <section class="mb-6 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Catalogo TIM2</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">{{ total_records }} imagenes detectadas</h1>
+            <p class="mt-3 text-slate-400">PNGs exportados: {{ png_count }}. Mostrando {{ records.len() }} de {{ filtered_records }} resultado(s).</p>
+        </section>
+        <form method="get" action="/textures/catalog" class="mb-6 grid gap-3 rounded-3xl border border-slate-800 bg-slate-900/70 p-4 md:grid-cols-[1fr_140px_auto]">
+            <input name="q" value="{{ query }}" placeholder="Buscar por ID, hash o tipo" class="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600">
+            <input name="limit" value="{{ limit }}" type="number" min="24" max="1000" class="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100">
+            <button class="rounded-2xl bg-pink-500 px-5 py-3 text-sm font-bold text-white hover:bg-pink-400">Filtrar</button>
+        </form>
+        <section class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {% for record in records %}
+            <article class="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80">
+                <div class="flex h-48 items-center justify-center bg-slate-950/80 p-3">
+                    {% if record.png.len() > 0 %}<img src="/texture-assets/{{ record.png }}" class="max-h-full max-w-full object-contain [image-rendering:pixelated]" alt="ID {{ record.id }}">{% else %}<span class="text-sm font-bold text-slate-500">Sin PNG</span>{% endif %}
+                </div>
+                <div class="space-y-2 p-4 text-sm">
+                    <div class="font-mono font-black text-pink-200">ID {{ record.id }}</div>
+                    <div class="text-slate-300">T{{ record.tim2_index }} P{{ record.picture_index }} · {{ record.width }}x{{ record.height }}</div>
+                    <div class="break-all font-mono text-xs text-slate-500">{{ record.texture_hash }}</div>
+                    {% if record.nested_lz77_offset.is_some() %}<div class="text-xs font-bold text-amber-300">LZ77 anidado</div>{% endif %}
+                    {% if record.texture_hash.len() > 0 %}
+                    <div class="flex flex-wrap gap-2 pt-2 text-xs font-bold">
+                        <a href="/textures/catalog?q={{ record.texture_hash }}" class="rounded-full border border-slate-700 px-3 py-1 text-slate-300 hover:text-pink-200">ver copias</a>
+                        <a href="/textures/upload?hash={{ record.texture_hash }}" class="rounded-full border border-pink-400/40 bg-pink-500/10 px-3 py-1 text-pink-100 hover:bg-pink-500/20">subir editada</a>
+                    </div>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+            {% if records.len() == 0 %}
+            <div class="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-100">No hay resultados para ese filtro.</div>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

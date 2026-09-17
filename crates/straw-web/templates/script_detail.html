@@ -43,7 +43,7 @@
         </section>
 
         <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">
-            Haz click en una fila para editar. Usa <span class="font-mono text-pink-200">Ctrl+Enter</span> para guardar rapido.
+            Haz click en una fila para editar. Atajos: <span class="font-mono text-pink-200">Ctrl+Enter</span> guarda, <span class="font-mono text-pink-200">Esc</span> cancela edicion, <span class="font-mono text-pink-200">/</span> enfoca busqueda.
         </section>
 
         <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
@@ -54,7 +54,7 @@
                 </div>
                 <form class="flex min-w-0 flex-col gap-2 sm:flex-row" method="get" action="/search">
                     <input type="hidden" name="script_id" value="{{ detail.script.id }}">
-                    <input name="q" placeholder="buscar dentro del script..." class="min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-pink-400">
+                    <input id="script-search" name="q" placeholder="buscar dentro del script..." class="min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-pink-400">
                     <button class="rounded-xl bg-pink-500 px-4 py-2 text-sm font-bold text-white hover:bg-pink-400">Buscar aqui</button>
                 </form>
             </div>
@@ -66,6 +66,25 @@
                 <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=needs_shift" class="rounded-full border px-3 py-2 {% if status_filter == "needs_shift" %}border-red-400 bg-red-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-red-400 hover:text-red-200{% endif %}">Needs shift</a>
             </div>
         </section>
+
+        <nav class="mb-4 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex flex-wrap items-center gap-2">
+                <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
+                <span class="px-2 text-slate-500">Pagina {{ detail.page }} de {{ detail.total_pages }}</span>
+                <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
+            </div>
+            <form method="get" action="/scripts/{{ detail.script.id }}" class="flex items-center gap-2">
+                <input type="hidden" name="page" value="1">
+                {% if status_filter != "all" %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+                <label class="text-slate-500" for="limit">Filas</label>
+                <select id="limit" name="limit" class="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white" onchange="this.form.submit()">
+                    <option value="25" {% if detail.limit == 25 %}selected{% endif %}>25</option>
+                    <option value="50" {% if detail.limit == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if detail.limit == 100 %}selected{% endif %}>100</option>
+                    <option value="200" {% if detail.limit == 200 %}selected{% endif %}>200</option>
+                </select>
+            </form>
+        </nav>
 
         <section class="space-y-4">
             {% if detail.texts.len() == 0 %}
@@ -85,5 +104,16 @@
             <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
         </nav>
     </main>
+    <script>
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+            const active = document.activeElement;
+            if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
+            const search = document.getElementById('script-search');
+            if (!search) return;
+            event.preventDefault();
+            search.focus();
+        });
+    </script>
 </body>
 </html>

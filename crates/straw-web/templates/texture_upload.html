@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Subir texturas - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-wrap items-center justify-between gap-3">
+            <a href="/textures" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Texturas</a>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/textures/catalog" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Catalogo</a>
+                <a href="/textures/duplicates" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Duplicados</a>
+            </div>
+        </nav>
+        <section class="mb-6 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Upload</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Subir PNG editado</h1>
+            <p class="mt-3 text-slate-400">Sube un PNG editado para una textura o un grupo duplicado. El sistema copia nombres correctos y actualiza <span class="font-mono text-pink-200">texturas/manifest.json</span>.</p>
+            {% if missing_hash_count > 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">Hay {{ missing_hash_count }} textura(s) sin hash. Regenera inventario para detectar duplicados correctamente.</div>{% endif %}
+            {% if groups.len() == 0 && selected_records.len() == 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">No hay grupos duplicados disponibles. Puedes ir al catalogo y usar “subir editada” en una textura concreta.</div>{% endif %}
+            {% if selected_hash.len() > 0 && selected_records.len() == 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">El hash seleccionado no existe en el inventario actual.</div>{% endif %}
+            {% if message.len() > 0 %}<div class="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100">{{ message }}</div>{% endif %}
+            {% if error.len() > 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">{{ error }}</div>{% endif %}
+        </section>
+        <section class="grid gap-6 lg:grid-cols-2">
+            <form method="post" action="/textures/upload" enctype="multipart/form-data" class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                {% if selected_records.len() > 0 %}
+                <input type="hidden" name="texture_hash" value="{{ selected_hash }}">
+                <div class="rounded-2xl border border-pink-400/30 bg-pink-500/10 p-4">
+                    <div class="text-sm font-bold text-pink-100">Objetivo seleccionado</div>
+                    <div class="mt-2 break-all font-mono text-xs text-pink-200">{{ selected_hash }}</div>
+                    <div class="mt-2 text-sm text-slate-300">Se aplicara a {{ selected_records.len() }} textura(s).</div>
+                    <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                        {% for record in selected_records %}
+                        <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% else %}
+                <label class="text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_hash">Grupo duplicado</label>
+                <select id="texture_hash" name="texture_hash" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100">
+                    {% for group in groups %}
+                    <option value="{{ group.hash }}">{{ group.records.len() }} copias · {{ group.hash }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+                <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="png">PNG editado</label>
+                <input id="png" name="png" type="file" accept="image/png" required class="mt-2 w-full rounded-2xl border border-dashed border-pink-400/40 bg-slate-950 p-6 text-sm text-slate-300">
+                {% if groups.len() > 0 || selected_records.len() > 0 %}<button class="mt-5 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Subir y actualizar manifest</button>{% else %}<button class="mt-5 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Selecciona una textura desde catalogo</button>{% endif %}
+            </form>
+            <section class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                <h2 class="text-xl font-black">Imagenes ya cargadas</h2>
+                <p class="mt-2 text-sm text-slate-400">Manifest: {% if manifest_exists %}<span class="text-emerald-300">existe</span>{% else %}<span class="text-slate-500">pendiente</span>{% endif %}</p>
+                <div class="mt-4 max-h-96 space-y-2 overflow-auto text-sm">
+                    {% for file in uploaded_files %}
+                    <div class="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300">{{ file }}</div>
+                    {% endfor %}
+                    {% if uploaded_files.len() == 0 %}<div class="text-slate-500">No hay PNGs subidos todavia.</div>{% endif %}
+                </div>
+            </section>
+        </section>
+    </main>
+</body>
+</html>

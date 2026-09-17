@@ -38,5 +38,5 @@ pub use script_rebuilder::{
 };
 pub use texture_inventory::{
     inject_patched_texture_streams, patch_textures_from_manifest, write_texture_inventory,
-    TextureInjectReport, TexturePatchReport, TextureRecord,
+    write_texture_inventory_with_progress, TextureInjectReport, TexturePatchReport, TextureRecord,
 };

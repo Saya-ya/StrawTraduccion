@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Duplicados TIM2 - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        <nav class="mb-8 flex flex-wrap items-center justify-between gap-3">
+            <a href="/textures" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Texturas</a>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/textures/catalog" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Catalogo</a>
+                <a href="/textures/upload" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Subir PNG</a>
+            </div>
+        </nav>
+        <section class="mb-6 rounded-3xl border border-amber-400/20 bg-slate-900/80 p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-amber-300">Duplicados por hash</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">{{ groups.len() }} grupos duplicados</h1>
+            <p class="mt-3 text-slate-400">Registros en grupos duplicados: {{ total_duplicate_records }}.</p>
+        </section>
+        <section class="space-y-4">
+            {% for group in groups %}
+            <article class="rounded-3xl border border-slate-800 bg-slate-900/80 p-5">
+                <div class="flex flex-col gap-4 md:flex-row">
+                    <div class="flex h-32 w-full shrink-0 items-center justify-center rounded-2xl bg-slate-950 md:w-48">
+                        {% if group.preview_png.len() > 0 %}<img src="/texture-assets/{{ group.preview_png }}" class="max-h-full max-w-full object-contain [image-rendering:pixelated]" alt="duplicado">{% endif %}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="break-all font-mono text-xs text-pink-200">{{ group.hash }}</div>
+                        <div class="mt-2 text-lg font-black">{{ group.records.len() }} copias</div>
+                        <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                            {% for record in group.records %}
+                            <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+            {% if groups.len() == 0 %}
+            <div class="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-100">
+                No hay duplicados por hash. Si acabas de actualizar desde un inventario viejo, vuelve a ejecutar “Generar inventario”.
+            </div>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

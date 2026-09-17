@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{borrow::Cow, collections::BTreeMap, fs, path::Path, sync::mpsc, thread, time::Instant};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ pub struct TextureRecord {
     pub clut_color_count: u16,
     pub score_ui: i32,
     pub score_font: i32,
+    #[serde(default)]
+    pub texture_hash: String,
     pub png: String,
 }
 
@@ -83,11 +85,26 @@ pub fn write_texture_inventory(
     data_bin: impl AsRef<Path>,
     out_dir: impl AsRef<Path>,
 ) -> Result<Vec<TextureRecord>> {
+    write_texture_inventory_with_progress(data_bin, out_dir, |_| {})
+}
+
+pub fn write_texture_inventory_with_progress(
+    data_bin: impl AsRef<Path>,
+    out_dir: impl AsRef<Path>,
+    mut progress: impl FnMut(String),
+) -> Result<Vec<TextureRecord>> {
     let data_bin = data_bin.as_ref();
+    progress(format!("Leyendo {}", data_bin.display()));
     let data =
         fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
+    progress(format!("Data.bin leido: {} bytes", data.len()));
     let rows = read_entries(data_bin)?;
-    let records = texture_inventory_from_data(&data, rows);
+    let file_rows = rows
+        .into_iter()
+        .filter(|row| row.is_file && row.size > 0)
+        .collect::<Vec<_>>();
+    let total_rows = file_rows.len();
+    progress(format!("FAT leida: {total_rows} archivos con datos"));
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -95,27 +112,30 @@ pub fn write_texture_inventory(
     fs::create_dir_all(&png_dir)
         .with_context(|| format!("failed to create {}", png_dir.display()))?;
 
-    let mut records = records;
-    for record in &mut records {
-        if let Some(png_path) = write_record_png(&data, &png_dir, record)? {
-            record.png = format!(
-                "png/{}",
-                png_path.file_name().unwrap_or_default().to_string_lossy()
-            );
-        }
-    }
+    progress("Escaneando archivos y exportando PNGs TIM2".to_owned());
+    let records = texture_inventory_from_data(&data, &file_rows, &png_dir, &mut progress)?;
 
     let json_path = out_dir.join("textures.json");
+    progress(format!("Escribiendo {}", json_path.display()));
     fs::write(&json_path, serde_json::to_string_pretty(&records)?)
         .with_context(|| format!("failed to write {}", json_path.display()))?;
 
     let csv_path = out_dir.join("textures.csv");
+    progress(format!("Escribiendo {}", csv_path.display()));
     let mut writer = csv::Writer::from_path(&csv_path)
         .with_context(|| format!("failed to write {}", csv_path.display()))?;
     for record in &records {
         writer.serialize(record)?;
     }
     writer.flush()?;
+    let pngs = records
+        .iter()
+        .filter(|record| !record.png.is_empty())
+        .count();
+    progress(format!(
+        "Inventario completado: {} texturas detectadas, {pngs} PNGs exportados",
+        records.len()
+    ));
     Ok(records)
 }
 
@@ -259,33 +279,150 @@ fn parse_patched_stream_id(path: &Path) -> Option<u32> {
         .ok()
 }
 
-fn texture_inventory_from_data(data: &[u8], rows: Vec<FatEntry>) -> Vec<TextureRecord> {
-    let mut records = Vec::new();
+fn texture_inventory_from_data(
+    data: &[u8],
+    rows: &[FatEntry],
+    png_dir: &Path,
+    progress: &mut impl FnMut(String),
+) -> Result<Vec<TextureRecord>> {
+    let total_rows = rows.len();
+    if total_rows == 0 {
+        progress(
+            "Escaneo terminado: 0/0 archivos; 0 texturas detectadas; 0 PNGs exportados".to_owned(),
+        );
+        return Ok(Vec::new());
+    }
 
-    for row in rows.into_iter().filter(|row| row.is_file && row.size > 0) {
+    let workers = thread::available_parallelism()
+        .map(|workers| workers.get())
+        .unwrap_or(1)
+        .clamp(1, total_rows);
+    progress(format!(
+        "Usando {workers} hilos para escanear/exportar texturas"
+    ));
+
+    if workers == 1 {
+        let (records, stats) = process_texture_rows_chunk(data, rows, png_dir, None)?;
+        progress(format!(
+            "Escaneo terminado: {}/{} archivos; {} texturas detectadas; {} PNGs exportados",
+            stats.scanned,
+            total_rows,
+            records.len(),
+            stats.exported_pngs
+        ));
+        return Ok(records);
+    }
+
+    let (progress_tx, progress_rx) = mpsc::channel::<TextureProgress>();
+    let chunk_size = total_rows.div_ceil(workers);
+    let mut results = Vec::new();
+    let mut worker_panicked = false;
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in rows.chunks(chunk_size) {
+            let progress_tx = progress_tx.clone();
+            handles.push(scope.spawn(move || {
+                process_texture_rows_chunk(data, chunk, png_dir, Some(&progress_tx))
+            }));
+        }
+        drop(progress_tx);
+
+        let mut scanned = 0usize;
+        let mut found = 0usize;
+        let mut exported_pngs = 0usize;
+        let mut last_message = Instant::now();
+        for update in progress_rx {
+            scanned += update.scanned;
+            found += update.found;
+            exported_pngs += update.exported_pngs;
+            if scanned == total_rows || last_message.elapsed().as_secs() >= 3 {
+                progress(format!(
+                    "Escaneando archivos: {scanned}/{total_rows}; texturas detectadas: {found}; PNGs exportados: {exported_pngs}"
+                ));
+                last_message = Instant::now();
+            }
+        }
+
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => results.push(result),
+                Err(_) => worker_panicked = true,
+            }
+        }
+    });
+    if worker_panicked {
+        bail!("texture worker panicked");
+    }
+
+    let mut records = Vec::new();
+    let mut exported_pngs = 0usize;
+    for result in results {
+        let (mut chunk_records, stats) = result?;
+        exported_pngs += stats.exported_pngs;
+        records.append(&mut chunk_records);
+    }
+    records.sort_by_key(|record| {
+        (
+            record.fat_row,
+            record.nested_lz77_offset.unwrap_or(0),
+            record.tim2_index,
+            record.picture_index,
+        )
+    });
+
+    progress(format!(
+        "Escaneo terminado: {total_rows}/{total_rows} archivos; {} texturas detectadas; {exported_pngs} PNGs exportados",
+        records.len()
+    ));
+    Ok(records)
+}
+
+#[derive(Debug, Default)]
+struct TextureProgress {
+    scanned: usize,
+    found: usize,
+    exported_pngs: usize,
+}
+
+fn process_texture_rows_chunk(
+    data: &[u8],
+    rows: &[FatEntry],
+    png_dir: &Path,
+    progress_tx: Option<&mpsc::Sender<TextureProgress>>,
+) -> Result<(Vec<TextureRecord>, TextureProgress)> {
+    let mut records = Vec::new();
+    let mut stats = TextureProgress::default();
+    let mut pending = TextureProgress::default();
+
+    for row in rows {
+        stats.scanned += 1;
+        pending.scanned += 1;
         let start = row.offset as usize;
         let end = start.saturating_add(row.size as usize).min(data.len());
         if start >= end || end > data.len() {
+            send_texture_progress(progress_tx, &mut pending);
             continue;
         }
         let raw = &data[start..end];
         let mut candidates = Vec::new();
         if raw.starts_with(b"LZ77") {
             if let Ok(blob) = decompress_lz77(raw, None, false) {
-                candidates.push((blob, true, None, None));
+                candidates.push((Cow::Owned(blob), true, None, None));
             }
         } else {
-            candidates.push((raw.to_vec(), false, None, None));
+            candidates.push((Cow::Borrowed(raw), false, None, None));
             for (nested_off, nested_size, blob) in iter_nested_lz77(raw) {
-                candidates.push((blob, true, Some(nested_off), Some(nested_size)));
+                candidates.push((Cow::Owned(blob), true, Some(nested_off), Some(nested_size)));
             }
         }
 
         for (blob, compressed, nested_lz77_offset, nested_lz77_size) in candidates {
-            for (tim2_index, tim2) in find_tim2_files(&blob).into_iter().enumerate() {
+            for (tim2_index, tim2) in find_tim2_files(blob.as_ref()).into_iter().enumerate() {
+                let tim2_offset = tim2.offset;
                 for pic in tim2.pictures {
                     let unique = unique_index_count(&pic);
-                    records.push(TextureRecord {
+                    let texture_hash = texture_hash(&pic);
+                    let mut record = TextureRecord {
                         id: row.id,
                         fat_row: row.row,
                         file_offset: row.offset,
@@ -294,7 +431,7 @@ fn texture_inventory_from_data(data: &[u8], rows: Vec<FatEntry>) -> Vec<TextureR
                         nested_lz77_offset,
                         nested_lz77_size,
                         tim2_index,
-                        tim2_offset: tim2.offset,
+                        tim2_offset,
                         picture_index: pic.index,
                         width: pic.width,
                         height: pic.height,
@@ -305,14 +442,48 @@ fn texture_inventory_from_data(data: &[u8], rows: Vec<FatEntry>) -> Vec<TextureR
                         clut_color_count: pic.clut_color_count,
                         score_ui: score_ui(&pic, unique),
                         score_font: score_font(&pic, unique),
+                        texture_hash,
                         png: String::new(),
-                    });
+                    };
+                    if let Some(png_path) = write_picture_png(&pic, png_dir, &record)? {
+                        record.png = format!(
+                            "png/{}",
+                            png_path.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                        stats.exported_pngs += 1;
+                        pending.exported_pngs += 1;
+                    }
+                    stats.found += 1;
+                    pending.found += 1;
+                    records.push(record);
                 }
             }
         }
+
+        if pending.scanned >= 100 || pending.exported_pngs >= 100 {
+            send_texture_progress(progress_tx, &mut pending);
+        }
     }
 
-    records
+    send_texture_progress(progress_tx, &mut pending);
+    Ok((records, stats))
+}
+
+fn send_texture_progress(
+    progress_tx: Option<&mpsc::Sender<TextureProgress>>,
+    pending: &mut TextureProgress,
+) {
+    if pending.scanned == 0 && pending.found == 0 && pending.exported_pngs == 0 {
+        return;
+    }
+    if let Some(progress_tx) = progress_tx {
+        let _ = progress_tx.send(TextureProgress {
+            scanned: pending.scanned,
+            found: pending.found,
+            exported_pngs: pending.exported_pngs,
+        });
+    }
+    *pending = TextureProgress::default();
 }
 
 fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Vec<u8>, usize)> {
@@ -513,43 +684,11 @@ fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
     Ok(size)
 }
 
-fn write_record_png(
-    data: &[u8],
+fn write_picture_png(
+    pic: &Tim2Picture,
     png_dir: &Path,
     record: &TextureRecord,
 ) -> Result<Option<std::path::PathBuf>> {
-    let start = record.file_offset as usize;
-    let end = start
-        .saturating_add(record.raw_size as usize)
-        .min(data.len());
-    if start >= end {
-        return Ok(None);
-    }
-    let raw = &data[start..end];
-    let blob = if let Some(nested_off) = record.nested_lz77_offset {
-        let Some(nested_size) = record.nested_lz77_size else {
-            return Ok(None);
-        };
-        if nested_off + nested_size > raw.len() {
-            return Ok(None);
-        }
-        decompress_lz77(&raw[nested_off..nested_off + nested_size], None, false)?
-    } else if record.compressed {
-        decompress_lz77(raw, None, false)?
-    } else {
-        raw.to_vec()
-    };
-
-    let Some(tm2) = find_tim2_files(&blob).into_iter().nth(record.tim2_index) else {
-        return Ok(None);
-    };
-    let Some(pic) = tm2
-        .pictures
-        .into_iter()
-        .find(|pic| pic.index == record.picture_index)
-    else {
-        return Ok(None);
-    };
     let Ok(rgba) = picture_to_rgba(&pic) else {
         return Ok(None);
     };
@@ -603,7 +742,8 @@ fn find_tim2_files(data: &[u8]) -> Vec<Tim2File> {
 }
 
 fn parse_tim2(data: &[u8], offset: usize) -> Option<Tim2File> {
-    if data.get(offset..offset + 16)?[0..4] != *b"TIM2" {
+    let file_header_end = offset.checked_add(16)?;
+    if data.get(offset..file_header_end)?[0..4] != *b"TIM2" {
         return None;
     }
     let version = data[offset + 4];
@@ -611,10 +751,10 @@ fn parse_tim2(data: &[u8], offset: usize) -> Option<Tim2File> {
     if !(3..=4).contains(&version) || num_pictures == 0 || num_pictures > 256 {
         return None;
     }
-    let mut pos = offset + 16;
+    let mut pos = file_header_end;
     let mut pictures = Vec::new();
     for index in 0..num_pictures {
-        if pos + 48 > data.len() {
+        if pos.checked_add(48)? > data.len() {
             return None;
         }
         let total_size = read_u32(data, pos)?;
@@ -627,13 +767,16 @@ fn parse_tim2(data: &[u8], offset: usize) -> Option<Tim2File> {
         let height = read_u16(data, pos + 0x16)?;
         if header_size < 48
             || total_size < header_size as u32
-            || total_size != header_size as u32 + image_size + clut_size
+            || Some(total_size)
+                != (header_size as u32)
+                    .checked_add(image_size)
+                    .and_then(|size| size.checked_add(clut_size))
         {
             return None;
         }
-        let image_start = pos + header_size;
-        let image_end = image_start + image_size as usize;
-        let clut_end = image_end + clut_size as usize;
+        let image_start = pos.checked_add(header_size)?;
+        let image_end = image_start.checked_add(image_size as usize)?;
+        let clut_end = image_end.checked_add(clut_size as usize)?;
         if width == 0 || height == 0 || width > 8192 || height > 8192 || clut_end > data.len() {
             return None;
         }
@@ -650,7 +793,7 @@ fn parse_tim2(data: &[u8], offset: usize) -> Option<Tim2File> {
             image_data: data[image_start..image_end].to_vec(),
             clut_data: data[image_end..clut_end].to_vec(),
         });
-        pos += total_size as usize;
+        pos = pos.checked_add(total_size as usize)?;
     }
     Some(Tim2File { offset, pictures })
 }
@@ -913,6 +1056,24 @@ fn score_font(pic: &Tim2Picture, unique: Option<usize>) -> i32 {
     score
 }
 
+fn texture_hash(pic: &Tim2Picture) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    fn add(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+
+    add(&mut hash, &[pic.image_type]);
+    add(&mut hash, &pic.width.to_le_bytes());
+    add(&mut hash, &pic.height.to_le_bytes());
+    add(&mut hash, &pic.clut_color_count.to_le_bytes());
+    add(&mut hash, &pic.image_data);
+    add(&mut hash, &pic.clut_data);
+    format!("{hash:016x}")
+}
+
 fn image_type_name(image_type: u8) -> &'static str {
     match image_type {
         0 => "PSMCT32/RGBA32?",
@@ -926,12 +1087,12 @@ fn image_type_name(image_type: u8) -> &'static str {
 }
 
 fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2)
+    data.get(offset..offset.checked_add(2)?)
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
 fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4)
+    data.get(offset..offset.checked_add(4)?)
         .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
@@ -966,5 +1127,24 @@ mod tests {
         assert_eq!(parsed.pictures.len(), 1);
         assert_eq!(parsed.pictures[0].image_type, 0);
         assert_eq!(parsed.pictures[0].width, 1);
+    }
+
+    #[test]
+    fn ignores_corrupt_tim2_size_overflow() {
+        let mut data = b"TIM2".to_vec();
+        data.extend([4, 0]);
+        data.extend(1_u16.to_le_bytes());
+        data.extend([0; 8]);
+        data.extend(48_u32.to_le_bytes());
+        data.extend(0_u32.to_le_bytes());
+        data.extend(u32::MAX.to_le_bytes());
+        data.extend(48_u16.to_le_bytes());
+        data.extend(0_u16.to_le_bytes());
+        data.extend([0, 0, 0, 0]);
+        data.extend(1_u16.to_le_bytes());
+        data.extend(1_u16.to_le_bytes());
+        data.extend([0; 24]);
+
+        assert!(find_tim2_files(&data).is_empty());
     }
 }

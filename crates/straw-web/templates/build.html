@@ -51,6 +51,7 @@
             </div>
         </section>
 
+        {% if build_running %}<div class="mb-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-100"><span class="font-black">Build en curso.</span> Puedes dejar esta pagina abierta; la pestaña Logs se actualiza sola.</div>{% endif %}
         {% if message.len() > 0 %}<div class="mb-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>{% endif %}
         {% if error.len() > 0 %}<div class="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>{% endif %}
 
@@ -73,7 +74,7 @@
                     <form method="post" action="/build/run-full" class="build-action space-y-3">
                         <label class="block text-sm">
                             <span class="font-bold text-pink-100">Tipo</span>
-                            <select name="build_type" class="mt-1 w-full rounded-xl border border-pink-400/30 bg-slate-950 px-3 py-2 text-white">
+                            <select id="build-type" name="build_type" class="mt-1 w-full rounded-xl border border-pink-400/30 bg-slate-950 px-3 py-2 text-white">
                                 <option value="full"{% if default_build_type == "full" %} selected{% endif %}>Completo: textos + texturas</option>
                                 <option value="texts"{% if default_build_type == "texts" %} selected{% endif %}>Solo textos</option>
                                 <option value="images"{% if default_build_type == "images" %} selected{% endif %}>Solo texturas</option>
@@ -88,11 +89,7 @@
                             </select>
                             <span class="mt-1 block text-xs text-pink-100/60">Usa 1-2 si quieres menos carga.</span>
                         </label>
-                        {% if data_bin_exists && base_iso_exists && original_elf_exists && dec_count > 0 && !build_running %}
-                        <button class="w-full rounded-full bg-white px-7 py-3 font-black text-slate-950 shadow-lg shadow-pink-950/40 hover:bg-pink-100">Ejecutar build completo</button>
-                        {% else %}
-                        <button class="w-full rounded-full bg-slate-700 px-7 py-3 font-black text-slate-400" disabled>{% if build_running %}Build corriendo{% else %}Faltan prerequisitos{% endif %}</button>
-                        {% endif %}
+                        <button id="full-build-button" class="w-full rounded-full px-7 py-3 font-black shadow-lg shadow-pink-950/40" data-base-ready="{% if data_bin_exists && base_iso_exists && original_elf_exists %}1{% else %}0{% endif %}" data-text-ready="{% if dec_count > 0 %}1{% else %}0{% endif %}" data-running="{% if build_running %}1{% else %}0{% endif %}">Ejecutar build completo</button>
                     </form>
                 </div>
             </div>
@@ -172,6 +169,17 @@
     </main>
     <script>
         const buildLog = document.getElementById('build-log');
+        const buildWasRunning = {% if build_running %}true{% else %}false{% endif %};
+        let buildReloadScheduled = false;
+
+        function buildTaskFinished(text) {
+            return text.includes('Build completo finalizado correctamente:')
+                || text.includes('ISO generada:')
+                || text.includes('ELF inyectado en ISO:')
+                || text.includes('ERROR ')
+                || text.includes('ERROR:');
+        }
+
         async function refreshBuildLog() {
             if (!buildLog) return;
             try {
@@ -180,6 +188,10 @@
                 if (text.trim().length > 0 && buildLog.textContent !== text) {
                     buildLog.textContent = text;
                     buildLog.scrollTop = buildLog.scrollHeight;
+                }
+                if (buildWasRunning && !buildReloadScheduled && buildTaskFinished(text)) {
+                    buildReloadScheduled = true;
+                    setTimeout(() => window.location.href = '/build#logs', 700);
                 }
             } catch (_) {}
         }
@@ -207,6 +219,24 @@
         const initialTab = location.hash.replace('#', '');
         if (['complete', 'manual', 'textures', 'logs', 'history'].includes(initialTab)) activateTab(initialTab);
         if (new URLSearchParams(location.search).has('started')) activateTab('logs');
+
+        const buildType = document.getElementById('build-type');
+        const fullBuildButton = document.getElementById('full-build-button');
+        function refreshFullBuildButton() {
+            if (!buildType || !fullBuildButton) return;
+            const baseReady = fullBuildButton.dataset.baseReady === '1';
+            const textReady = fullBuildButton.dataset.textReady === '1';
+            const running = fullBuildButton.dataset.running === '1';
+            const imagesOnly = buildType.value === 'images';
+            const ready = baseReady && (imagesOnly || textReady) && !running;
+            fullBuildButton.disabled = !ready;
+            fullBuildButton.textContent = running ? 'Build corriendo' : (ready ? 'Ejecutar build completo' : (baseReady && !textReady && !imagesOnly ? 'Importa scripts primero' : 'Faltan prerequisitos'));
+            fullBuildButton.className = ready
+                ? 'w-full rounded-full bg-white px-7 py-3 font-black text-slate-950 shadow-lg shadow-pink-950/40 hover:bg-pink-100'
+                : 'w-full rounded-full bg-slate-700 px-7 py-3 font-black text-slate-400 shadow-lg shadow-pink-950/40';
+        }
+        if (buildType) buildType.addEventListener('change', refreshFullBuildButton);
+        refreshFullBuildButton();
 
         document.querySelectorAll('form.build-action').forEach((form) => {
             form.addEventListener('submit', () => {

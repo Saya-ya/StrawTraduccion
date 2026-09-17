@@ -13,6 +13,7 @@
             <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
                 <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Build</a>
                 <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Imagenes</a>
+                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Importar</a>
             </div>
         </nav>
 
@@ -58,14 +59,17 @@
                             <option value="{{ n }}" {% if n == default_workers_setting %}selected{% endif %}>{{ n }} proceso{% if n != 1 %}s{% endif %}</option>
                             {% endfor %}
                         </select>
+                        <span class="mt-2 block text-xs text-slate-500">Mas procesos acelera build, pero puede hacer la PC menos responsiva.</span>
                     </label>
                     <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
                         <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Filas por pagina de script</span>
                         <input name="script_page_limit" type="number" min="10" max="200" value="{{ script_page_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                        <span class="mt-2 block text-xs text-slate-500">Sube este valor si prefieres menos paginas; bajalo si el navegador se siente lento.</span>
                     </label>
                     <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
                         <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Resultados maximos de busqueda</span>
                         <input name="search_result_limit" type="number" min="10" max="500" value="{{ search_result_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                        <span class="mt-2 block text-xs text-slate-500">Limita resultados para mantener busquedas rapidas.</span>
                     </label>
                 </div>
                 <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Guardar cambios</button>
