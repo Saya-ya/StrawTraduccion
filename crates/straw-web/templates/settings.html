@@ -42,7 +42,7 @@
                             <option value="en" {% if target_lang == "en" %}selected{% endif %}>English</option>
                             <option value="custom" {% if target_lang == "custom" %}selected{% endif %}>Personalizado</option>
                         </select>
-                        <span class="mt-2 block text-xs text-slate-500">Afecta el glyph map usado al parchear scripts/ELF. ES/custom usan mapa español; EN no remapea glifos.</span>
+                        <span class="mt-2 block text-xs text-slate-500">Afecta el mapa usado para textos y para ajustar automaticamente las metricas de las fuentes editadas.</span>
                     </label>
                     <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
                         <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Build por defecto</span>
@@ -72,6 +72,11 @@
                         <span class="mt-2 block text-xs text-slate-500">Limita resultados para mantener busquedas rapidas.</span>
                     </label>
                 </div>
+                <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                    <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Mapa de glifos personalizado</span>
+                    <textarea name="custom_glyph_map" rows="8" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-white outline-none focus:border-pink-400">{{ custom_glyph_map }}</textarea>
+                    <span class="mt-2 block text-xs text-slate-500">JSON en formato carácter deseado → slot donante, por ejemplo <span class="font-mono text-pink-200">{"ã":"Г","ç":"Д"}</span>. Se usa cuando el idioma objetivo es Personalizado. Los alias que comparten donante comparten dibujo y métricas.</span>
+                </label>
                 <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Guardar cambios</button>
             </form>
         </section>

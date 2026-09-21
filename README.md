@@ -148,10 +148,23 @@ aparece en esa tabla. En los originales del proyecto esta en `0x60000` y contien
 - El build resuelve de nuevo el puntero desde el Data original. Al inyectar,
   conserva la cabecera y la FAT; usa el tamano del propio stream LZ77 y comprueba
   que quepa antes del primer archivo FAT.
+- Cuando se parchea una hoja de este recurso, el mapa de glifos activo identifica
+  los slots donantes. Si el alfa del slot cambio frente al original, el build
+  ajusta automaticamente su coordenada X y ancho al contenido visible, con un
+  pixel de margen por lado. Y, alto y pagina se conservan para no alterar la
+  linea base. El ajuste nunca se expande fuera del rectangulo donante original,
+  por lo que no puede invadir el siguiente glifo.
+- Las metricas se actualizan sobre las entradas existentes: no se agregan
+  caracteres ni se modifica la estructura de la tabla. Los alias que apuntan al
+  mismo donante comparten dibujo y metrica.
 
 Para actualizar un inventario anterior, ejecuta **Generar inventario** en
 Texturas. Subir un PNG prepara el manifest; el parcheo y la ISO se generan en
 Build.
+
+El idioma `Personalizado` acepta en Configuracion un mapa JSON en formato
+`caracter deseado -> slot donante`, por ejemplo `{"ã":"Г","ç":"Д"}`. Ese mismo
+mapa se usa para codificar textos y ajustar las metricas de fuente.
 
 El inventario genera:
 

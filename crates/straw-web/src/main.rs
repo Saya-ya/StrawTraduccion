@@ -22,8 +22,9 @@ use sqlx::SqlitePool;
 use straw_core::{
     build_iso_with_patched_data, copy_file_creating_parent, english_glyph_map,
     extract_lz77_scripts_to_dir, inject_elf_into_iso, inject_patched_texture_streams,
-    patch_textures_from_manifest, patch_translated_elf, patch_translated_scripts,
-    spanish_glyph_map, write_texture_inventory_with_progress, GlyphMap, TextureRecord,
+    patch_textures_from_manifest_with_glyph_map, patch_translated_elf, patch_translated_scripts,
+    spanish_glyph_map, validate_glyph_map, write_texture_inventory_with_progress, GlyphMap,
+    TextureRecord,
 };
 use straw_db::{
     connect_path, export_translations_csv, get_script_detail_filtered, get_setting, get_text_entry,
@@ -133,6 +134,7 @@ struct SettingsTemplate {
     default_workers_setting: usize,
     script_page_limit: i64,
     search_result_limit: i64,
+    custom_glyph_map: String,
     max_workers: usize,
     message: String,
 }
@@ -270,6 +272,7 @@ struct SettingsForm {
     default_workers: usize,
     script_page_limit: i64,
     search_result_limit: i64,
+    custom_glyph_map: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -739,6 +742,9 @@ async fn settings(
         .await
         .unwrap_or(100)
         .clamp(10, 500);
+    let custom_glyph_map: GlyphMap = get_setting(&state.db, "custom_glyph_map", GlyphMap::new())
+        .await
+        .unwrap_or_default();
     let message = if params.saved.as_deref() == Some("1") {
         "Configuracion guardada".to_owned()
     } else {
@@ -751,6 +757,8 @@ async fn settings(
         default_workers_setting,
         script_page_limit,
         search_result_limit,
+        custom_glyph_map: serde_json::to_string_pretty(&custom_glyph_map)
+            .unwrap_or_else(|_| "{}".to_owned()),
         max_workers: max_workers(),
         message,
     };
@@ -983,8 +991,8 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
     let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
         .await
         .unwrap_or_else(|_| "es".to_owned());
+    let glyph_map = configured_glyph_map(&state.db, &target_lang).await;
     let result = tokio::task::spawn_blocking(move || {
-        let glyph_map = glyph_map_for_target(&target_lang);
         patch_translated_scripts(
             PATCHED_DATA_PATH,
             SCRIPTS_OUT_DIR,
@@ -1046,8 +1054,8 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
     let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
         .await
         .unwrap_or_else(|_| "es".to_owned());
+    let glyph_map = configured_glyph_map(&state.db, &target_lang).await;
     let result = tokio::task::spawn_blocking(move || {
-        let glyph_map = glyph_map_for_target(&target_lang);
         patch_translated_elf(
             ORIGINAL_ELF_PATH,
             TRANSLATED_ELF_PATH,
@@ -1237,19 +1245,43 @@ async fn patch_textures(State(state): State<AppState>) -> impl IntoResponse {
     ));
     println!("[textures] Parcheando texturas desde manifest");
     let db = state.db.clone();
+    let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
+        .await
+        .unwrap_or_else(|_| "es".to_owned());
+    let glyph_map = configured_glyph_map(&state.db, &target_lang).await;
     tokio::spawn(async move {
         let _guard = guard;
-        let result = tokio::task::spawn_blocking(|| {
-            patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, TEXTURE_PATCHED_DIR)
+        let result = tokio::task::spawn_blocking(move || {
+            if FsPath::new(TEXTURE_PATCHED_DIR).exists() {
+                fs::remove_dir_all(TEXTURE_PATCHED_DIR)?;
+            }
+            patch_textures_from_manifest_with_glyph_map(
+                DATA_BIN_PATH,
+                TEXTURE_MANIFEST_PATH,
+                TEXTURE_PATCHED_DIR,
+                Some(&glyph_map),
+            )
         })
         .await;
 
         match result {
             Ok(Ok(report)) if report.errors.is_empty() => {
                 append_texture_log(&format!(
-                    "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos",
-                    report.files_processed, report.patches_applied, report.streams_written
+                    "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos, {} metricas de glifos ajustadas",
+                    report.files_processed, report.patches_applied, report.streams_written, report.glyph_metrics_adjusted
                 ));
+                for change in &report.glyph_metric_changes {
+                    append_texture_log(&format!(
+                        "Metrica automatica {} -> {:?}: T{:03}, x {}->{}, ancho {}->{}",
+                        change.source_characters,
+                        change.donor,
+                        change.tim2_index,
+                        change.old_x,
+                        change.new_x,
+                        change.old_width,
+                        change.new_width
+                    ));
+                }
                 println!(
                     "[textures] Texturas parcheadas: {} parches",
                     report.patches_applied
@@ -1257,16 +1289,19 @@ async fn patch_textures(State(state): State<AppState>) -> impl IntoResponse {
                 record_build_success(&db, "patch textures", 70, "").await;
             }
             Ok(Ok(report)) => {
+                let _ = fs::remove_dir_all(TEXTURE_PATCHED_DIR);
                 append_texture_log(&format!(
                     "ERROR parcheando texturas: {}",
                     report.errors.join("; ")
                 ));
             }
             Ok(Err(err)) => {
+                let _ = fs::remove_dir_all(TEXTURE_PATCHED_DIR);
                 append_texture_log(&format!("ERROR parcheando texturas: {err}"));
                 eprintln!("[textures] ERROR parcheando texturas: {err}");
             }
             Err(err) => {
+                let _ = fs::remove_dir_all(TEXTURE_PATCHED_DIR);
                 append_texture_log(&format!("ERROR de tarea parcheando texturas: {err}"));
                 eprintln!("[textures] ERROR de tarea parcheando texturas: {err}");
             }
@@ -1351,6 +1386,7 @@ async fn run_full_build(
     let target_lang: String = get_setting(&state.db, "target_lang", "es".to_owned())
         .await
         .unwrap_or_else(|_| "es".to_owned());
+    let glyph_map = configured_glyph_map(&state.db, &target_lang).await;
     tokio::spawn(async move {
         let _guard = guard;
         append_build_log("Exportando CSV desde SQLite");
@@ -1363,7 +1399,7 @@ async fn run_full_build(
         }
 
         match tokio::task::spawn_blocking(move || {
-            run_full_build_steps(&build_type, workers, &target_lang)
+            run_full_build_steps(&build_type, workers, &target_lang, &glyph_map)
         })
         .await
         {
@@ -1394,6 +1430,7 @@ fn run_full_build_steps(
     build_type: &str,
     workers: usize,
     target_lang: &str,
+    glyph_map: &GlyphMap,
 ) -> anyhow::Result<usize> {
     append_build_log("Validando prerequisitos");
     if !FsPath::new(DATA_BIN_PATH).exists() {
@@ -1434,7 +1471,6 @@ fn run_full_build_steps(
     steps += 1;
 
     append_build_log(&format!("Idioma objetivo/glyph map: {target_lang}"));
-    let glyph_map = glyph_map_for_target(target_lang);
     if build_type != "images" {
         append_build_log(
             "Extrayendo scripts originales para este build (sin reutilizar .dec anteriores)",
@@ -1449,7 +1485,7 @@ fn run_full_build_steps(
             PATCHED_DATA_PATH,
             &fresh_scripts,
             BUILD_CSV_PATH,
-            Some(&glyph_map),
+            Some(glyph_map),
         )?;
         if !script_report.errors.is_empty() {
             anyhow::bail!(script_report.errors.join("; "));
@@ -1470,7 +1506,7 @@ fn run_full_build_steps(
             ORIGINAL_ELF_PATH,
             TRANSLATED_ELF_PATH,
             BUILD_CSV_PATH,
-            Some(&glyph_map),
+            Some(glyph_map),
         )?;
         append_build_log(&format!(
             "Entradas ELF parcheadas: {}, demasiado largas: {}, omitidas: {}, bytes escritos: {}",
@@ -1490,17 +1526,34 @@ fn run_full_build_steps(
             "Parcheando texturas desde {TEXTURE_MANIFEST_PATH}; salida limpia {}",
             fresh_textures.display()
         ));
-        let texture_report =
-            patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, &fresh_textures)?;
+        let texture_report = patch_textures_from_manifest_with_glyph_map(
+            DATA_BIN_PATH,
+            TEXTURE_MANIFEST_PATH,
+            &fresh_textures,
+            Some(glyph_map),
+        )?;
         if !texture_report.errors.is_empty() {
             anyhow::bail!(texture_report.errors.join("; "));
         }
         append_build_log(&format!(
-            "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos",
+            "Texturas parcheadas: {} archivos procesados, {} parches aplicados, {} streams escritos, {} metricas de glifos ajustadas",
             texture_report.files_processed,
             texture_report.patches_applied,
-            texture_report.streams_written
+            texture_report.streams_written,
+            texture_report.glyph_metrics_adjusted
         ));
+        for change in &texture_report.glyph_metric_changes {
+            append_build_log(&format!(
+                "Metrica automatica {} -> {:?}: T{:03}, x {}->{}, ancho {}->{}",
+                change.source_characters,
+                change.donor,
+                change.tim2_index,
+                change.old_x,
+                change.new_x,
+                change.old_width,
+                change.new_width
+            ));
+        }
         steps += 1;
 
         append_build_log(&format!(
@@ -1552,9 +1605,12 @@ fn normalize_build_type(value: &str) -> String {
     }
 }
 
-fn glyph_map_for_target(target_lang: &str) -> GlyphMap {
+async fn configured_glyph_map(db: &SqlitePool, target_lang: &str) -> GlyphMap {
     match target_lang {
         "en" => english_glyph_map(),
+        "custom" => get_setting(db, "custom_glyph_map", GlyphMap::new())
+            .await
+            .unwrap_or_default(),
         _ => spanish_glyph_map(),
     }
 }
@@ -1979,6 +2035,23 @@ fn png_dimensions(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
 mod texture_upload_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn custom_target_uses_configured_glyph_map_without_reinterpreting_it() {
+        let db = straw_db::connect("sqlite::memory:").await.unwrap();
+        straw_db::init_db(&db).await.unwrap();
+        let custom_map: GlyphMap = [('ã', 'Г'), ('ç', 'Д')].into_iter().collect();
+        set_setting(&db, "custom_glyph_map", &custom_map)
+            .await
+            .unwrap();
+
+        let map = configured_glyph_map(&db, "custom").await;
+
+        assert_eq!(map.get(&'ã'), Some(&'Г'));
+        assert_eq!(map.get(&'ç'), Some(&'Д'));
+        assert_eq!(configured_glyph_map(&db, "en").await, GlyphMap::new());
+        assert_eq!(configured_glyph_map(&db, "es").await, spanish_glyph_map());
+    }
+
     #[test]
     fn filename_resolves_duplicates_but_not_other_pages_or_nested_streams() {
         let record = TextureRecord {
@@ -2173,6 +2246,19 @@ async fn save_settings(
     let default_workers_setting = form.default_workers.clamp(1, max_workers());
     let script_page_limit = form.script_page_limit.clamp(10, 200);
     let search_result_limit = form.search_result_limit.clamp(10, 500);
+    let custom_glyph_map = match serde_json::from_str::<GlyphMap>(&form.custom_glyph_map) {
+        Ok(map) => map,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("custom_glyph_map must be a JSON object with one-character keys and values: {err}"),
+            )
+                .into_response();
+        }
+    };
+    if let Err(err) = validate_glyph_map(&custom_glyph_map) {
+        return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
 
     if let Err(err) = set_setting(&state.db, "ui_lang", &ui_lang).await {
         return (
@@ -2204,6 +2290,10 @@ async fn save_settings(
         (
             "search_result_limit",
             set_setting(&state.db, "search_result_limit", &search_result_limit).await,
+        ),
+        (
+            "custom_glyph_map",
+            set_setting(&state.db, "custom_glyph_map", &custom_glyph_map).await,
         ),
     ] {
         if let Err(err) = result {
