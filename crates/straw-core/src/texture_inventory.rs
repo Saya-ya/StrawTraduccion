@@ -1,4 +1,12 @@
-use std::{borrow::Cow, collections::BTreeMap, fs, path::Path, sync::mpsc, thread, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+    sync::mpsc,
+    thread,
+    time::Instant,
+};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -6,13 +14,17 @@ use serde::{Deserialize, Serialize};
 use crate::{
     compress_lz77,
     datafat::{parse_entries_from_data, FatEntry, ENTRY_SIZE, FAT_OFFSET, NUM_ENTRIES},
-    decompress_lz77, find_row, size_field_write_offset, slot_capacity,
+    decompress_lz77, find_row, size_field_write_offset, slot_capacity, GlyphMap,
 };
 
 /// Synthetic ID for the resource referenced at Data.bin header +0x0c.
 /// It has no FAT row; its length is stored in its own LZ77 header.
 pub const HEADER_TEXTURE_ID: u32 = u32::MAX;
 const HEADER_RESOURCE_POINTER: usize = 0x0c;
+const FONT_TABLE_POINTER: usize = 0x0c;
+const FONT_TABLE_HEADER_SIZE: usize = 0x10;
+const FONT_GLYPH_RECORD_SIZE: usize = 0x10;
+const AUTO_METRIC_PADDING: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextureRecord {
@@ -95,7 +107,20 @@ pub struct TexturePatchReport {
     pub files_processed: usize,
     pub patches_applied: usize,
     pub streams_written: usize,
+    pub glyph_metrics_adjusted: usize,
+    pub glyph_metric_changes: Vec<GlyphMetricChange>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlyphMetricChange {
+    pub donor: char,
+    pub source_characters: String,
+    pub tim2_index: usize,
+    pub old_x: u16,
+    pub new_x: u16,
+    pub old_width: u8,
+    pub new_width: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +232,15 @@ pub fn patch_textures_from_manifest(
     manifest_path: impl AsRef<Path>,
     out_dir: impl AsRef<Path>,
 ) -> Result<TexturePatchReport> {
+    patch_textures_from_manifest_with_glyph_map(data_bin, manifest_path, out_dir, None)
+}
+
+pub fn patch_textures_from_manifest_with_glyph_map(
+    data_bin: impl AsRef<Path>,
+    manifest_path: impl AsRef<Path>,
+    out_dir: impl AsRef<Path>,
+    glyph_map: Option<&GlyphMap>,
+) -> Result<TexturePatchReport> {
     let data_bin = data_bin.as_ref();
     let manifest_path = manifest_path.as_ref();
     let out_dir = out_dir.as_ref();
@@ -226,6 +260,8 @@ pub fn patch_textures_from_manifest(
         files_processed: 0,
         patches_applied: 0,
         streams_written: 0,
+        glyph_metrics_adjusted: 0,
+        glyph_metric_changes: Vec::new(),
         errors: Vec::new(),
     };
     let data =
@@ -246,11 +282,16 @@ pub fn patch_textures_from_manifest(
                 .push(format!("ID {file_id} has invalid resource range"));
             continue;
         }
-        match process_texture_file(&data[start..end], &patches) {
-            Ok((stream, applied)) => {
+        let auto_metrics = (file_id == HEADER_TEXTURE_ID)
+            .then_some(glyph_map)
+            .flatten();
+        match process_texture_file(&data[start..end], &patches, auto_metrics) {
+            Ok((stream, applied, metric_changes)) => {
                 fs::write(out_dir.join(format!("ID_{file_id:05}.lz77")), stream)?;
                 report.patches_applied += applied;
                 report.streams_written += 1;
+                report.glyph_metrics_adjusted += metric_changes.len();
+                report.glyph_metric_changes.extend(metric_changes);
             }
             Err(err) => report.errors.push(format!("ID {file_id}: {err}")),
         }
@@ -578,7 +619,11 @@ fn send_texture_progress(
     *pending = TextureProgress::default();
 }
 
-fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Vec<u8>, usize)> {
+fn process_texture_file(
+    raw: &[u8],
+    patches: &[TexturePatchEntry],
+    glyph_map: Option<&GlyphMap>,
+) -> Result<(Vec<u8>, usize, Vec<GlyphMetricChange>)> {
     let nested = patches.iter().any(|patch| patch.lz77_offset.is_some());
     if nested {
         if patches.iter().any(|patch| patch.lz77_offset.is_none()) {
@@ -613,7 +658,7 @@ fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Ve
             raw[nested_off..nested_off + new_stream.len()].copy_from_slice(&new_stream);
             raw[nested_off + new_stream.len()..nested_off + old_size].fill(0);
         }
-        return Ok((raw, applied));
+        return Ok((raw, applied, Vec::new()));
     }
 
     let was_lz77 = raw.starts_with(b"LZ77");
@@ -621,6 +666,11 @@ fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Ve
         decompress_lz77(raw, None, false)?
     } else {
         raw.to_vec()
+    };
+    let metric_changes = if let Some(glyph_map) = glyph_map {
+        apply_auto_font_metrics(&mut blob, patches, glyph_map)?
+    } else {
+        Vec::new()
     };
     for patch in patches {
         apply_texture_patch(&mut blob, patch)?;
@@ -630,10 +680,213 @@ fn process_texture_file(raw: &[u8], patches: &[TexturePatchEntry]) -> Result<(Ve
         if decompress_lz77(&stream, None, false)? != blob {
             bail!("LZ77 roundtrip failed");
         }
-        Ok((stream, patches.len()))
+        Ok((stream, patches.len(), metric_changes))
     } else {
-        Ok((blob, patches.len()))
+        Ok((blob, patches.len(), metric_changes))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FontGlyphRecord {
+    offset: usize,
+    character: char,
+    x: u16,
+    y: u16,
+    width: u8,
+    height: u8,
+    tim2_index: usize,
+}
+
+fn apply_auto_font_metrics(
+    blob: &mut [u8],
+    patches: &[TexturePatchEntry],
+    glyph_map: &GlyphMap,
+) -> Result<Vec<GlyphMetricChange>> {
+    if glyph_map.is_empty() {
+        return Ok(Vec::new());
+    }
+    let records = parse_font_glyph_records(blob)?;
+    let by_character = records
+        .into_iter()
+        .map(|record| (record.character, record))
+        .collect::<BTreeMap<_, _>>();
+    let tim2_files = find_tim2_files(blob);
+    let mut edited_pages = BTreeMap::new();
+    for patch in patches {
+        if patch.lz77_offset.is_some() {
+            continue;
+        }
+        let tm2 = tim2_files
+            .get(patch.tim2_index)
+            .with_context(|| format!("TIM2 {} not found for font metrics", patch.tim2_index))?;
+        let picture = tm2
+            .pictures
+            .iter()
+            .find(|picture| picture.index == patch.picture_index)
+            .with_context(|| {
+                format!(
+                    "picture {} not found in TIM2 {} for font metrics",
+                    patch.picture_index, patch.tim2_index
+                )
+            })?;
+        let (width, height, edited) = read_png_rgba(Path::new(&patch.png))?;
+        if width != u32::from(picture.width) || height != u32::from(picture.height) {
+            continue; // The regular texture patch reports the dimension error.
+        }
+        edited_pages.insert(
+            (patch.tim2_index, patch.picture_index),
+            (
+                picture_to_rgba(picture)?,
+                edited,
+                width as usize,
+                height as usize,
+            ),
+        );
+    }
+
+    let mut sources_by_donor: BTreeMap<char, BTreeSet<char>> = BTreeMap::new();
+    for (&source, &donor) in glyph_map {
+        sources_by_donor.entry(donor).or_default().insert(source);
+    }
+
+    let mut changes = Vec::new();
+    for (donor, sources) in sources_by_donor {
+        let record = by_character
+            .get(&donor)
+            .with_context(|| format!("font glyph donor {donor:?} not found"))?;
+        let Some((original, edited, image_width, image_height)) =
+            edited_pages.get(&(record.tim2_index, 0))
+        else {
+            continue;
+        };
+        validate_glyph_rect(record, *image_width, *image_height)?;
+        if !rgba_rect_changed(original, edited, *image_width, record) {
+            continue;
+        }
+        let Some((left, right)) = alpha_horizontal_bounds(edited, *image_width, record) else {
+            bail!("edited glyph donor {donor:?} has no visible pixels");
+        };
+        let left = left.saturating_sub(AUTO_METRIC_PADDING);
+        let right = (right + AUTO_METRIC_PADDING).min(record.width as usize);
+        let new_x = usize::from(record.x)
+            .checked_add(left)
+            .context("font glyph x overflow")?;
+        let new_width = right.saturating_sub(left);
+        if new_width == 0 || new_x > u16::MAX as usize || new_width > u8::MAX as usize {
+            bail!("invalid automatic metrics for glyph donor {donor:?}");
+        }
+        let new_x = new_x as u16;
+        let new_width = new_width as u8;
+        if new_x == record.x && new_width == record.width {
+            continue;
+        }
+        blob[record.offset + 2..record.offset + 4].copy_from_slice(&new_x.to_le_bytes());
+        blob[record.offset + 6] = new_width;
+        changes.push(GlyphMetricChange {
+            donor,
+            source_characters: sources.into_iter().collect(),
+            tim2_index: record.tim2_index,
+            old_x: record.x,
+            new_x,
+            old_width: record.width,
+            new_width,
+        });
+    }
+    Ok(changes)
+}
+
+fn parse_font_glyph_records(blob: &[u8]) -> Result<Vec<FontGlyphRecord>> {
+    let header = read_u32(blob, FONT_TABLE_POINTER).context("font table pointer missing")? as usize;
+    let records_start = header
+        .checked_add(FONT_TABLE_HEADER_SIZE)
+        .context("font table offset overflow")?;
+    let count = read_u16(blob, header + 2).context("font glyph count missing")? as usize;
+    let records_end = records_start
+        .checked_add(
+            count
+                .checked_mul(FONT_GLYPH_RECORD_SIZE)
+                .context("font table size overflow")?,
+        )
+        .context("font table end overflow")?;
+    let first_tim2 = find_tim2_files(blob)
+        .first()
+        .map(|tim2| tim2.offset)
+        .context("font resource has no TIM2 pages")?;
+    if count == 0 || records_end > first_tim2 || records_end > blob.len() {
+        bail!("invalid font glyph table");
+    }
+    let mut records = Vec::with_capacity(count);
+    for offset in (records_start..records_end).step_by(FONT_GLYPH_RECORD_SIZE) {
+        let codepoint = read_u16(blob, offset).context("font glyph codepoint missing")? as u32;
+        let Some(character) = char::from_u32(codepoint) else {
+            continue;
+        };
+        records.push(FontGlyphRecord {
+            offset,
+            character,
+            x: read_u16(blob, offset + 2).unwrap_or(0),
+            y: read_u16(blob, offset + 4).unwrap_or(0),
+            width: blob[offset + 6],
+            height: blob[offset + 7],
+            tim2_index: blob[offset + 8] as usize,
+        });
+    }
+    Ok(records)
+}
+
+fn validate_glyph_rect(
+    record: &FontGlyphRecord,
+    image_width: usize,
+    image_height: usize,
+) -> Result<()> {
+    let right = usize::from(record.x)
+        .checked_add(record.width as usize)
+        .context("font glyph horizontal range overflow")?;
+    let bottom = usize::from(record.y)
+        .checked_add(record.height as usize)
+        .context("font glyph vertical range overflow")?;
+    if record.width == 0 || record.height == 0 || right > image_width || bottom > image_height {
+        bail!(
+            "font glyph {:?} is outside TIM2 {}",
+            record.character,
+            record.tim2_index
+        );
+    }
+    Ok(())
+}
+
+fn rgba_rect_changed(
+    original: &[u8],
+    edited: &[u8],
+    image_width: usize,
+    record: &FontGlyphRecord,
+) -> bool {
+    (0..record.height as usize).any(|dy| {
+        (0..record.width as usize).any(|dx| {
+            let alpha = ((record.y as usize + dy) * image_width + record.x as usize + dx) * 4 + 3;
+            original.get(alpha) != edited.get(alpha)
+        })
+    })
+}
+
+fn alpha_horizontal_bounds(
+    rgba: &[u8],
+    image_width: usize,
+    record: &FontGlyphRecord,
+) -> Option<(usize, usize)> {
+    let mut left = record.width as usize;
+    let mut right = 0;
+    for dy in 0..record.height as usize {
+        for dx in 0..record.width as usize {
+            let alpha =
+                rgba[((record.y as usize + dy) * image_width + record.x as usize + dx) * 4 + 3];
+            if alpha != 0 {
+                left = left.min(dx);
+                right = right.max(dx + 1);
+            }
+        }
+    }
+    (left < right).then_some((left, right))
 }
 
 fn apply_texture_patch(blob: &mut [u8], patch: &TexturePatchEntry) -> Result<()> {
@@ -1208,6 +1461,104 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn font_metrics_blob() -> Vec<u8> {
+        let image_width = 48_u16;
+        let image_height = 25_u16;
+        let image_size = usize::from(image_width) * usize::from(image_height) / 2;
+        let tim2_offset = 0x130;
+        let mut blob = vec![0; tim2_offset + 16 + 48 + image_size + 64];
+        blob[FONT_TABLE_POINTER..FONT_TABLE_POINTER + 4].copy_from_slice(&0x100_u32.to_le_bytes());
+        blob[0x102..0x104].copy_from_slice(&2_u16.to_le_bytes());
+        for (offset, character, x) in [(0x110, 'Г', 0_u16), (0x120, 'Д', 21_u16)] {
+            blob[offset..offset + 2].copy_from_slice(&(character as u16).to_le_bytes());
+            blob[offset + 2..offset + 4].copy_from_slice(&x.to_le_bytes());
+            blob[offset + 6] = 21;
+            blob[offset + 7] = 25;
+        }
+        let tim2 = &mut blob[tim2_offset..];
+        tim2[..4].copy_from_slice(b"TIM2");
+        tim2[4] = 4;
+        tim2[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        tim2[16..20].copy_from_slice(&((48 + image_size + 64) as u32).to_le_bytes());
+        tim2[20..24].copy_from_slice(&64_u32.to_le_bytes());
+        tim2[24..28].copy_from_slice(&(image_size as u32).to_le_bytes());
+        tim2[28..30].copy_from_slice(&48_u16.to_le_bytes());
+        tim2[30..32].copy_from_slice(&16_u16.to_le_bytes());
+        tim2[35] = 4;
+        tim2[36..38].copy_from_slice(&image_width.to_le_bytes());
+        tim2[38..40].copy_from_slice(&image_height.to_le_bytes());
+        let clut = 16 + 48 + image_size;
+        tim2[clut + 4..clut + 8].copy_from_slice(&[255, 255, 255, 128]);
+        blob
+    }
+
+    #[test]
+    fn auto_metrics_use_active_map_alpha_and_deduplicate_aliases() {
+        let temp = tempfile::tempdir().unwrap();
+        let png = temp.path().join("font.png");
+        let mut rgba = vec![0; 48 * 25 * 4];
+        for y in 5..21 {
+            for x in 5..17 {
+                rgba[(y * 48 + x) * 4..(y * 48 + x) * 4 + 4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+        write_png_rgba(&png, 48, 25, &rgba).unwrap();
+        let patch = TexturePatchEntry {
+            file_id: HEADER_TEXTURE_ID,
+            tim2_index: 0,
+            picture_index: 0,
+            png: png.display().to_string(),
+            mode: Some("preserve_palette".to_owned()),
+            lz77_offset: None,
+        };
+        let glyph_map = [('á', 'Г'), ('Á', 'Г'), ('é', 'Д')].into_iter().collect();
+        let original = font_metrics_blob();
+        let raw = compress_lz77(&original, false);
+
+        let (stream, applied, changes) =
+            process_texture_file(&raw, &[patch], Some(&glyph_map)).unwrap();
+
+        assert_eq!(applied, 1);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].donor, 'Г');
+        assert_eq!(changes[0].source_characters, "Áá");
+        assert_eq!((changes[0].old_x, changes[0].old_width), (0, 21));
+        assert_eq!((changes[0].new_x, changes[0].new_width), (4, 14));
+        let patched = decompress_lz77(&stream, None, true).unwrap();
+        assert_eq!(read_u16(&patched, 0x112), Some(4));
+        assert_eq!(patched[0x116], 14);
+        assert_eq!(&patched[0x114..0x116], &original[0x114..0x116]);
+        assert_eq!(patched[0x117], original[0x117]);
+        assert_eq!(&patched[0x120..0x130], &original[0x120..0x130]);
+    }
+
+    #[test]
+    fn auto_metrics_reject_changed_glyph_without_visible_pixels() {
+        let temp = tempfile::tempdir().unwrap();
+        let png = temp.path().join("font.png");
+        let mut original = font_metrics_blob();
+        let picture = &find_tim2_files(&original)[0].pictures[0];
+        let image_offset = picture.picture_offset + picture.header_size;
+        original[image_offset] = 1;
+        let rgba = vec![0; 48 * 25 * 4];
+        write_png_rgba(&png, 48, 25, &rgba).unwrap();
+        let patch = TexturePatchEntry {
+            file_id: HEADER_TEXTURE_ID,
+            tim2_index: 0,
+            picture_index: 0,
+            png: png.display().to_string(),
+            mode: None,
+            lz77_offset: None,
+        };
+        let glyph_map = [('á', 'Г')].into_iter().collect();
+
+        let err =
+            process_texture_file(&compress_lz77(&original, false), &[patch], Some(&glyph_map))
+                .unwrap_err();
+
+        assert!(err.to_string().contains("has no visible pixels"));
+    }
 
     fn indexed_font_fixture(header_offset: usize) -> Vec<u8> {
         let mut tim2 = vec![0; 16 + 48 + 2 + 64];

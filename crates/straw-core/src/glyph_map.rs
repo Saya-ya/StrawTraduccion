@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use anyhow::{bail, Result};
 use encoding_rs::SHIFT_JIS;
 
 pub type GlyphMap = BTreeMap<char, char>;
@@ -31,7 +32,7 @@ const AVAILABLE_GLYPHS: &[char] = &[
     'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т',
     'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я', 'а', 'б', 'в', 'г', 'д', 'е',
     'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш',
-    'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я',
+    'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я', '＠',
 ];
 
 pub fn spanish_glyph_map() -> GlyphMap {
@@ -59,6 +60,21 @@ pub fn normalize_glyph_map(input: &GlyphMap) -> GlyphMap {
     }
 
     normalized
+}
+
+pub fn validate_glyph_map(input: &GlyphMap) -> Result<()> {
+    let available = available_glyphs();
+    for (source, donor) in input {
+        if !available.contains(donor) {
+            bail!("glyph donor {donor:?} for {source:?} is not an available replacement slot");
+        }
+        let donor_text = donor.to_string();
+        let (_, _, had_errors) = SHIFT_JIS.encode(&donor_text);
+        if had_errors {
+            bail!("glyph donor {donor:?} for {source:?} cannot be encoded as Shift-JIS");
+        }
+    }
+    Ok(())
 }
 
 pub fn invert_glyph_map(input: &GlyphMap) -> GlyphMap {
@@ -128,6 +144,14 @@ mod tests {
         assert_eq!(normalized.get(&'ą'), Some(&'Г'));
         assert_eq!(normalized.get(&'ć'), Some(&'Д'));
         assert_eq!(invert_glyph_map(&normalized), old_ui);
+    }
+
+    #[test]
+    fn validates_reserved_and_shift_jis_encodable_donors() {
+        let valid = [('ã', 'Г'), ('♥', '＠')].into_iter().collect();
+        validate_glyph_map(&valid).unwrap();
+        let invalid = [('ã', 'A')].into_iter().collect();
+        assert!(validate_glyph_map(&invalid).is_err());
     }
 
     #[test]

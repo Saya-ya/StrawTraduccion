@@ -27,7 +27,7 @@ pub use fs_ops::copy_file_creating_parent;
 pub use fit_checker::{check_fit, FitResult, FitStatus, TextSource};
 pub use glyph_map::{
     encode_game_sjis, encode_game_utf16, english_glyph_map, game_string, invert_glyph_map,
-    normalize_glyph_map, spanish_glyph_map, GlyphMap,
+    normalize_glyph_map, spanish_glyph_map, validate_glyph_map, GlyphMap,
 };
 pub use iso::{
     build_iso_with_patched_data, find_signature_offset, inject_elf_into_iso, DATA_BIN_SIGNATURE,
@@ -40,6 +40,8 @@ pub use script_rebuilder::{
     SegmentReport, TextSegment, TranslationRow,
 };
 pub use texture_inventory::{
-    inject_patched_texture_streams, patch_textures_from_manifest, write_texture_inventory,
-    write_texture_inventory_with_progress, TextureInjectReport, TexturePatchReport, TextureRecord,
+    inject_patched_texture_streams, patch_textures_from_manifest,
+    patch_textures_from_manifest_with_glyph_map, write_texture_inventory,
+    write_texture_inventory_with_progress, GlyphMetricChange, TextureInjectReport,
+    TexturePatchReport, TextureRecord,
 };
