@@ -5,9 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     compress_lz77,
-    datafat::{parse_entries_from_data, FatEntry},
-    decompress_lz77, find_row, read_entries, size_field_write_offset, slot_capacity,
+    datafat::{parse_entries_from_data, FatEntry, ENTRY_SIZE, FAT_OFFSET, NUM_ENTRIES},
+    decompress_lz77, find_row, size_field_write_offset, slot_capacity,
 };
+
+/// Synthetic ID for the resource referenced at Data.bin header +0x0c.
+/// It has no FAT row; its length is stored in its own LZ77 header.
+pub const HEADER_TEXTURE_ID: u32 = u32::MAX;
+const HEADER_RESOURCE_POINTER: usize = 0x0c;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextureRecord {
@@ -33,6 +38,56 @@ pub struct TextureRecord {
     #[serde(default)]
     pub texture_hash: String,
     pub png: String,
+}
+
+impl TextureRecord {
+    pub fn is_header_resource(&self) -> bool {
+        self.id == HEADER_TEXTURE_ID
+    }
+}
+
+/// Add the pre-FAT-files resource to the texture-only view of the archive.
+/// Keeping the real FAT parser unchanged avoids treating fonts as scripts.
+fn texture_resource_rows(data: &[u8]) -> Result<Vec<FatEntry>> {
+    let mut rows = parse_entries_from_data(data)?;
+    if rows
+        .iter()
+        .any(|row| row.id == HEADER_TEXTURE_ID && row.is_file)
+    {
+        bail!("FAT ID {HEADER_TEXTURE_ID} conflicts with the reserved header texture ID");
+    }
+    let offset = read_u32(data, HEADER_RESOURCE_POINTER).unwrap_or(0);
+    if offset == 0 {
+        return Ok(rows);
+    }
+    // If the header references an ordinary FAT file, it is already covered.
+    if rows.iter().any(|row| row.is_file && row.offset == offset) {
+        return Ok(rows);
+    }
+    let first_file = rows
+        .iter()
+        .filter(|row| row.is_file)
+        .map(|row| row.offset)
+        .min()
+        .context("header texture resource has no following FAT file")?;
+    let start = offset as usize;
+    let fat_end = FAT_OFFSET + NUM_ENTRIES * ENTRY_SIZE;
+    if start < fat_end || offset >= first_file || first_file as usize > data.len() {
+        bail!("header texture resource at 0x{offset:X} is outside the pre-FAT-files region");
+    }
+    let raw = &data[start..first_file as usize];
+    let size = lz77_stream_size(raw, 0).context("invalid header texture resource")?;
+    // Validate the compressed stream before exposing a patchable resource.
+    decompress_lz77(&raw[..size], None, true).context("invalid header texture LZ77")?;
+    rows.push(FatEntry {
+        row: NUM_ENTRIES, // Sentinel: never pass this entry to size_field_write_offset.
+        id: HEADER_TEXTURE_ID,
+        size_field: 0,
+        offset,
+        size: u32::try_from(size)?,
+        is_file: true,
+    });
+    Ok(rows)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,13 +153,21 @@ pub fn write_texture_inventory_with_progress(
     let data =
         fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
     progress(format!("Data.bin leido: {} bytes", data.len()));
-    let rows = read_entries(data_bin)?;
+    let rows = texture_resource_rows(&data)?;
+    if let Some(header) = find_row(&rows, HEADER_TEXTURE_ID) {
+        progress(format!(
+            "Recurso de cabecera fuera de FAT: ID {}, offset 0x{:X}, {} bytes LZ77",
+            header.id, header.offset, header.size
+        ));
+    }
     let file_rows = rows
         .into_iter()
         .filter(|row| row.is_file && row.size > 0)
         .collect::<Vec<_>>();
     let total_rows = file_rows.len();
-    progress(format!("FAT leida: {total_rows} archivos con datos"));
+    progress(format!(
+        "Recursos de textura: {total_rows} (FAT y cabecera)"
+    ));
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -154,7 +217,6 @@ pub fn patch_textures_from_manifest(
     fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
-    let rows = read_entries(data_bin)?;
     let mut by_file: BTreeMap<u32, Vec<TexturePatchEntry>> = BTreeMap::new();
     for entry in entries {
         by_file.entry(entry.file_id).or_default().push(entry);
@@ -168,6 +230,7 @@ pub fn patch_textures_from_manifest(
     };
     let data =
         fs::read(data_bin).with_context(|| format!("failed to read {}", data_bin.display()))?;
+    let rows = texture_resource_rows(&data)?;
 
     for (file_id, patches) in by_file {
         report.files_processed += 1;
@@ -180,7 +243,7 @@ pub fn patch_textures_from_manifest(
         if start >= end {
             report
                 .errors
-                .push(format!("ID {file_id} has invalid FAT range"));
+                .push(format!("ID {file_id} has invalid resource range"));
             continue;
         }
         match process_texture_file(&data[start..end], &patches) {
@@ -204,7 +267,7 @@ pub fn inject_patched_texture_streams(
     let streams_dir = streams_dir.as_ref();
     let mut data = fs::read(data_bin_path)
         .with_context(|| format!("failed to read {}", data_bin_path.display()))?;
-    let rows = parse_entries_from_data(&data)?;
+    let rows = texture_resource_rows(&data)?;
     let mut report = TextureInjectReport {
         streams_injected: 0,
         bytes_written: 0,
@@ -234,7 +297,9 @@ pub fn inject_patched_texture_streams(
         let stream =
             fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         let Some(target) = find_row(&rows, file_id) else {
-            report.errors.push(format!("ID {file_id} not found in FAT"));
+            report
+                .errors
+                .push(format!("texture resource ID {file_id} not found"));
             continue;
         };
         let Some(capacity) = slot_capacity(&rows, target) else {
@@ -263,19 +328,32 @@ pub fn inject_patched_texture_streams(
                 .push(format!("ID {file_id} slot outside Data.bin"));
             continue;
         }
-        let size_offset = size_field_write_offset(target);
-        if size_offset
-            .checked_add(4)
-            .is_none_or(|end| end > data.len())
-        {
-            report
-                .errors
-                .push(format!("ID {file_id} size field outside Data.bin"));
-            continue;
-        }
+        let size_offset = if file_id == HEADER_TEXTURE_ID {
+            // The header pointer stays fixed. Length comes from the new LZ77 header,
+            // not from the next FAT row as with ordinary resources.
+            if !stream.starts_with(b"LZ77") || decompress_lz77(&stream, None, true).is_err() {
+                report
+                    .errors
+                    .push("invalid patched header texture LZ77".to_owned());
+                continue;
+            }
+            None
+        } else {
+            let offset = size_field_write_offset(target);
+            if offset.checked_add(4).is_none_or(|end| end > data.len()) {
+                report
+                    .errors
+                    .push(format!("ID {file_id} size field outside Data.bin"));
+                continue;
+            }
+            Some(offset)
+        };
         data[start..start + stream.len()].copy_from_slice(&stream);
         data[start + stream.len()..end].fill(0);
-        data[size_offset..size_offset + 4].copy_from_slice(&(stream.len() as u32).to_le_bytes());
+        if let Some(size_offset) = size_offset {
+            data[size_offset..size_offset + 4]
+                .copy_from_slice(&(stream.len() as u32).to_le_bytes());
+        }
         report.streams_injected += 1;
         report.bytes_written += stream.len();
     }
@@ -1130,6 +1208,131 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn indexed_font_fixture(header_offset: usize) -> Vec<u8> {
+        let mut tim2 = vec![0; 16 + 48 + 2 + 64];
+        tim2[..4].copy_from_slice(b"TIM2");
+        tim2[4] = 4;
+        tim2[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        tim2[16..20].copy_from_slice(&114_u32.to_le_bytes());
+        tim2[20..24].copy_from_slice(&64_u32.to_le_bytes());
+        tim2[24..28].copy_from_slice(&2_u32.to_le_bytes());
+        tim2[28..30].copy_from_slice(&48_u16.to_le_bytes());
+        tim2[30..32].copy_from_slice(&16_u16.to_le_bytes());
+        tim2[35] = 4; // INDEX4
+        tim2[36..38].copy_from_slice(&2_u16.to_le_bytes());
+        tim2[38..40].copy_from_slice(&2_u16.to_le_bytes());
+        tim2[64..66].copy_from_slice(&[0x10, 0x10]);
+        tim2[66..74].copy_from_slice(&[0, 0, 0, 128, 255, 255, 255, 128]);
+        let stream = compress_lz77(&tim2, false);
+        let file_offset = header_offset + 4096;
+        let mut data = vec![0; file_offset + 1024];
+        data[HEADER_RESOURCE_POINTER..HEADER_RESOURCE_POINTER + 4]
+            .copy_from_slice(&(header_offset as u32).to_le_bytes());
+        data[FAT_OFFSET..FAT_OFFSET + 4].copy_from_slice(&2_u32.to_le_bytes());
+        data[FAT_OFFSET + 8..FAT_OFFSET + 12].copy_from_slice(&(file_offset as u32).to_le_bytes());
+        data[FAT_OFFSET + ENTRY_SIZE + 4..FAT_OFFSET + ENTRY_SIZE + 8]
+            .copy_from_slice(&(stream.len() as u32).to_le_bytes());
+        data[header_offset..header_offset + stream.len()].copy_from_slice(&stream);
+        data[file_offset..file_offset + stream.len()].copy_from_slice(&stream);
+        data
+    }
+
+    #[test]
+    fn discovers_header_resource_from_pointer_and_validates_its_bounds() {
+        let fat_end = FAT_OFFSET + NUM_ENTRIES * ENTRY_SIZE;
+        for offset in [fat_end + 256, fat_end + 1024] {
+            let data = indexed_font_fixture(offset);
+            let rows = texture_resource_rows(&data).unwrap();
+            let header = find_row(&rows, HEADER_TEXTURE_ID).unwrap();
+            assert_eq!(header.offset as usize, offset);
+            assert_eq!(header.row, NUM_ENTRIES);
+            assert_eq!(slot_capacity(&rows, header), Some(4096));
+            assert_eq!(parse_entries_from_data(&data).unwrap().len(), NUM_ENTRIES);
+        }
+        let mut data = indexed_font_fixture(fat_end + 256);
+        data[12..16].fill(0);
+        assert!(find_row(&texture_resource_rows(&data).unwrap(), HEADER_TEXTURE_ID).is_none());
+        data[12..16].copy_from_slice(&32_u32.to_le_bytes());
+        assert!(texture_resource_rows(&data).is_err());
+        data[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(texture_resource_rows(&data).is_err());
+        let mut data = indexed_font_fixture(fat_end + 256);
+        let offset = fat_end + 256;
+        data[offset + 8..offset + 12].copy_from_slice(&4096_u32.to_le_bytes());
+        assert!(texture_resource_rows(&data).is_err());
+    }
+
+    #[test]
+    fn header_font_exports_hashes_and_roundtrips_through_manifest_without_changing_fat() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("Data.bin");
+        let offset = FAT_OFFSET + NUM_ENTRIES * ENTRY_SIZE + 256;
+        let original = indexed_font_fixture(offset);
+        fs::write(&path, &original).unwrap();
+        let records = write_texture_inventory(&path, temp.path().join("inventory")).unwrap();
+        assert_eq!(records.len(), 2);
+        let header = records.iter().find(|r| r.is_header_resource()).unwrap();
+        let ordinary = records.iter().find(|r| !r.is_header_resource()).unwrap();
+        assert_eq!(header.texture_hash, ordinary.texture_hash);
+        assert!(!header.texture_hash.is_empty());
+        assert!(header.png.contains("ID_4294967295_T000_P00_2x2.png"));
+        let png = temp.path().join("inventory").join(&header.png);
+        let (width, height, mut rgba) = read_png_rgba(&png).unwrap();
+        rgba[..4].copy_from_slice(&[255, 255, 255, 255]);
+        write_png_rgba(&png, width, height, &rgba).unwrap();
+        let manifest = temp.path().join("manifest.json");
+        fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!([{
+                "file_id": HEADER_TEXTURE_ID, "tim2_index": 0, "picture_index": 0,
+                "png": png, "mode": "preserve_palette", "lz77_offset": null
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let streams = temp.path().join("streams");
+        let report = patch_textures_from_manifest(&path, &manifest, &streams).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.streams_written, 1);
+        let report = inject_patched_texture_streams(&path, &streams).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.streams_injected, 1);
+        let patched = fs::read(&path).unwrap();
+        assert_eq!(&patched[..offset], &original[..offset]); // Header and entire FAT unchanged.
+        assert_eq!(&patched[offset + 4096..], &original[offset + 4096..]);
+        let blob = decompress_lz77(&patched[offset..offset + 4096], None, true).unwrap();
+        assert_eq!(
+            picture_to_rgba(&find_tim2_files(&blob)[0].pictures[0]).unwrap(),
+            rgba
+        );
+        let new_records = write_texture_inventory(&path, temp.path().join("verified")).unwrap();
+        let changed = new_records.iter().find(|r| r.is_header_resource()).unwrap();
+        assert_ne!(changed.texture_hash, header.texture_hash);
+        assert_eq!(
+            new_records.iter().find(|r| r.id == 2).unwrap().texture_hash,
+            ordinary.texture_hash
+        );
+    }
+
+    #[test]
+    fn header_font_injection_rejects_overflow_without_touching_archive() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("Data.bin");
+        let data = indexed_font_fixture(FAT_OFFSET + NUM_ENTRIES * ENTRY_SIZE + 256);
+        fs::write(&path, &data).unwrap();
+        let streams = temp.path().join("streams");
+        fs::create_dir(&streams).unwrap();
+        fs::write(
+            streams.join(format!("ID_{HEADER_TEXTURE_ID}.lz77")),
+            vec![0; 4097],
+        )
+        .unwrap();
+        let report = inject_patched_texture_streams(&path, &streams).unwrap();
+        assert_eq!(report.streams_injected, 0);
+        assert!(report.errors[0].contains("does not fit"));
+        assert_eq!(fs::read(&path).unwrap(), data);
+    }
 
     #[test]
     fn parses_minimal_tim2() {

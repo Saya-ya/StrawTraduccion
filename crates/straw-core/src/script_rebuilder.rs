@@ -255,6 +255,196 @@ pub fn rebuild_local_slack(
     Ok((out, report))
 }
 
+pub fn rebuild_shift_suffix(
+    dec_data: &[u8],
+    rows: &[TranslationRow],
+    consume_punctuation: bool,
+    glyph_map: Option<&GlyphMap>,
+) -> Result<(Vec<u8>, RebuildReport)> {
+    let mut report = RebuildReport {
+        mode: "shift-suffix",
+        input_size: dec_data.len(),
+        output_size: dec_data.len(),
+        rows_total: rows.len(),
+        rows_applied: 0,
+        segments_modified: 0,
+        needs_shift: Vec::new(),
+        segments: Vec::new(),
+    };
+
+    let mut groups: BTreeMap<usize, (TextSegment, Vec<TranslationRow>)> = BTreeMap::new();
+    for row in rows {
+        let segment = find_segment_containing(dec_data, row.offset, &row.original_text)?;
+        if row.offset < segment.start || row.offset >= segment.text_end {
+            bail!(
+                "CSV row {} offset 0x{:X} is outside detected segment",
+                row.csv_line,
+                row.offset
+            );
+        }
+        groups
+            .entry(segment.start)
+            .or_insert_with(|| (segment, Vec::new()))
+            .1
+            .push(row.clone());
+    }
+
+    struct Action {
+        segment: TextSegment,
+        rows: Vec<TranslationRow>,
+        new_bytes: Vec<u8>,
+        report: SegmentReport,
+        extra_bytes: usize,
+        inline_record: Option<InlineRecord>,
+    }
+
+    let mut actions = Vec::new();
+    for (_start, (segment, seg_rows)) in groups {
+        let (new_text, events) =
+            apply_rows_to_segment(&segment, &seg_rows, consume_punctuation, glyph_map)?;
+        let new_bytes = encode_utf16le(&new_text);
+        let required = new_bytes.len() + 2;
+        let mut segment_report = SegmentReport {
+            start: segment.start,
+            text_end: segment.text_end,
+            slack_end: segment.slack_end,
+            old_text_bytes: segment.old_text_bytes(),
+            new_text_bytes: new_bytes.len(),
+            capacity_bytes: segment.capacity_bytes(),
+            required_bytes: required,
+            has_length_prefix: segment.has_length_prefix,
+            length_prefix_offset: segment.length_prefix_offset,
+            rows: events,
+            status: SegmentStatus::Applied,
+        };
+
+        let (extra_bytes, inline_record) = if required <= segment.capacity_bytes() {
+            (0, None)
+        } else if let Some(record) = detect_inline_text_record(dec_data, &segment) {
+            let extra = align_even(required - segment.capacity_bytes());
+            (extra, Some(record))
+        } else {
+            segment_report.status = SegmentStatus::NeedsShift;
+            report.needs_shift.push(segment_report.clone());
+            report.segments.push(segment_report);
+            continue;
+        };
+
+        actions.push(Action {
+            segment,
+            rows: seg_rows,
+            new_bytes,
+            report: segment_report,
+            extra_bytes,
+            inline_record,
+        });
+    }
+
+    let mut out = dec_data.to_vec();
+    actions.sort_by_key(|action| action.segment.start);
+    for action in actions.into_iter().rev() {
+        let segment = action.segment;
+        if action.extra_bytes > 0 {
+            let record = action
+                .inline_record
+                .context("missing inline record for shift action")?;
+            out.splice(
+                segment.slack_end..segment.slack_end,
+                std::iter::repeat(0).take(action.extra_bytes),
+            );
+            let new_record_len = record
+                .length
+                .checked_add(action.extra_bytes)
+                .context("inline text record length overflow")?;
+            if new_record_len > u32::MAX as usize {
+                bail!(
+                    "inline text record at 0x{:X} exceeds u32 length",
+                    record.start
+                );
+            }
+            out[record.length_offset..record.length_offset + 4]
+                .copy_from_slice(&(new_record_len as u32).to_le_bytes());
+        }
+
+        out[segment.start..segment.start + action.new_bytes.len()]
+            .copy_from_slice(&action.new_bytes);
+        out[segment.start + action.new_bytes.len()..segment.start + action.new_bytes.len() + 2]
+            .copy_from_slice(&[0, 0]);
+        let pad_start = segment.start + action.new_bytes.len() + 2;
+        let pad_end = segment.slack_end + action.extra_bytes;
+        if pad_start < pad_end {
+            out[pad_start..pad_end].fill(0);
+        }
+
+        if segment.has_length_prefix {
+            let char_count = String::from_utf16(
+                &action
+                    .new_bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect::<Vec<_>>(),
+            )?
+            .chars()
+            .count();
+            if char_count > u16::MAX as usize {
+                bail!("segment 0x{:X} length exceeds u16", segment.start);
+            }
+            if let Some(prefix_offset) = segment.length_prefix_offset {
+                out[prefix_offset..prefix_offset + 2]
+                    .copy_from_slice(&(char_count as u16).to_le_bytes());
+            }
+        }
+
+        report.segments_modified += 1;
+        report.rows_applied += action.rows.len();
+        report.segments.push(action.report);
+    }
+
+    report.segments.sort_by_key(|segment| segment.start);
+    report.output_size = out.len();
+    Ok((out, report))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InlineRecord {
+    start: usize,
+    length_offset: usize,
+    length: usize,
+}
+
+fn detect_inline_text_record(data: &[u8], segment: &TextSegment) -> Option<InlineRecord> {
+    const TEXT_RECORD_SIG_PREFIX: [u8; 4] = [3, 0, 0, 0];
+    const TEXT_RECORD_SIG_SUFFIX: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+
+    let record_start = segment.start.checked_sub(16)?;
+    let length_offset = record_start.checked_add(4)?;
+    let suffix_offset = record_start.checked_add(8)?;
+    if data.get(record_start..record_start + 4) != Some(&TEXT_RECORD_SIG_PREFIX) {
+        return None;
+    }
+    if data.get(suffix_offset..suffix_offset + 8) != Some(&TEXT_RECORD_SIG_SUFFIX) {
+        return None;
+    }
+    let length = u32::from_le_bytes(
+        data.get(length_offset..length_offset + 4)?
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let record_end = segment.start.checked_add(length)?;
+    if record_end > data.len() || segment.slack_end > record_end || segment.text_end > record_end {
+        return None;
+    }
+    Some(InlineRecord {
+        start: record_start,
+        length_offset,
+        length,
+    })
+}
+
+fn align_even(value: usize) -> usize {
+    value + (value % 2)
+}
+
 fn apply_rows_to_segment(
     segment: &TextSegment,
     rows: &[TranslationRow],
@@ -455,6 +645,62 @@ mod tests {
     }
 
     #[test]
+    fn local_slack_preserves_nonzero_suffix() {
+        let data = inline_record_with_suffix("あい", 0x40, &[1, 0, 6, 0, 0xAA]);
+        let suffix_start = data.iter().rposition(|byte| *byte == 0xAA).unwrap() - 4;
+        let suffix = data[suffix_start..0x20 + 0x40].to_vec();
+        let row = TranslationRow {
+            source: "SCRIPT".to_owned(),
+            file_id: 1,
+            offset: 0x20,
+            original_text: "あい".to_owned(),
+            translated_text: "Hola".to_owned(),
+            csv_line: 2,
+        };
+
+        let (rebuilt, report) = rebuild_local_slack(&data, &[row], true, None).unwrap();
+
+        assert_eq!(report.needs_shift.len(), 0);
+        assert_eq!(&rebuilt[suffix_start..0x20 + 0x40], suffix.as_slice());
+        assert_eq!(
+            u32::from_le_bytes(rebuilt[0x14..0x18].try_into().unwrap()),
+            0x40
+        );
+    }
+
+    #[test]
+    fn shift_suffix_extends_inline_record_without_overwriting_suffix() {
+        let data = inline_record_with_suffix("あい", 0x40, &[1, 0, 6, 0, 0xAA]);
+        let old_suffix_start = data.iter().rposition(|byte| *byte == 0xAA).unwrap() - 4;
+        let suffix = data[old_suffix_start..0x20 + 0x40].to_vec();
+        let row = TranslationRow {
+            source: "SCRIPT".to_owned(),
+            file_id: 1,
+            offset: 0x20,
+            original_text: "あい".to_owned(),
+            translated_text: "Texto mucho mas largo que supera el slack local".to_owned(),
+            csv_line: 2,
+        };
+
+        let translated_text = row.translated_text.clone();
+        let (rebuilt, report) = rebuild_shift_suffix(&data, &[row], true, None).unwrap();
+
+        let new_len = u32::from_le_bytes(rebuilt[0x14..0x18].try_into().unwrap()) as usize;
+        let new_suffix_start = rebuilt.iter().rposition(|byte| *byte == 0xAA).unwrap() - 4;
+        let new_text_bytes = encode_utf16le(&translated_text);
+        assert!(new_len > 0x40);
+        assert_eq!(report.needs_shift.len(), 0);
+        assert_eq!(
+            &rebuilt[new_suffix_start..0x20 + new_len],
+            suffix.as_slice()
+        );
+        assert_eq!(
+            decode_utf16le(&rebuilt[0x20..0x20 + new_text_bytes.len()]).unwrap(),
+            translated_text
+        );
+    }
+
+    #[test]
     fn consumes_trailing_punctuation_when_translation_keeps_punctuation() {
         let data = dec_with_text("あい。", 8);
         let row = TranslationRow {
@@ -527,6 +773,20 @@ mod tests {
         data.extend([0, 0]);
         data.extend(std::iter::repeat(0).take(slack));
         data.push(0xFF);
+        data
+    }
+
+    fn inline_record_with_suffix(text: &str, record_len: usize, suffix: &[u8]) -> Vec<u8> {
+        let mut data = vec![0; 0x10];
+        data.extend([3, 0, 0, 0]);
+        data.extend((record_len as u32).to_le_bytes());
+        data.extend([0; 8]);
+        data.extend(encode_utf16le(text));
+        data.extend([0, 0]);
+        let record_end = 0x10 + 0x10 + record_len;
+        let suffix_start = record_end - suffix.len();
+        data.resize(suffix_start, 0);
+        data.extend(suffix);
         data
     }
 }

@@ -38,6 +38,7 @@
                 </div>
                 <div class="space-y-2 p-4 text-sm">
                     <div class="font-mono font-black text-pink-200">ID {{ record.id }}</div>
+                    {% if record.is_header_resource() %}<div class="text-xs font-bold text-emerald-300">Fuentes de cabecera (fuera de FAT)</div>{% endif %}
                     <div class="text-slate-300">T{{ record.tim2_index }} P{{ record.picture_index }} · {{ record.width }}x{{ record.height }}</div>
                     <div class="break-all font-mono text-xs text-slate-500">{{ record.texture_hash }}</div>
                     {% if record.nested_lz77_offset.is_some() %}<div class="text-xs font-bold text-amber-300">LZ77 anidado</div>{% endif %}

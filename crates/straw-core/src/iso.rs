@@ -25,9 +25,10 @@ pub fn build_iso_with_patched_data(
     if !patched_data.exists() {
         bail!("patched Data.bin not found: {}", patched_data.display());
     }
-    if !out_iso.exists() {
-        copy_file_creating_parent(base_iso, out_iso)?;
+    if out_iso.exists() && fs::canonicalize(base_iso)? == fs::canonicalize(out_iso)? {
+        bail!("base ISO and output ISO must be different files");
     }
+    copy_file_creating_parent(base_iso, out_iso)?;
 
     let target_offset = find_signature_offset(out_iso, DATA_BIN_SIGNATURE)?
         .with_context(|| "Data.bin signature not found in ISO")?;
@@ -168,6 +169,28 @@ mod tests {
         assert_eq!(written, 7);
         let out_data = fs::read(&out).unwrap();
         assert_eq!(&out_data[64..71], b"PATCHED");
+    }
+
+    #[test]
+    fn rebuild_discards_previous_iso_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("base.iso");
+        let patched = temp.path().join("Data.bin");
+        let out = temp.path().join("out.iso");
+        let mut original = vec![0xAA; 64];
+        original.extend(DATA_BIN_SIGNATURE);
+        original.extend([0xBB; 64]);
+        fs::write(&base, &original).unwrap();
+        fs::write(&patched, b"FIRST").unwrap();
+        build_iso_with_patched_data(&base, &patched, &out).unwrap();
+        let mut stale = fs::read(&out).unwrap();
+        stale[0] = 0xCC;
+        fs::write(&out, stale).unwrap();
+        fs::write(&patched, b"SECOND").unwrap();
+        build_iso_with_patched_data(&base, &patched, &out).unwrap();
+        original[64..70].copy_from_slice(b"SECOND");
+        assert_eq!(fs::read(&out).unwrap(), original);
+        assert!(build_iso_with_patched_data(&base, &patched, &base).is_err());
     }
 
     #[test]

@@ -9,9 +9,10 @@ use anyhow::{bail, Context, Result};
 
 use crate::{
     datafat::{find_row, parse_entries_from_data, size_field_write_offset, slot_capacity},
+    dialogue::classify_script_rebuild_mode,
     glyph_map::GlyphMap,
     lz77::{compress_lz77, decompress_lz77},
-    script_rebuilder::{rebuild_local_slack, TranslationRow},
+    script_rebuilder::{rebuild_local_slack, rebuild_shift_suffix, TranslationRow},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +83,12 @@ fn patch_one_script(
     let dec_path = dec_dir.join(format!("ID_{file_id:05}.dec"));
     let dec_data =
         fs::read(&dec_path).with_context(|| format!("failed to read {}", dec_path.display()))?;
-    let (rebuilt, rebuild_report) = rebuild_local_slack(&dec_data, rows, true, glyph_map)?;
+    let rebuild_mode = classify_script_rebuild_mode(&dec_data).unwrap_or_default();
+    let (rebuilt, rebuild_report) = if rebuild_mode == "shift_suffix_safe" {
+        rebuild_shift_suffix(&dec_data, rows, true, glyph_map)?
+    } else {
+        rebuild_local_slack(&dec_data, rows, true, glyph_map)?
+    };
     if !rebuild_report.needs_shift.is_empty() {
         bail!("{} segment(s) need shift", rebuild_report.needs_shift.len());
     }

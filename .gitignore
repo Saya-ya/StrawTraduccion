@@ -39,6 +39,7 @@ dev/
 /textos
 /texturas/*.png
 /texturas/manifest.json
+/texturas/uploads/
 
 .env
 target/

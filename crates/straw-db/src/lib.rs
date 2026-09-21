@@ -22,6 +22,7 @@ pub struct ScriptSummary {
     pub source: String,
     pub script_type: String,
     pub variant: String,
+    pub rebuild_mode: String,
     pub is_supported: bool,
     pub total_texts: i64,
     pub translated_texts: i64,
@@ -229,13 +230,14 @@ where
     for (script_index, script) in scripts.iter().enumerate() {
         sqlx::query(
             r#"
-            INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
-            VALUES (?, 'SCRIPT', ?, ?, 1, ?, 0, ?)
+            INSERT INTO scripts (id, source, script_type, variant, rebuild_mode, is_supported, total_texts, translated_texts, total_sections)
+            VALUES (?, 'SCRIPT', ?, ?, ?, 1, ?, 0, ?)
             "#,
         )
         .bind(script.script_id)
         .bind(&script.script_type)
         .bind(&script.variant)
+        .bind(&script.rebuild_mode)
         .bind(script.texts.len() as i64)
         .bind(script.total_sections)
         .execute(pool)
@@ -268,8 +270,8 @@ where
         progress("Insertando textos ELF en SQLite");
         sqlx::query(
             r#"
-            INSERT INTO scripts (id, source, script_type, variant, is_supported, total_texts, translated_texts, total_sections)
-            VALUES (-1, 'ELF', 'ELF', '', 1, ?, 0, 1)
+            INSERT INTO scripts (id, source, script_type, variant, rebuild_mode, is_supported, total_texts, translated_texts, total_sections)
+            VALUES (-1, 'ELF', 'ELF', '', 'elf', 1, ?, 0, 1)
             "#,
         )
         .bind(elf_texts.len() as i64)
@@ -488,7 +490,7 @@ pub async fn import_translations_from_db(
 pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, source, script_type, variant, is_supported,
+        SELECT id, source, script_type, variant, rebuild_mode, is_supported,
                total_texts, translated_texts, total_sections
         FROM scripts
         ORDER BY id
@@ -510,6 +512,9 @@ pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
                 variant: row
                     .try_get::<Option<String>, _>("variant")?
                     .unwrap_or_default(),
+                rebuild_mode: row
+                    .try_get::<Option<String>, _>("rebuild_mode")?
+                    .unwrap_or_default(),
                 is_supported: row.try_get::<i64, _>("is_supported")? != 0,
                 total_texts: row.try_get::<Option<i64>, _>("total_texts")?.unwrap_or(0),
                 translated_texts: row
@@ -526,7 +531,7 @@ pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
 pub async fn get_script(pool: &SqlitePool, script_id: i64) -> Result<Option<ScriptSummary>> {
     let row = sqlx::query(
         r#"
-        SELECT id, source, script_type, variant, is_supported,
+        SELECT id, source, script_type, variant, rebuild_mode, is_supported,
                total_texts, translated_texts, total_sections
         FROM scripts
         WHERE id = ?
@@ -1197,6 +1202,9 @@ fn script_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScriptSummary> {
         variant: row
             .try_get::<Option<String>, _>("variant")?
             .unwrap_or_default(),
+        rebuild_mode: row
+            .try_get::<Option<String>, _>("rebuild_mode")?
+            .unwrap_or_default(),
         is_supported: row.try_get::<i64, _>("is_supported")? != 0,
         total_texts: row.try_get::<Option<i64>, _>("total_texts")?.unwrap_or(0),
         translated_texts: row
@@ -1245,6 +1253,7 @@ async fn create_schema(pool: &SqlitePool) -> Result<()> {
             source VARCHAR(10) DEFAULT 'SCRIPT',
             script_type VARCHAR(30) DEFAULT '',
             variant VARCHAR(1) DEFAULT '',
+            rebuild_mode VARCHAR(30) DEFAULT '',
             offset_in_bin INTEGER DEFAULT 0,
             size_in_bin INTEGER DEFAULT 0,
             slot_capacity INTEGER DEFAULT 0,
@@ -1330,6 +1339,26 @@ async fn create_schema(pool: &SqlitePool) -> Result<()> {
 
     for statement in statements {
         sqlx::query(statement).execute(pool).await?;
+    }
+    ensure_column(pool, "scripts", "rebuild_mode", "VARCHAR(30) DEFAULT ''").await?;
+    Ok(())
+}
+
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let exists = rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .is_ok_and(|name| name == column)
+    });
+    if !exists {
+        let alter = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+        sqlx::query(&alter).execute(pool).await?;
     }
     Ok(())
 }

@@ -14,7 +14,10 @@ pub mod texture_inventory;
 pub use datafat::{
     find_row, parse_entries, read_entries, size_field_write_offset, slot_capacity, FatEntry,
 };
-pub use dialogue::{analyze_script_dec, extract_elf_strings, AnalyzedScript, ImportedText};
+pub use dialogue::{
+    analyze_script_dec, classify_script_rebuild_mode, extract_elf_strings, AnalyzedScript,
+    ImportedText,
+};
 pub use extract::{
     extract_lz77_scripts, extract_lz77_scripts_from_file, extract_lz77_scripts_to_dir,
     write_extracted_scripts, ExtractedScript,
@@ -33,8 +36,8 @@ pub use lz77::{compress_lz77, decompress_lz77};
 pub use patch_elf::{patch_translated_elf, PatchElfReport};
 pub use patch_scripts::{patch_translated_scripts, PatchScriptsReport};
 pub use script_rebuilder::{
-    find_segment_containing, rebuild_local_slack, RebuildReport, SegmentReport, TextSegment,
-    TranslationRow,
+    find_segment_containing, rebuild_local_slack, rebuild_shift_suffix, RebuildReport,
+    SegmentReport, TextSegment, TranslationRow,
 };
 pub use texture_inventory::{
     inject_patched_texture_streams, patch_textures_from_manifest, write_texture_inventory,

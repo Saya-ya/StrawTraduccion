@@ -19,7 +19,7 @@
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">TIM2</p>
             <h1 class="mt-2 text-4xl font-black tracking-tight">Imagenes y texturas</h1>
-            <p class="mt-3 max-w-3xl text-slate-400">Extrae y analiza texturas TIM2, genera PNGs, aplica parches desde manifest e inyecta streams en Data_patched.bin desde esta pagina.</p>
+            <p class="mt-3 max-w-3xl text-slate-400">Extrae y analiza texturas TIM2, revisa duplicados y sube PNGs editados al manifest. El parcheo e inyeccion se ejecutan desde Build.</p>
             <div class="mt-5 flex flex-wrap gap-3 text-sm">
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">Texturas detectadas: {{ total_records }}</span>
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-slate-300">PNGs: {{ png_count }}</span>
@@ -38,7 +38,7 @@
             </div>
         </section>
 
-        <section class="mb-6 grid gap-3 md:grid-cols-4">
+        <section class="mb-6 grid gap-3 md:grid-cols-3">
             <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
                 <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
                 {% if data_bin_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-red-300">Falta</div>{% endif %}
@@ -51,28 +51,24 @@
                 <div class="text-xs uppercase tracking-wider text-slate-500">Manifest</div>
                 {% if texture_manifest_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
             </div>
-            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                <div class="text-xs uppercase tracking-wider text-slate-500">Data parcheado</div>
-                {% if patched_data_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
-            </div>
         </section>
 
         <section class="mb-6 grid gap-4 lg:grid-cols-3">
             <form method="post" action="/textures/inventory" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                <h2 class="text-xl font-black">1. Extraer y analizar</h2>
-                <p class="mt-2 text-sm text-slate-400">Genera inventario TIM2, JSON/CSV y PNGs en <span class="font-mono text-pink-200">work_texturas/output/all_textures</span>.</p>
+                <h2 class="text-xl font-black">Generar inventario</h2>
+                <p class="mt-2 text-sm text-slate-400">Extrae los archivos de la FAT y el bloque de fuentes de cabecera, con hashes y PNGs en <span class="font-mono text-pink-200">work_texturas/output/all_textures</span>. Busca “fuentes” en el catalogo para ver las hojas de 256x256.</p>
                 {% if data_bin_exists && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Generar inventario</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Data.bin requerido{% endif %}</button>{% endif %}
             </form>
-            <form method="post" action="/textures/patch" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                <h2 class="text-xl font-black">2. Parchear texturas</h2>
-                <p class="mt-2 text-sm text-slate-400">Usa <span class="font-mono text-pink-200">texturas/manifest.json</span> y escribe streams en <span class="font-mono text-pink-200">work_texturas/patched</span>.</p>
-                {% if data_bin_exists && texture_manifest_exists && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear texturas</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Requiere Data y manifest{% endif %}</button>{% endif %}
-            </form>
-            <form method="post" action="/textures/inject" class="texture-action rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                <h2 class="text-xl font-black">3. Inyectar en Data</h2>
-                <p class="mt-2 text-sm text-slate-400">Inserta streams parcheados en <span class="font-mono text-pink-200">work/Data_patched.bin</span>.</p>
-                {% if patched_data_exists && patched_streams_exist && !texture_running %}<button class="mt-4 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Inyectar texturas</button>{% else %}<button class="mt-4 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if texture_running %}Tarea en curso{% else %}Requiere Data parcheado y streams{% endif %}</button>{% endif %}
-            </form>
+            <a href="/textures/catalog" class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 transition hover:border-pink-400/50 hover:bg-slate-900">
+                <h2 class="text-xl font-black text-white">Catalogo</h2>
+                <p class="mt-2 text-sm text-slate-400">Busca texturas por ID, hash, tamano o nombre PNG.</p>
+                <span class="mt-4 inline-flex rounded-full border border-slate-700 px-4 py-2 text-sm font-bold text-pink-100">Abrir catalogo</span>
+            </a>
+            <a href="/textures/upload" class="rounded-3xl border border-pink-400/30 bg-pink-500/10 p-6 transition hover:bg-pink-500/15">
+                <h2 class="text-xl font-black text-white">Subir PNG</h2>
+                <p class="mt-2 text-sm text-slate-400">Sube PNGs editados y actualiza <span class="font-mono text-pink-200">texturas/manifest.json</span>.</p>
+                <span class="mt-4 inline-flex rounded-full bg-pink-500 px-4 py-2 text-sm font-bold text-white">Subir editada</span>
+            </a>
         </section>
 
         <section class="mb-8 rounded-3xl border border-slate-800 bg-slate-950 p-5">
@@ -96,14 +92,8 @@
 
         function textureTaskFinished(text) {
             return text.includes('Inventario TIM2 generado:')
-                || text.includes('Texturas parcheadas:')
-                || text.includes('Streams de textura inyectados:')
                 || text.includes('ERROR generando inventario TIM2:')
-                || text.includes('ERROR parcheando texturas:')
-                || text.includes('ERROR inyectando texturas:')
-                || text.includes('ERROR de tarea generando inventario TIM2:')
-                || text.includes('ERROR de tarea parcheando texturas:')
-                || text.includes('ERROR de tarea inyectando texturas:');
+                || text.includes('ERROR de tarea generando inventario TIM2:');
         }
 
         async function refreshTextureLog() {

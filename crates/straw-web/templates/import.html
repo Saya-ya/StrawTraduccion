@@ -22,6 +22,9 @@
             <p class="mt-3 max-w-3xl text-slate-400">
                 Esta etapa Rust lee <span class="font-mono text-pink-200">{{ data_bin_path }}</span>, parsea la FAT y escribe los scripts descomprimidos en <span class="font-mono text-pink-200">{{ scripts_out_dir }}</span>.
             </p>
+            <p class="mt-3 max-w-3xl rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+                Al importar a SQLite tambien se clasifica cada `.dec`: <span class="font-mono text-emerald-200">shift_suffix_safe</span>, <span class="font-mono text-emerald-200">local_slack_only</span>, <span class="font-mono text-emerald-200">pointer_table_needed</span> o <span class="font-mono text-emerald-200">unknown_unsafe</span>. Vuelve a importar si quieres actualizar esa clasificacion experimental.
+            </p>
 
             <div class="mt-6 grid gap-4 md:grid-cols-3">
                 <div class="rounded-2xl bg-slate-950/60 p-5">
@@ -72,7 +75,7 @@
             <form method="post" action="/import/db" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
                 <div class="mb-4 flex items-start gap-3">
                     <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-black text-slate-950">2</span>
-                    <div><h2 class="font-black text-white">Importar a SQLite</h2><p class="mt-1 text-sm text-slate-400">Llena la base de datos y preserva traducciones existentes.</p></div>
+                    <div><h2 class="font-black text-white">Importar a SQLite</h2><p class="mt-1 text-sm text-slate-400">Llena la base de datos, preserva traducciones y recalcula el modo de rebuild experimental.</p></div>
                 </div>
                 {% if existing_dec_count > 0 && !import_running %}
                 <button class="w-full rounded-full bg-slate-100 px-6 py-3 font-bold text-slate-950 hover:bg-white">

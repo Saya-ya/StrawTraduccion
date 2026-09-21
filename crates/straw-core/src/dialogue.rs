@@ -34,6 +34,7 @@ pub struct AnalyzedScript {
     pub script_id: i64,
     pub script_type: String,
     pub variant: String,
+    pub rebuild_mode: String,
     pub total_sections: i64,
     pub texts: Vec<ImportedText>,
 }
@@ -89,6 +90,8 @@ pub fn analyze_script_dec(path: impl AsRef<Path>) -> Result<Option<AnalyzedScrip
     }
     text_blocks.sort_by_key(|block| block.text_offset);
 
+    let rebuild_mode = classify_rebuild_mode(&data, &variant, &text_blocks);
+
     let sections = if variant == "B" {
         group_by_pointers(
             parse_pointer_table(&data, bytecode_ptr),
@@ -127,9 +130,93 @@ pub fn analyze_script_dec(path: impl AsRef<Path>) -> Result<Option<AnalyzedScrip
         script_id,
         script_type: format!("0x{h0:08X}"),
         variant: variant.to_owned(),
+        rebuild_mode,
         total_sections: sections.len() as i64,
         texts,
     }))
+}
+
+pub fn classify_script_rebuild_mode(data: &[u8]) -> Option<String> {
+    if data.len() < 0x20 {
+        return None;
+    }
+    let h0 = read_u32_le(data, 0).unwrap_or(0);
+    if (h0 & SCRIPT_DIALOGUE_MASK) != SCRIPT_DIALOGUE_SIG {
+        return None;
+    }
+    let bytecode_ptr = read_u32_le(data, 0x10).unwrap_or(0x2010) as usize;
+    let gap = data.get(0x20..bytecode_ptr).unwrap_or_default();
+    let variant = if gap.iter().any(|byte| *byte != 0) {
+        "B"
+    } else {
+        "A"
+    };
+    let mut text_blocks = find_text_blocks(data);
+    for block in find_text_blocks_fallback(data) {
+        let has_groupable_existing = text_blocks.iter().any(|existing| {
+            existing.text_offset == block.text_offset
+                && (variant != "B" || existing.block_offset >= bytecode_ptr)
+        });
+        if block.text_offset % 2 == 0 && !has_groupable_existing {
+            text_blocks.push(block);
+        }
+    }
+    text_blocks.sort_by_key(|block| block.text_offset);
+    Some(classify_rebuild_mode(data, variant, &text_blocks))
+}
+
+fn classify_rebuild_mode(data: &[u8], variant: &str, text_blocks: &[TextBlock]) -> String {
+    if variant == "B" {
+        return "pointer_table_needed".to_owned();
+    }
+    if variant != "A" || text_blocks.is_empty() {
+        return "unknown_unsafe".to_owned();
+    }
+
+    let safe = text_blocks
+        .iter()
+        .filter(|block| is_shift_suffix_text_record(data, block))
+        .count();
+    if safe == text_blocks.len() {
+        "shift_suffix_safe".to_owned()
+    } else if safe == 0 {
+        "local_slack_only".to_owned()
+    } else {
+        "unknown_unsafe".to_owned()
+    }
+}
+
+fn is_shift_suffix_text_record(data: &[u8], block: &TextBlock) -> bool {
+    let Some(record_start) = block.text_offset.checked_sub(TEXT_BLOCK_SIG.len()) else {
+        return false;
+    };
+    if data.get(record_start..record_start + 4) != Some(&[3, 0, 0, 0]) {
+        return false;
+    }
+    if data.get(record_start + 8..record_start + 16) != Some(&[0; 8]) {
+        return false;
+    }
+    let Some(length_bytes) = data.get(record_start + 4..record_start + 8) else {
+        return false;
+    };
+    let length = u32::from_le_bytes(length_bytes.try_into().unwrap()) as usize;
+    let Some(record_end) = block.text_offset.checked_add(length) else {
+        return false;
+    };
+    if record_end > data.len() || block.text_offset >= record_end {
+        return false;
+    }
+    let Some(null_pos) = find_utf16_null(data, block.text_offset) else {
+        return false;
+    };
+    if null_pos >= record_end {
+        return false;
+    }
+    let mut suffix_start = null_pos + 2;
+    while suffix_start < record_end && data[suffix_start] == 0 {
+        suffix_start += 1;
+    }
+    suffix_start < record_end
 }
 
 pub fn extract_elf_strings(path: impl AsRef<Path>) -> Result<Vec<ImportedText>> {
@@ -447,6 +534,56 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].block_offset, block_start);
         assert_eq!(blocks[0].text, "こんにちは");
+    }
+
+    #[test]
+    fn classifies_variant_a_inline_records_as_shift_suffix_safe() {
+        let mut data = vec![0; 0x20];
+        data[0..4].copy_from_slice(&SCRIPT_DIALOGUE_SIG.to_le_bytes());
+        data[0x10..0x14].copy_from_slice(&0x20_u32.to_le_bytes());
+        data.extend([3, 0, 0, 0]);
+        data.extend(0x40_u32.to_le_bytes());
+        data.extend([0; 8]);
+        data.extend("こんにちは".encode_utf16().flat_map(u16::to_le_bytes));
+        data.extend([0, 0]);
+        data.resize(0x20 + 0x10 + 0x40 - 4, 0);
+        data.extend([1, 0, 6, 0]);
+
+        assert_eq!(
+            classify_script_rebuild_mode(&data).as_deref(),
+            Some("shift_suffix_safe")
+        );
+    }
+
+    #[test]
+    fn classifies_variant_b_as_pointer_table_needed() {
+        let mut data = vec![0; 0x40];
+        data[0..4].copy_from_slice(&SCRIPT_DIALOGUE_SIG.to_le_bytes());
+        data[0x10..0x14].copy_from_slice(&0x40_u32.to_le_bytes());
+        data[0x20..0x24].copy_from_slice(&0x40_u32.to_le_bytes());
+
+        assert_eq!(
+            classify_script_rebuild_mode(&data).as_deref(),
+            Some("pointer_table_needed")
+        );
+    }
+
+    #[test]
+    fn classifies_inline_text_without_suffix_as_local_slack_only() {
+        let mut data = vec![0; 0x20];
+        data[0..4].copy_from_slice(&SCRIPT_DIALOGUE_SIG.to_le_bytes());
+        data[0x10..0x14].copy_from_slice(&0x20_u32.to_le_bytes());
+        data.extend([3, 0, 0, 0]);
+        data.extend(0x40_u32.to_le_bytes());
+        data.extend([0; 8]);
+        data.extend("こんにちは".encode_utf16().flat_map(u16::to_le_bytes));
+        data.extend([0, 0]);
+        data.resize(0x20 + 0x10 + 0x40, 0);
+
+        assert_eq!(
+            classify_script_rebuild_mode(&data).as_deref(),
+            Some("local_slack_only")
+        );
     }
 
     #[test]

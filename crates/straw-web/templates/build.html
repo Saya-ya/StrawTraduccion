@@ -51,6 +51,22 @@
             </div>
         </section>
 
+        <section class="mb-6 rounded-2xl border border-emerald-500/20 bg-slate-900/70 p-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="font-black text-white">Clasificacion experimental de scripts</h2>
+                    <p class="mt-1 text-sm text-slate-400">El parcheo de scripts elige automaticamente el modo segun el `.dec`: local-slack para lo conservador y shift-suffix solo en registros inline seguros.</p>
+                </div>
+                <a href="/import" class="self-start rounded-full border border-emerald-500/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/10 lg:self-auto">Reimportar clasificacion</a>
+            </div>
+            <div class="mt-4 grid gap-3 text-xs sm:grid-cols-4">
+                <div class="rounded-xl bg-emerald-500/10 p-3"><span class="font-black text-emerald-200">{{ shift_suffix_count }}</span><span class="ml-2 text-emerald-100/70">shift-suffix</span></div>
+                <div class="rounded-xl bg-slate-950/60 p-3"><span class="font-black text-slate-200">{{ local_slack_count }}</span><span class="ml-2 text-slate-400">local-slack</span></div>
+                <div class="rounded-xl bg-amber-500/10 p-3"><span class="font-black text-amber-200">{{ pointer_table_count }}</span><span class="ml-2 text-amber-100/70">requieren tabla</span></div>
+                <div class="rounded-xl bg-red-500/10 p-3"><span class="font-black text-red-200">{{ unknown_rebuild_count }}</span><span class="ml-2 text-red-100/70">sin clasificar</span></div>
+            </div>
+        </section>
+
         {% if build_running %}<div class="mb-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-100"><span class="font-black">Build en curso.</span> Puedes dejar esta pagina abierta; la pestaña Logs se actualiza sola.</div>{% endif %}
         {% if message.len() > 0 %}<div class="mb-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>{% endif %}
         {% if error.len() > 0 %}<div class="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>{% endif %}
@@ -58,7 +74,6 @@
         <div class="sticky top-2 z-10 mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-lg shadow-slate-950/30 backdrop-blur">
             <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-white data-[active=true]:bg-pink-500" data-tab-target="complete" data-active="true">Completo</button>
             <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="manual">Manual</button>
-            <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="textures">Texturas</button>
             <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="logs">Logs</button>
             <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="history">Historial</button>
         </div>
@@ -109,7 +124,7 @@
                 </div>
                 <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
                     <h2 class="text-xl font-black">3. Parchear scripts</h2>
-                    <p class="mt-2 text-sm text-slate-400">Reconstruye local-slack, recomprime LZ77 e inyecta en Data.</p>
+                    <p class="mt-2 text-sm text-slate-400">Reconstruye scripts con local-slack o shift-suffix experimental segun clasificacion, recomprime LZ77 e inyecta en Data.</p>
                     <form method="post" action="/build/patch-scripts" class="build-action mt-4">{% if patched_data_exists && build_csv_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear scripts</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere Data y CSV</button>{% endif %}</form>
                 </div>
                 <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
@@ -127,18 +142,6 @@
                     <p class="mt-2 text-sm text-slate-400">Inserta el ELF traducido dentro de la ISO.</p>
                     <form method="post" action="/build/inject-elf" class="build-action mt-4">{% if iso_exists && original_elf_exists && translated_elf_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Inyectar ELF</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere ISO y ELF</button>{% endif %}</form>
                 </div>
-            </div>
-        </section>
-
-        <section id="tab-textures" class="tab-panel hidden">
-            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-                <h2 class="text-2xl font-black">Imagenes y texturas</h2>
-                <p class="mt-2 max-w-3xl text-sm text-slate-400">La extraccion, analisis, parcheo e inyeccion de texturas ahora vive en una pagina dedicada con su propio log para que no se mezcle ni se borre el log del build.</p>
-                <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold">
-                    {% if texture_inventory_exists %}<span class="rounded-full bg-emerald-500/15 px-3 py-2 text-emerald-300">Inventario existente</span>{% endif %}
-                    {% if texture_manifest_exists %}<span class="rounded-full bg-emerald-500/15 px-3 py-2 text-emerald-300">Manifest detectado</span>{% endif %}
-                </div>
-                <a href="/textures" class="mt-5 inline-flex rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Abrir pagina de imagenes</a>
             </div>
         </section>
 
@@ -217,7 +220,7 @@
             });
         });
         const initialTab = location.hash.replace('#', '');
-        if (['complete', 'manual', 'textures', 'logs', 'history'].includes(initialTab)) activateTab(initialTab);
+        if (['complete', 'manual', 'logs', 'history'].includes(initialTab)) activateTab(initialTab);
         if (new URLSearchParams(location.search).has('started')) activateTab('logs');
 
         const buildType = document.getElementById('build-type');

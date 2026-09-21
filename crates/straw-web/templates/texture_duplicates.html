@@ -32,7 +32,7 @@
                         <div class="mt-2 text-lg font-black">{{ group.records.len() }} copias</div>
                         <div class="mt-3 flex flex-wrap gap-2 text-xs">
                             {% for record in group.records %}
-                            <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
+                            <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">{% if record.is_header_resource() %}Fuentes de cabecera · {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
                             {% endfor %}
                         </div>
                     </div>

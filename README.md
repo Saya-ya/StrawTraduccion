@@ -134,6 +134,25 @@ Atajos utiles en el editor:
 
 La seccion de texturas analiza TIM2 dentro de `Data.bin`, incluyendo imagenes dentro de streams LZ77 anidados.
 
+Tambien extrae el recurso LZ77 de fuentes referenciado por el puntero de la
+cabecera en `0x0C`. Este recurso esta antes del primer archivo de la FAT y no
+aparece en esa tabla. En los originales del proyecto esta en `0x60000` y contiene
+59 hojas TIM2, incluida la fuente cirilica de 256x256 usada por el juego.
+
+- Se identifica con el **ID reservado `4294967295`** (`u32::MAX`), no con un ID
+  real de la FAT. `fat_row = 27411` es un marcador de recurso fuera de FAT.
+- La hoja cirilica es `ID_4294967295_T001_P00_256x256.png`.
+- En el catalogo y la subida se puede buscar **fuentes** o **cabecera**.
+- Conserva el mismo formato de JSON/CSV, nombres de PNG, `texture_hash`,
+  deteccion de duplicados y manifest que el resto de texturas.
+- El build resuelve de nuevo el puntero desde el Data original. Al inyectar,
+  conserva la cabecera y la FAT; usa el tamano del propio stream LZ77 y comprueba
+  que quepa antes del primer archivo FAT.
+
+Para actualizar un inventario anterior, ejecuta **Generar inventario** en
+Texturas. Subir un PNG prepara el manifest; el parcheo y la ISO se generan en
+Build.
+
 El inventario genera:
 
 ```text

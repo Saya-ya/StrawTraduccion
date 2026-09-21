@@ -86,6 +86,10 @@ struct ScriptsTemplate {
     total_texts: i64,
     translated_texts: i64,
     percent_label: String,
+    shift_suffix_count: usize,
+    local_slack_count: usize,
+    pointer_table_count: usize,
+    unknown_rebuild_count: usize,
 }
 
 #[derive(Template)]
@@ -161,13 +165,16 @@ struct BuildTemplate {
     iso_out_path: &'static str,
     build_csv_path: &'static str,
     build_csv_exists: bool,
-    texture_inventory_exists: bool,
     texture_manifest_exists: bool,
     build_running: bool,
     default_build_type: String,
     default_workers: usize,
     max_workers: usize,
     build_log: String,
+    shift_suffix_count: usize,
+    local_slack_count: usize,
+    pointer_table_count: usize,
+    unknown_rebuild_count: usize,
     message: String,
     error: String,
 }
@@ -182,9 +189,7 @@ struct TexturesTemplate {
     duplicate_records_count: usize,
     missing_hash_count: usize,
     data_bin_exists: bool,
-    patched_data_exists: bool,
     texture_manifest_exists: bool,
-    patched_streams_exist: bool,
     texture_running: bool,
     texture_log: String,
 }
@@ -427,6 +432,7 @@ async fn health() -> &'static str {
 
 async fn scripts(State(state): State<AppState>) -> Html<String> {
     let scripts = list_scripts(&state.db).await.unwrap_or_default();
+    let mode_counts = rebuild_mode_counts(&scripts);
     let total_texts = scripts.iter().map(|script| script.total_texts).sum();
     let translated_texts = scripts.iter().map(|script| script.translated_texts).sum();
     let percent = if total_texts > 0 {
@@ -442,8 +448,37 @@ async fn scripts(State(state): State<AppState>) -> Html<String> {
         total_texts,
         translated_texts,
         percent_label: format!("{percent:.1}"),
+        shift_suffix_count: mode_counts.shift_suffix,
+        local_slack_count: mode_counts.local_slack,
+        pointer_table_count: mode_counts.pointer_table,
+        unknown_rebuild_count: mode_counts.unknown,
     };
     Html(template.render().expect("scripts template renders"))
+}
+
+struct RebuildModeCounts {
+    shift_suffix: usize,
+    local_slack: usize,
+    pointer_table: usize,
+    unknown: usize,
+}
+
+fn rebuild_mode_counts(scripts: &[ScriptSummary]) -> RebuildModeCounts {
+    let mut counts = RebuildModeCounts {
+        shift_suffix: 0,
+        local_slack: 0,
+        pointer_table: 0,
+        unknown: 0,
+    };
+    for script in scripts {
+        match script.rebuild_mode.as_str() {
+            "shift_suffix_safe" => counts.shift_suffix += 1,
+            "local_slack_only" => counts.local_slack += 1,
+            "pointer_table_needed" => counts.pointer_table += 1,
+            _ => counts.unknown += 1,
+        }
+    }
+    counts
 }
 
 async fn script_detail(
@@ -544,9 +579,7 @@ async fn textures_page(State(state): State<AppState>) -> Html<String> {
         duplicate_records_count,
         missing_hash_count,
         data_bin_exists: FsPath::new(DATA_BIN_PATH).exists(),
-        patched_data_exists: FsPath::new(PATCHED_DATA_PATH).exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
-        patched_streams_exist: FsPath::new(TEXTURE_PATCHED_DIR).exists(),
         texture_running: state.texture_running.load(Ordering::Acquire),
         texture_log: read_texture_log(),
     };
@@ -570,6 +603,9 @@ async fn texture_catalog(Query(params): Query<TextureCatalogParams>) -> Html<Str
         records.retain(|record| {
             record.id.to_string().contains(&needle)
                 || record.texture_hash.to_ascii_lowercase().contains(&needle)
+                || record.png.to_ascii_lowercase().contains(&needle)
+                || format!("{}x{}", record.width, record.height).contains(&needle)
+                || (record.is_header_resource() && "fuentes de cabecera".contains(&needle))
                 || record
                     .image_type_name
                     .to_ascii_lowercase()
@@ -628,7 +664,7 @@ async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<
         .filter(|record| record.texture_hash.is_empty())
         .count();
     let template = TextureUploadTemplate {
-        groups: texture_duplicate_groups(records),
+        groups: texture_hash_groups(records, true),
         selected_hash,
         selected_records,
         uploaded_files: list_uploaded_texture_files(),
@@ -642,6 +678,7 @@ async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<
 
 async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
     let mut texture_hash = String::new();
+    let mut png_filename = String::new();
     let mut png_bytes = Vec::new();
 
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -649,6 +686,7 @@ async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
         if name == "texture_hash" {
             texture_hash = field.text().await.unwrap_or_default();
         } else if name == "png" {
+            png_filename = field.file_name().unwrap_or_default().to_owned();
             png_bytes = field
                 .bytes()
                 .await
@@ -658,11 +696,11 @@ async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
     }
 
     let texture_hash = texture_hash.trim();
-    if texture_hash.is_empty() || png_bytes.is_empty() {
+    if png_bytes.is_empty() {
         return Redirect::to("/textures/upload?error=missing_upload_fields").into_response();
     }
 
-    match apply_texture_upload(texture_hash, &png_bytes).await {
+    match apply_texture_upload(texture_hash, &png_filename, &png_bytes).await {
         Ok(count) => {
             Redirect::to(&format!("/textures/upload?status=ok&count={count}")).into_response()
         }
@@ -776,6 +814,8 @@ async fn build_page(
             needs_shift_entries: 0,
         });
     let builds = recent_builds(&state.db, 10).await.unwrap_or_default();
+    let scripts = list_scripts(&state.db).await.unwrap_or_default();
+    let mode_counts = rebuild_mode_counts(&scripts);
     let default_build_type: String =
         get_setting(&state.db, "default_build_type", "full".to_owned())
             .await
@@ -798,15 +838,16 @@ async fn build_page(
         iso_out_path: ISO_OUT_PATH,
         build_csv_path: BUILD_CSV_PATH,
         build_csv_exists: FsPath::new(BUILD_CSV_PATH).exists(),
-        texture_inventory_exists: FsPath::new(TEXTURE_INVENTORY_DIR)
-            .join("textures.json")
-            .exists(),
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
         build_running: state.build_running.load(Ordering::Acquire),
         default_build_type: normalize_build_type(&default_build_type),
         default_workers: default_workers_setting,
         max_workers: max_workers(),
         build_log: read_build_log(),
+        shift_suffix_count: mode_counts.shift_suffix,
+        local_slack_count: mode_counts.local_slack,
+        pointer_table_count: mode_counts.pointer_table,
+        unknown_rebuild_count: mode_counts.unknown,
         message: params
             .exported
             .map(|count| format!("CSV exportado: {count} traducciones"))
@@ -1367,9 +1408,11 @@ fn run_full_build_steps(
     if build_type == "images" && !FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
         anyhow::bail!("missing texturas/manifest.json; upload or create texture patches first");
     }
-    if build_type != "images" && count_dec_files(FsPath::new(SCRIPTS_OUT_DIR)) == 0 {
-        anyhow::bail!("missing extracted .dec scripts; run import first");
-    }
+
+    // Each build gets fresh intermediates; old manual patches must never be injected.
+    let staging = tempfile::tempdir()?;
+    let fresh_scripts = staging.path().join("scripts");
+    let fresh_textures = staging.path().join("textures");
 
     let mut steps = 0;
     append_build_log(&format!(
@@ -1393,13 +1436,18 @@ fn run_full_build_steps(
     append_build_log(&format!("Idioma objetivo/glyph map: {target_lang}"));
     let glyph_map = glyph_map_for_target(target_lang);
     if build_type != "images" {
+        append_build_log(
+            "Extrayendo scripts originales para este build (sin reutilizar .dec anteriores)",
+        );
+        let extracted = extract_lz77_scripts_to_dir(DATA_BIN_PATH, &fresh_scripts)?;
+        append_build_log(&format!("Scripts originales extraidos: {extracted}"));
         append_build_log(&format!(
             "Parcheando scripts traducidos desde {BUILD_CSV_PATH}; .dec disponibles: {}",
-            count_dec_files(FsPath::new(SCRIPTS_OUT_DIR))
+            count_dec_files(&fresh_scripts)
         ));
         let script_report = patch_translated_scripts(
             PATCHED_DATA_PATH,
-            SCRIPTS_OUT_DIR,
+            &fresh_scripts,
             BUILD_CSV_PATH,
             Some(&glyph_map),
         )?;
@@ -1439,13 +1487,11 @@ fn run_full_build_steps(
 
     if build_type != "texts" && FsPath::new(TEXTURE_MANIFEST_PATH).exists() {
         append_build_log(&format!(
-            "Parcheando texturas desde {TEXTURE_MANIFEST_PATH}; salida {TEXTURE_PATCHED_DIR}"
+            "Parcheando texturas desde {TEXTURE_MANIFEST_PATH}; salida limpia {}",
+            fresh_textures.display()
         ));
-        let texture_report = patch_textures_from_manifest(
-            DATA_BIN_PATH,
-            TEXTURE_MANIFEST_PATH,
-            TEXTURE_PATCHED_DIR,
-        )?;
+        let texture_report =
+            patch_textures_from_manifest(DATA_BIN_PATH, TEXTURE_MANIFEST_PATH, &fresh_textures)?;
         if !texture_report.errors.is_empty() {
             anyhow::bail!(texture_report.errors.join("; "));
         }
@@ -1458,9 +1504,10 @@ fn run_full_build_steps(
         steps += 1;
 
         append_build_log(&format!(
-            "Inyectando streams de textura desde {TEXTURE_PATCHED_DIR} en {PATCHED_DATA_PATH}"
+            "Inyectando solo streams generados en este build desde {} en {PATCHED_DATA_PATH}",
+            fresh_textures.display()
         ));
-        let inject_report = inject_patched_texture_streams(PATCHED_DATA_PATH, TEXTURE_PATCHED_DIR)?;
+        let inject_report = inject_patched_texture_streams(PATCHED_DATA_PATH, &fresh_textures)?;
         if !inject_report.errors.is_empty() {
             anyhow::bail!(inject_report.errors.join("; "));
         }
@@ -1748,6 +1795,13 @@ async fn read_texture_records() -> Vec<TextureRecord> {
 }
 
 fn texture_duplicate_groups(records: Vec<TextureRecord>) -> Vec<TextureDuplicateGroup> {
+    texture_hash_groups(records, false)
+}
+
+fn texture_hash_groups(
+    records: Vec<TextureRecord>,
+    include_singles: bool,
+) -> Vec<TextureDuplicateGroup> {
     let mut by_hash: BTreeMap<String, Vec<TextureRecord>> = BTreeMap::new();
     for record in records
         .into_iter()
@@ -1761,7 +1815,7 @@ fn texture_duplicate_groups(records: Vec<TextureRecord>) -> Vec<TextureDuplicate
     let mut groups = by_hash
         .into_iter()
         .filter_map(|(hash, mut records)| {
-            if records.len() < 2 {
+            if !include_singles && records.len() < 2 {
                 return None;
             }
             records.sort_by_key(|record| {
@@ -1793,13 +1847,26 @@ fn texture_duplicate_groups(records: Vec<TextureRecord>) -> Vec<TextureDuplicate
     groups
 }
 
-async fn apply_texture_upload(texture_hash: &str, png_bytes: &[u8]) -> anyhow::Result<usize> {
+async fn apply_texture_upload(
+    texture_hash: &str,
+    png_filename: &str,
+    png_bytes: &[u8],
+) -> anyhow::Result<usize> {
     let records = read_texture_records().await;
-    let targets = records
-        .into_iter()
-        .filter(|record| record.texture_hash == texture_hash)
-        .collect::<Vec<_>>();
+    let targets = if texture_hash.is_empty() {
+        texture_records_from_filename(&records, png_filename)
+    } else {
+        records
+            .into_iter()
+            .filter(|record| record.texture_hash == texture_hash)
+            .collect::<Vec<_>>()
+    };
     if targets.is_empty() {
+        if texture_hash.is_empty() {
+            anyhow::bail!(
+                "no se pudo detectar la textura desde el nombre del PNG; usa el nombre exportado ID_... o elige un hash"
+            );
+        }
         anyhow::bail!("hash de textura no encontrado; regenera el inventario si es viejo");
     }
     let (width, height) = png_dimensions(png_bytes)?;
@@ -1819,7 +1886,11 @@ async fn apply_texture_upload(texture_hash: &str, png_bytes: &[u8]) -> anyhow::R
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let mut manifest = read_texture_manifest();
+    let mut manifest = match fs::read_to_string(TEXTURE_MANIFEST_PATH) {
+        Ok(contents) => serde_json::from_str::<Vec<TextureManifestEntry>>(&contents)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => return Err(err.into()),
+    };
     for target in &targets {
         manifest.retain(|entry| {
             !(entry.file_id == target.id
@@ -1855,11 +1926,35 @@ async fn apply_texture_upload(texture_hash: &str, png_bytes: &[u8]) -> anyhow::R
     Ok(targets.len())
 }
 
-fn read_texture_manifest() -> Vec<TextureManifestEntry> {
-    match fs::read_to_string(TEXTURE_MANIFEST_PATH) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => Vec::new(),
+fn texture_records_from_filename(
+    records: &[TextureRecord],
+    png_filename: &str,
+) -> Vec<TextureRecord> {
+    let Some(filename) = FsPath::new(png_filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return Vec::new();
+    };
+
+    let matched = records.iter().find(|record| {
+        uploaded_texture_filename(record) == filename
+            || FsPath::new(&record.png)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some(filename)
+    });
+    let Some(matched) = matched else {
+        return Vec::new();
+    };
+    if matched.texture_hash.is_empty() {
+        return vec![matched.clone()];
     }
+    records
+        .iter()
+        .filter(|record| record.texture_hash == matched.texture_hash)
+        .cloned()
+        .collect()
 }
 
 fn uploaded_texture_filename(record: &TextureRecord) -> String {
@@ -1878,6 +1973,56 @@ fn png_dimensions(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
     let reader = decoder.read_info()?;
     let info = reader.info();
     Ok((info.width, info.height))
+}
+
+#[cfg(test)]
+mod texture_upload_tests {
+    use super::*;
+
+    #[test]
+    fn filename_resolves_duplicates_but_not_other_pages_or_nested_streams() {
+        let record = TextureRecord {
+            id: 2,
+            fat_row: 1,
+            file_offset: 0,
+            raw_size: 0,
+            compressed: true,
+            nested_lz77_offset: None,
+            nested_lz77_size: None,
+            tim2_index: 0,
+            tim2_offset: 0,
+            picture_index: 0,
+            width: 320,
+            height: 320,
+            image_type: 5,
+            image_type_name: "INDEX8".into(),
+            image_size: 102400,
+            clut_size: 1024,
+            clut_color_count: 256,
+            score_ui: 0,
+            score_font: 0,
+            texture_hash: "font".into(),
+            png: String::new(),
+        };
+        let mut copy = record.clone();
+        copy.id = 3;
+        let mut other_page = record.clone();
+        other_page.tim2_index = 1;
+        other_page.texture_hash = "other".into();
+        let mut nested = record.clone();
+        nested.nested_lz77_offset = Some(80);
+        nested.texture_hash = "nested".into();
+        let records = vec![record.clone(), copy.clone(), other_page, nested];
+        assert_eq!(
+            texture_records_from_filename(&records, &uploaded_texture_filename(&record)),
+            vec![record, copy]
+        );
+        assert!(texture_records_from_filename(&records, "ID_00002.png").is_empty());
+        assert_eq!(
+            texture_records_from_filename(&records, "ID_00002_L000050_T000_P00_320x320.png").len(),
+            1
+        );
+    }
 }
 
 fn list_uploaded_texture_files() -> Vec<String> {

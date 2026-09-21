@@ -20,7 +20,7 @@
             <h1 class="mt-2 text-4xl font-black tracking-tight">Subir PNG editado</h1>
             <p class="mt-3 text-slate-400">Sube un PNG editado para una textura o un grupo duplicado. El sistema copia nombres correctos y actualiza <span class="font-mono text-pink-200">texturas/manifest.json</span>.</p>
             {% if missing_hash_count > 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">Hay {{ missing_hash_count }} textura(s) sin hash. Regenera inventario para detectar duplicados correctamente.</div>{% endif %}
-            {% if groups.len() == 0 && selected_records.len() == 0 && missing_hash_count == 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">No hay grupos duplicados disponibles. Puedes ir al catalogo y usar “subir editada” en una textura concreta.</div>{% endif %}
+            {% if groups.len() == 0 && selected_records.len() == 0 && missing_hash_count == 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">No hay texturas con hash disponibles. Puedes subir un PNG con nombre exportado para autodetectar la textura.</div>{% endif %}
             {% if selected_hash.len() > 0 && selected_records.len() == 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">El hash seleccionado no existe en el inventario actual.</div>{% endif %}
             {% if message.len() > 0 %}<div class="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100">{{ message }}</div>{% endif %}
             {% if error.len() > 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">{{ error }}</div>{% endif %}
@@ -35,21 +35,25 @@
                     <div class="mt-2 text-sm text-slate-300">Se aplicara a {{ selected_records.len() }} textura(s).</div>
                     <div class="mt-3 flex flex-wrap gap-2 text-xs">
                         {% for record in selected_records %}
-                        <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
+                        <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">{% if record.is_header_resource() %}Fuentes de cabecera · {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
                         {% endfor %}
                     </div>
                 </div>
                 {% else %}
-                <label class="text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_hash">Grupo duplicado</label>
+                <label class="text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_filter">Buscar textura</label>
+                <input id="texture_filter" type="search" placeholder="ID_00002, 320x320, hash, nombre PNG..." class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100 placeholder:text-slate-600">
+                <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_hash">Textura o grupo</label>
                 <select id="texture_hash" name="texture_hash" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100">
+                    <option value="" data-search="autodetect detectar nombre archivo sin grupo desconocido">Detectar por nombre del PNG subido</option>
                     {% for group in groups %}
-                    <option value="{{ group.hash }}">{{ group.records.len() }} copias · {{ group.hash }}</option>
+                    <option value="{{ group.hash }}" data-search="{{ group.hash }} {% for record in group.records %}{% if record.is_header_resource() %}fuentes de cabecera {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }} {{ record.width }}x{{ record.height }} {{ record.png }} {% endfor %}">{{ group.records.len() }} textura(s) · {{ group.records[0].width }}x{{ group.records[0].height }} · {% if group.records[0].is_header_resource() %}Cabecera{% else %}ID {{ group.records[0].id }}{% endif %} T{{ group.records[0].tim2_index }} P{{ group.records[0].picture_index }} · {{ group.hash }}</option>
                     {% endfor %}
                 </select>
+                <p class="mt-2 text-xs text-slate-500">Si eliges autodetect, conserva el nombre exportado, por ejemplo <span class="font-mono text-pink-200">ID_00002_T000_P00_320x320.png</span>.</p>
                 {% endif %}
                 <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="png">PNG editado</label>
                 <input id="png" name="png" type="file" accept="image/png" required class="mt-2 w-full rounded-2xl border border-dashed border-pink-400/40 bg-slate-950 p-6 text-sm text-slate-300">
-                {% if groups.len() > 0 || selected_records.len() > 0 %}<button class="mt-5 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Subir y actualizar manifest</button>{% else %}<button class="mt-5 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if missing_hash_count > 0 %}Regenera inventario primero{% else %}Selecciona una textura desde catalogo{% endif %}</button>{% endif %}
+                {% if groups.len() > 0 || selected_records.len() > 0 %}<button class="mt-5 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Subir y actualizar manifest</button>{% else %}<button class="mt-5 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if missing_hash_count > 0 %}Regenera inventario primero{% else %}Sube usando nombre exportado{% endif %}</button>{% endif %}
             </form>
             <section class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
                 <h2 class="text-xl font-black">Imagenes ya cargadas</h2>
@@ -63,5 +67,25 @@
             </section>
         </section>
     </main>
+    <script>
+        const textureFilter = document.getElementById('texture_filter');
+        const textureSelect = document.getElementById('texture_hash');
+        if (textureFilter && textureSelect) {
+            const options = Array.from(textureSelect.options);
+            textureFilter.addEventListener('input', () => {
+                const query = textureFilter.value.trim().toLowerCase();
+                let firstVisible = null;
+                for (const option of options) {
+                    const haystack = (option.dataset.search || option.textContent || '').toLowerCase();
+                    const visible = query.length === 0 || haystack.includes(query);
+                    option.hidden = !visible;
+                    if (visible && firstVisible === null) firstVisible = option;
+                }
+                if (textureSelect.selectedOptions[0]?.hidden && firstVisible) {
+                    textureSelect.value = firstVisible.value;
+                }
+            });
+        }
+    </script>
 </body>
 </html>
