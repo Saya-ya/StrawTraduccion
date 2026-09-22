@@ -8,13 +8,7 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
-                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Import</a>
-                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Texturas</a>
-            </div>
-        </nav>
+        {% include "components/global_nav.html" %}
 
         <section class="mb-6 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Build</p>
@@ -149,7 +143,7 @@
             <div class="rounded-3xl border border-slate-800 bg-slate-950 p-6">
                 <div class="mb-4 flex items-center justify-between gap-4">
                     <div><h2 class="text-xl font-black">Log del build</h2><p class="mt-1 text-sm text-slate-500">Archivo: <span class="font-mono text-pink-200">work/build_temp/build.log</span></p></div>
-                    <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-300 hover:border-pink-400 hover:text-pink-200">Actualizar</a>
+                    <a href="/build#logs" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-300 hover:border-pink-400 hover:text-pink-200">Actualizar</a>
                 </div>
                 <pre id="build-log" class="max-h-96 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{% if build_log.len() > 0 %}{{ build_log }}{% else %}Todavia no hay logs de build.{% endif %}</pre>
             </div>

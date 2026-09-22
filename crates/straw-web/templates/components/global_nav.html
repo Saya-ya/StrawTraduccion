@@ -1,0 +1,20 @@
+<nav aria-label="Navegacion principal" class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <a href="/" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300 hover:text-pink-200">StrawTraduccion</a>
+    <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+        <a data-nav-path="/import" href="/import" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Importar</a>
+        <a data-nav-path="/scripts" href="/scripts" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Scripts</a>
+        <a data-nav-path="/search" href="/search" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Buscar</a>
+        <a data-nav-path="/textures" href="/textures" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Texturas</a>
+        <a data-nav-path="/build" href="/build" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Build</a>
+        <a data-nav-path="/settings" href="/settings" class="rounded-full border border-slate-700 px-3 py-2 text-slate-300 hover:border-pink-400 hover:text-pink-200">Config</a>
+    </div>
+</nav>
+<script>
+    document.querySelectorAll('[data-nav-path]').forEach((link) => {
+        const target = link.dataset.navPath;
+        if (location.pathname === target || location.pathname.startsWith(`${target}/`)) {
+            link.setAttribute('aria-current', 'page');
+            link.classList.add('border-pink-400', 'bg-pink-500/10', 'text-pink-100');
+        }
+    });
+</script>

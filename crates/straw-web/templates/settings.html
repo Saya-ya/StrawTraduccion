@@ -8,14 +8,7 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
-                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Build</a>
-                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Imagenes</a>
-                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-slate-400 hover:text-pink-200">Importar</a>
-            </div>
-        </nav>
+        {% include "components/global_nav.html" %}
 
         <section class="rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Preferencias</p>

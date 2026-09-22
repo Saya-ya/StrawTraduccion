@@ -8,14 +8,7 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
-            <div class="flex flex-wrap gap-2">
-                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Importar</a>
-                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Texturas</a>
-                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Build</a>
-            </div>
-        </nav>
+        {% include "components/global_nav.html" %}
 
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Busqueda</p>
@@ -44,14 +37,14 @@
         </section>
 
         <section class="space-y-4">
-            {% if query.len() == 0 %}
+            {% if query.len() == 0 && script_id.len() == 0 && status_filter == "all" %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
                 <p class="text-lg font-bold text-slate-200">Busca por texto original o traduccion.</p>
                 <p class="mt-2">Tambien puedes usar los accesos rapidos de estado para encontrar pendientes.</p>
             </div>
             {% else if results.len() == 0 %}
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
-                Sin resultados para “{{ query }}”.
+                No hay resultados para los filtros seleccionados.
             </div>
             {% else %}
             {% for result in results %}

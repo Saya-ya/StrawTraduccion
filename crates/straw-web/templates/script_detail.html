@@ -9,11 +9,10 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        {% include "components/global_nav.html" %}
+        <nav aria-label="Navegacion contextual" class="mb-6 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:flex-row sm:items-center sm:justify-between">
             <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
             <div class="flex flex-wrap gap-2">
-                <a href="/search" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Buscar</a>
-                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-400 hover:text-pink-200">Build</a>
                 <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Script #{{ detail.script.id }}</span>
             </div>
         </nav>
@@ -84,9 +83,17 @@
 
         <nav class="mb-4 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
             <div class="flex flex-wrap items-center gap-2">
+                {% if detail.page > 1 %}
                 <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
+                {% else %}
+                <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">← Anterior</span>
+                {% endif %}
                 <span class="px-2 text-slate-500">Pagina {{ detail.page }} de {{ detail.total_pages }}</span>
+                {% if detail.page < detail.total_pages %}
                 <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
+                {% else %}
+                <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">Siguiente →</span>
+                {% endif %}
             </div>
             <form method="get" action="/scripts/{{ detail.script.id }}" class="flex items-center gap-2">
                 <input type="hidden" name="page" value="1">
@@ -114,9 +121,17 @@
         </section>
 
         <nav class="mt-8 flex items-center justify-between gap-3 text-sm">
+            {% if detail.page > 1 %}
             <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
+            {% else %}
+            <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">← Anterior</span>
+            {% endif %}
             <span class="text-slate-500">Página {{ detail.page }} de {{ detail.total_pages }}</span>
+            {% if detail.page < detail.total_pages %}
             <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
+            {% else %}
+            <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">Siguiente →</span>
+            {% endif %}
         </nav>
     </main>
     <script>

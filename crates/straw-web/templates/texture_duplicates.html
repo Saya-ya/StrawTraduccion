@@ -8,7 +8,8 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-wrap items-center justify-between gap-3">
+        {% include "components/global_nav.html" %}
+        <nav aria-label="Navegacion contextual" class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
             <a href="/textures" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Texturas</a>
             <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
                 <a href="/textures/catalog" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Catalogo</a>
@@ -34,6 +35,10 @@
                             {% for record in group.records %}
                             <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">{% if record.is_header_resource() %}Fuentes de cabecera · {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
                             {% endfor %}
+                        </div>
+                        <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+                            <a href="/textures/catalog?q={{ group.hash }}" class="rounded-full border border-slate-700 px-3 py-1 text-slate-300 hover:text-pink-200">Ver en catalogo</a>
+                            <a href="/textures/upload?hash={{ group.hash }}" class="rounded-full border border-pink-400/40 bg-pink-500/10 px-3 py-1 text-pink-100 hover:bg-pink-500/20">Subir editada</a>
                         </div>
                     </div>
                 </div>

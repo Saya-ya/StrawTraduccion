@@ -8,16 +8,7 @@
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
     <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-        <nav class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <a href="/" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">StrawTraduccion</a>
-            <div class="flex flex-wrap gap-2">
-                <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Importar</a>
-                <a href="/build" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Build</a>
-                <a href="/search" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Buscar</a>
-                <a href="/textures" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Texturas</a>
-                <a href="/settings" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800">Config</a>
-            </div>
-        </nav>
+        {% include "components/global_nav.html" %}
 
         <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
             <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -104,7 +95,7 @@
                             <span class="rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-slate-300">pendiente</span>
                             {% endif %}
                         </td>
-                        <td class="px-5 py-3 text-xs font-bold text-pink-200">Abrir →</td>
+                        <td class="px-5 py-3 text-xs font-bold"><a href="/scripts/{{ script.id }}" class="text-pink-200 hover:text-pink-100">Abrir →</a></td>
                     </tr>
                     {% endfor %}
                 </tbody>
