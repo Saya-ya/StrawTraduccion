@@ -194,6 +194,8 @@ struct TexturesTemplate {
     texture_manifest_exists: bool,
     texture_running: bool,
     texture_log: String,
+    message: String,
+    error: String,
 }
 
 #[derive(Template)]
@@ -297,6 +299,12 @@ struct TextureUploadParams {
     hash: Option<String>,
     status: Option<String>,
     count: Option<usize>,
+    error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TexturesParams {
+    started: Option<String>,
     error: Option<String>,
 }
 
@@ -555,7 +563,10 @@ async fn search(State(state): State<AppState>, Query(params): Query<SearchParams
     Html(template.render().expect("search template renders"))
 }
 
-async fn textures_page(State(state): State<AppState>) -> Html<String> {
+async fn textures_page(
+    State(state): State<AppState>,
+    Query(params): Query<TexturesParams>,
+) -> Html<String> {
     let records = read_texture_records().await;
     let inventory_exists = !records.is_empty();
     let png_count = records
@@ -585,6 +596,23 @@ async fn textures_page(State(state): State<AppState>) -> Html<String> {
         texture_manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
         texture_running: state.texture_running.load(Ordering::Acquire),
         texture_log: read_texture_log(),
+        message: match params.started.as_deref() {
+            Some("inventory") => "Inventario iniciado. El log se actualiza en vivo.".to_owned(),
+            Some("patch") => "Parcheo de texturas iniciado.".to_owned(),
+            Some("inject") => "Inyeccion de texturas iniciada.".to_owned(),
+            _ => String::new(),
+        },
+        error: match params.error.as_deref() {
+            Some("texture_task_running") => "Ya hay una tarea de texturas en curso.".to_owned(),
+            Some("missing_databin") => "Falta originales/Data.bin.".to_owned(),
+            Some("missing_texture_manifest") => "Falta texturas/manifest.json.".to_owned(),
+            Some("missing_patched_data") => "Falta work/Data_patched.bin.".to_owned(),
+            Some("missing_patched_texture_streams") => {
+                "No hay streams de textura parcheados para inyectar.".to_owned()
+            }
+            Some(other) => other.replace('_', " "),
+            None => String::new(),
+        },
     };
     Html(template.render().expect("textures template renders"))
 }
@@ -700,16 +728,35 @@ async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
 
     let texture_hash = texture_hash.trim();
     if png_bytes.is_empty() {
-        return Redirect::to("/textures/upload?error=missing_upload_fields").into_response();
+        return Redirect::to(&format!(
+            "/textures/upload?error=missing_upload_fields{}",
+            if texture_hash.is_empty() {
+                String::new()
+            } else {
+                format!("&hash={}", url_escape(texture_hash))
+            }
+        ))
+        .into_response();
     }
 
     match apply_texture_upload(texture_hash, &png_filename, &png_bytes).await {
-        Ok(count) => {
-            Redirect::to(&format!("/textures/upload?status=ok&count={count}")).into_response()
-        }
+        Ok(count) => Redirect::to(&format!(
+            "/textures/upload?status=ok&count={count}{}",
+            if texture_hash.is_empty() {
+                String::new()
+            } else {
+                format!("&hash={}", url_escape(texture_hash))
+            }
+        ))
+        .into_response(),
         Err(err) => Redirect::to(&format!(
-            "/textures/upload?error={}",
-            url_escape(&err.to_string())
+            "/textures/upload?error={}{}",
+            url_escape(&err.to_string()),
+            if texture_hash.is_empty() {
+                String::new()
+            } else {
+                format!("&hash={}", url_escape(texture_hash))
+            }
         ))
         .into_response(),
     }
@@ -926,19 +973,23 @@ async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
             append_build_log(&format!("CSV exportado: {count} filas en {BUILD_CSV_PATH}"));
             println!("[build] CSV exportado: {count} filas");
             record_build_success(&state.db, "export csv", 20, "").await;
-            Redirect::to(&format!("/build?exported={count}")).into_response()
+            Redirect::to(&format!("/build?exported={count}#manual")).into_response()
         }
         Err(err) => {
             append_build_log(&format!("ERROR exportando CSV: {err}"));
             eprintln!("[build] ERROR exportando CSV: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
 
 async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(DATA_BIN_PATH).exists() {
-        return Redirect::to("/build?error=missing_databin").into_response();
+        return Redirect::to("/build?error=missing_databin#manual").into_response();
     }
 
     append_build_log(&format!(
@@ -958,29 +1009,37 @@ async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
             ));
             println!("[build] Data_patched.bin preparado: {bytes} bytes");
             record_build_success(&state.db, "prepare Data.bin", 35, "").await;
-            Redirect::to(&format!("/build?prepared={bytes}")).into_response()
+            Redirect::to(&format!("/build?prepared={bytes}#manual")).into_response()
         }
         Ok(Err(err)) => {
             append_build_log(&format!("ERROR preparando Data_patched.bin: {err}"));
             eprintln!("[build] ERROR preparando Data_patched.bin: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
         Err(err) => {
             append_build_log(&format!(
                 "ERROR de tarea preparando Data_patched.bin: {err}"
             ));
             eprintln!("[build] ERROR de tarea preparando Data_patched.bin: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
 
 async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
-        return Redirect::to("/build?error=missing_patched_data").into_response();
+        return Redirect::to("/build?error=missing_patched_data#manual").into_response();
     }
     if !FsPath::new(BUILD_CSV_PATH).exists() {
-        return Redirect::to("/build?error=missing_build_csv").into_response();
+        return Redirect::to("/build?error=missing_build_csv#manual").into_response();
     }
 
     append_build_log(&format!(
@@ -1013,7 +1072,8 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
             ));
             println!("[build] Scripts parcheados: {}", report.scripts_patched);
             record_build_success(&state.db, "patch scripts", 55, "").await;
-            Redirect::to(&format!("/build?patched={}", report.scripts_patched)).into_response()
+            Redirect::to(&format!("/build?patched={}#manual", report.scripts_patched))
+                .into_response()
         }
         Ok(Ok(report)) => {
             append_build_log(&format!(
@@ -1021,7 +1081,7 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
                 report.errors.join("; ")
             ));
             Redirect::to(&format!(
-                "/build?error={}",
+                "/build?error={}#manual",
                 url_escape(&report.errors.join("; "))
             ))
             .into_response()
@@ -1029,22 +1089,30 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
         Ok(Err(err)) => {
             append_build_log(&format!("ERROR parcheando scripts: {err}"));
             eprintln!("[build] ERROR parcheando scripts: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
         Err(err) => {
             append_build_log(&format!("ERROR de tarea parcheando scripts: {err}"));
             eprintln!("[build] ERROR de tarea parcheando scripts: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
 
 async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
-        return Redirect::to("/build?error=missing_original_elf").into_response();
+        return Redirect::to("/build?error=missing_original_elf#manual").into_response();
     }
     if !FsPath::new(BUILD_CSV_PATH).exists() {
-        return Redirect::to("/build?error=missing_build_csv").into_response();
+        return Redirect::to("/build?error=missing_build_csv#manual").into_response();
     }
 
     append_build_log(&format!(
@@ -1073,27 +1141,39 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
             ));
             println!("[build] ELF parcheado: {} filas", report.rows_patched);
             record_build_success(&state.db, "patch ELF", 65, "").await;
-            Redirect::to(&format!("/build?elf_patched={}", report.rows_patched)).into_response()
+            Redirect::to(&format!(
+                "/build?elf_patched={}#manual",
+                report.rows_patched
+            ))
+            .into_response()
         }
         Ok(Err(err)) => {
             append_build_log(&format!("ERROR parcheando ELF: {err}"));
             eprintln!("[build] ERROR parcheando ELF: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
         Err(err) => {
             append_build_log(&format!("ERROR de tarea parcheando ELF: {err}"));
             eprintln!("[build] ERROR de tarea parcheando ELF: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
 
 async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(BASE_ISO_PATH).exists() {
-        return Redirect::to("/build?error=missing_base_iso").into_response();
+        return Redirect::to("/build?error=missing_base_iso#manual").into_response();
     }
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
-        return Redirect::to("/build?error=missing_patched_data").into_response();
+        return Redirect::to("/build?error=missing_patched_data#manual").into_response();
     }
 
     append_build_log(&format!(
@@ -1114,30 +1194,38 @@ async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
             ));
             println!("[build] ISO generada: {ISO_OUT_PATH}");
             record_build_success(&state.db, "build ISO", 85, ISO_OUT_PATH).await;
-            Redirect::to(&format!("/build?iso={bytes}")).into_response()
+            Redirect::to(&format!("/build?iso={bytes}#manual")).into_response()
         }
         Ok(Err(err)) => {
             append_build_log(&format!("ERROR generando ISO: {err}"));
             eprintln!("[build] ERROR generando ISO: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
         Err(err) => {
             append_build_log(&format!("ERROR de tarea generando ISO: {err}"));
             eprintln!("[build] ERROR de tarea generando ISO: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
 
 async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
     if !FsPath::new(ISO_OUT_PATH).exists() {
-        return Redirect::to("/build?error=missing_iso").into_response();
+        return Redirect::to("/build?error=missing_iso#manual").into_response();
     }
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
-        return Redirect::to("/build?error=missing_original_elf").into_response();
+        return Redirect::to("/build?error=missing_original_elf#manual").into_response();
     }
     if !FsPath::new(TRANSLATED_ELF_PATH).exists() {
-        return Redirect::to("/build?error=missing_translated_elf").into_response();
+        return Redirect::to("/build?error=missing_translated_elf#manual").into_response();
     }
 
     append_build_log(&format!(
@@ -1154,17 +1242,25 @@ async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
             append_build_log(&format!("ELF inyectado en ISO: {bytes} bytes escritos"));
             println!("[build] ELF inyectado: {bytes} bytes");
             record_build_success(&state.db, "inject ELF", 100, ISO_OUT_PATH).await;
-            Redirect::to(&format!("/build?elf={bytes}")).into_response()
+            Redirect::to(&format!("/build?elf={bytes}#manual")).into_response()
         }
         Ok(Err(err)) => {
             append_build_log(&format!("ERROR inyectando ELF: {err}"));
             eprintln!("[build] ERROR inyectando ELF: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
         Err(err) => {
             append_build_log(&format!("ERROR de tarea inyectando ELF: {err}"));
             eprintln!("[build] ERROR de tarea inyectando ELF: {err}");
-            Redirect::to(&format!("/build?error={}", url_escape(&err.to_string()))).into_response()
+            Redirect::to(&format!(
+                "/build?error={}#manual",
+                url_escape(&err.to_string())
+            ))
+            .into_response()
         }
     }
 }
