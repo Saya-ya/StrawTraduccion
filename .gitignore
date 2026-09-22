@@ -40,6 +40,7 @@ dev/
 /texturas/*.png
 /texturas/manifest.json
 /texturas/uploads/
+/Replacement/
 
 .env
 target/
