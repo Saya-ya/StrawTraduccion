@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Row, SqlitePool,
+    Row, SqliteConnection, SqlitePool,
 };
 use straw_core::{
     analyze_script_dec, check_fit, extract_elf_strings, spanish_glyph_map, FitStatus, ImportedText,
@@ -220,11 +220,13 @@ where
     let mut translations_preserved = 0;
     let mut texts_imported = 0;
 
+    let mut tx = pool.begin().await?;
+
     progress("Limpiando tablas actuales text_entries y scripts");
     sqlx::query("DELETE FROM text_entries")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM scripts").execute(pool).await?;
+    sqlx::query("DELETE FROM scripts").execute(&mut *tx).await?;
 
     progress("Insertando scripts y textos en SQLite");
     for (script_index, script) in scripts.iter().enumerate() {
@@ -240,11 +242,11 @@ where
         .bind(&script.rebuild_mode)
         .bind(script.texts.len() as i64)
         .bind(script.total_sections)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
         for text in &script.texts {
-            if insert_imported_text(pool, text, &translations).await? {
+            if insert_imported_text(&mut *tx, text, &translations).await? {
                 translations_preserved += 1;
             }
             texts_imported += 1;
@@ -256,7 +258,7 @@ where
                 ));
             }
         }
-        refresh_script_translated_count(pool, script.script_id).await?;
+        refresh_script_translated_count_on_connection(&mut *tx, script.script_id).await?;
         if script_index == 0 || (script_index + 1) % 100 == 0 || script_index + 1 == scripts.len() {
             progress(&format!(
                 "Scripts insertados: {}/{}",
@@ -275,11 +277,11 @@ where
             "#,
         )
         .bind(elf_texts.len() as i64)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
         for (index, text) in elf_texts.iter().enumerate() {
-            if insert_imported_text(pool, text, &translations).await? {
+            if insert_imported_text(&mut *tx, text, &translations).await? {
                 translations_preserved += 1;
             }
             texts_imported += 1;
@@ -291,11 +293,12 @@ where
                 ));
             }
         }
-        refresh_script_translated_count(pool, -1).await?;
+        refresh_script_translated_count_on_connection(&mut *tx, -1).await?;
     }
 
     progress("Reconstruyendo indice de busqueda FTS");
-    rebuild_fts(pool).await?;
+    rebuild_fts_on_connection(&mut *tx).await?;
+    tx.commit().await?;
     progress(&format!(
         "Importacion SQLite terminada: {} textos, {} traducciones preservadas",
         texts_imported, translations_preserved
@@ -1071,6 +1074,27 @@ async fn refresh_script_translated_count(pool: &SqlitePool, script_id: i64) -> R
     Ok(())
 }
 
+async fn refresh_script_translated_count_on_connection(
+    conn: &mut SqliteConnection,
+    script_id: i64,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE scripts
+        SET translated_texts = (
+            SELECT COUNT(*) FROM text_entries
+            WHERE script_id = ? AND is_translated = 1
+        )
+        WHERE id = ?
+        "#,
+    )
+    .bind(script_id)
+    .bind(script_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, String), String>> {
     let rows = sqlx::query(
         r#"
@@ -1098,7 +1122,7 @@ async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, S
 }
 
 async fn insert_imported_text(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     text: &ImportedText,
     translations: &HashMap<(i64, i64, String), String>,
 ) -> Result<bool> {
@@ -1150,7 +1174,7 @@ async fn insert_imported_text(
         0
     })
     .bind(fit_status_label(fit.status))
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
 
     Ok(is_translated)
@@ -1186,6 +1210,21 @@ async fn rebuild_fts(pool: &SqlitePool) -> Result<()> {
         "#,
     )
     .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn rebuild_fts_on_connection(conn: &mut SqliteConnection) -> Result<()> {
+    sqlx::query("DELETE FROM text_entries_fts")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO text_entries_fts(rowid, original_text, translated_text)
+        SELECT id, original_text, translated_text FROM text_entries
+        "#,
+    )
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
