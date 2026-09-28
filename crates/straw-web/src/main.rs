@@ -6,7 +6,7 @@ use std::{
     path::Path as FsPath,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 
@@ -54,19 +54,26 @@ const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 const TEXTURE_LOG_PATH: &str = "work_texturas/texture.log";
 const TEXTURE_UPLOAD_DIR: &str = "texturas/uploads";
 
+static TEXTURE_MANIFEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
 #[derive(Clone)]
 struct AppState {
     db: SqlitePool,
+    operation_running: Arc<AtomicBool>,
     build_running: Arc<AtomicBool>,
     import_running: Arc<AtomicBool>,
     texture_running: Arc<AtomicBool>,
 }
 
-struct BuildRunGuard(Arc<AtomicBool>);
+struct BuildRunGuard {
+    operation: Arc<AtomicBool>,
+    status: Arc<AtomicBool>,
+}
 
 impl Drop for BuildRunGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.status.store(false, Ordering::Release);
+        self.operation.store(false, Ordering::Release);
     }
 }
 
@@ -237,7 +244,7 @@ struct TextureUploadTemplate {
     error: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct TextureManifestEntry {
     file_id: u32,
     tim2_index: usize,
@@ -396,6 +403,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(AppState {
             db,
+            operation_running: Arc::new(AtomicBool::new(false)),
             build_running: Arc::new(AtomicBool::new(false)),
             import_running: Arc::new(AtomicBool::new(false)),
             texture_running: Arc::new(AtomicBool::new(false)),
@@ -707,7 +715,13 @@ async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<
     Html(template.render().expect("texture upload template renders"))
 }
 
-async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
+async fn texture_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let Ok(_guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures/upload?error=operation_already_running").into_response();
+    };
     let mut texture_hash = String::new();
     let mut png_filename = String::new();
     let mut png_bytes = Vec::new();
@@ -966,6 +980,9 @@ async fn build_page(
 }
 
 async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     append_build_log("Paso manual: exportar CSV iniciado");
     println!("[build] Exportando CSV a {BUILD_CSV_PATH}");
     match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
@@ -988,6 +1005,9 @@ async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(DATA_BIN_PATH).exists() {
         return Redirect::to("/build?error=missing_databin#manual").into_response();
     }
@@ -1035,6 +1055,9 @@ async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
         return Redirect::to("/build?error=missing_patched_data#manual").into_response();
     }
@@ -1108,6 +1131,9 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
         return Redirect::to("/build?error=missing_original_elf#manual").into_response();
     }
@@ -1169,6 +1195,9 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(BASE_ISO_PATH).exists() {
         return Redirect::to("/build?error=missing_base_iso#manual").into_response();
     }
@@ -1218,6 +1247,9 @@ async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(ISO_OUT_PATH).exists() {
         return Redirect::to("/build?error=missing_iso#manual").into_response();
     }
@@ -1515,11 +1547,7 @@ async fn run_full_build(
 }
 
 fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
-    state
-        .build_running
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.build_running.clone()))
-        .map_err(|_| ())
+    acquire_operation_guard(state, &state.build_running)
 }
 
 fn run_full_build_steps(
@@ -1911,19 +1939,32 @@ async fn import_translations_db_upload(
 }
 
 fn acquire_import_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
-    state
-        .import_running
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.import_running.clone()))
-        .map_err(|_| ())
+    acquire_operation_guard(state, &state.import_running)
 }
 
 fn acquire_texture_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
+    acquire_operation_guard(state, &state.texture_running)
+}
+
+fn acquire_operation_guard(
+    state: &AppState,
+    status: &Arc<AtomicBool>,
+) -> Result<BuildRunGuard, ()> {
     state
-        .texture_running
+        .operation_running
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.texture_running.clone()))
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    if status
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        state.operation_running.store(false, Ordering::Release);
+        return Err(());
+    }
+    Ok(BuildRunGuard {
+        operation: state.operation_running.clone(),
+        status: status.clone(),
+    })
 }
 
 fn read_build_log() -> String {
@@ -2038,22 +2079,12 @@ async fn apply_texture_upload(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let mut manifest = match fs::read_to_string(TEXTURE_MANIFEST_PATH) {
-        Ok(contents) => serde_json::from_str::<Vec<TextureManifestEntry>>(&contents)?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(err) => return Err(err.into()),
-    };
+    let mut manifest_updates = Vec::new();
     for target in &targets {
-        manifest.retain(|entry| {
-            !(entry.file_id == target.id
-                && entry.tim2_index == target.tim2_index
-                && entry.picture_index == target.picture_index
-                && entry.lz77_offset == target.nested_lz77_offset)
-        });
         let filename = uploaded_texture_filename(target);
         let path = FsPath::new(TEXTURE_UPLOAD_DIR).join(&filename);
         tokio::fs::write(&path, png_bytes).await?;
-        manifest.push(TextureManifestEntry {
+        manifest_updates.push(TextureManifestEntry {
             file_id: target.id,
             tim2_index: target.tim2_index,
             picture_index: target.picture_index,
@@ -2061,6 +2092,45 @@ async fn apply_texture_upload(
             mode: "preserve_palette".to_owned(),
             lz77_offset: target.nested_lz77_offset,
         });
+    }
+    upsert_texture_manifest_entries(TEXTURE_MANIFEST_PATH, &manifest_updates).await?;
+    Ok(targets.len())
+}
+
+fn texture_manifest_lock() -> &'static tokio::sync::Mutex<()> {
+    TEXTURE_MANIFEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+async fn write_texture_manifest_atomic(
+    manifest_path: impl AsRef<FsPath>,
+    manifest: &[TextureManifestEntry],
+) -> anyhow::Result<()> {
+    let manifest_path = manifest_path.as_ref();
+    let temp_manifest_path = manifest_path.with_extension("json.tmp");
+    tokio::fs::write(&temp_manifest_path, serde_json::to_string_pretty(manifest)?).await?;
+    tokio::fs::rename(&temp_manifest_path, manifest_path).await?;
+    Ok(())
+}
+
+async fn upsert_texture_manifest_entries(
+    manifest_path: impl AsRef<FsPath>,
+    updates: &[TextureManifestEntry],
+) -> anyhow::Result<()> {
+    let _manifest_guard = texture_manifest_lock().lock().await;
+    let manifest_path = manifest_path.as_ref();
+    let mut manifest = match tokio::fs::read_to_string(manifest_path).await {
+        Ok(contents) => serde_json::from_str::<Vec<TextureManifestEntry>>(&contents)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => return Err(err.into()),
+    };
+    for update in updates {
+        manifest.retain(|entry| {
+            !(entry.file_id == update.file_id
+                && entry.tim2_index == update.tim2_index
+                && entry.picture_index == update.picture_index
+                && entry.lz77_offset == update.lz77_offset)
+        });
+        manifest.push(update.clone());
     }
     manifest.sort_by_key(|entry| {
         (
@@ -2070,12 +2140,7 @@ async fn apply_texture_upload(
             entry.picture_index,
         )
     });
-    tokio::fs::write(
-        TEXTURE_MANIFEST_PATH,
-        serde_json::to_string_pretty(&manifest)?,
-    )
-    .await?;
-    Ok(targets.len())
+    write_texture_manifest_atomic(manifest_path, &manifest).await
 }
 
 fn texture_records_from_filename(
@@ -2130,6 +2195,96 @@ fn png_dimensions(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
 #[cfg(test)]
 mod texture_upload_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn texture_manifest_lock_serializes_upload_critical_section() {
+        let guard = texture_manifest_lock().lock().await;
+        assert!(texture_manifest_lock().try_lock().is_err());
+        drop(guard);
+        assert!(texture_manifest_lock().try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn texture_manifest_is_replaced_with_complete_json() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("manifest.json");
+        let entries = vec![TextureManifestEntry {
+            file_id: 23,
+            tim2_index: 2,
+            picture_index: 1,
+            png: "uploads/texture.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: Some(80),
+        }];
+
+        write_texture_manifest_atomic(&path, &entries)
+            .await
+            .unwrap();
+
+        let saved: Vec<TextureManifestEntry> =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].file_id, 23);
+        assert_eq!(saved[0].lz77_offset, Some(80));
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[tokio::test]
+    async fn concurrent_manifest_updates_preserve_both_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("manifest.json");
+        let first = vec![TextureManifestEntry {
+            file_id: 23,
+            tim2_index: 2,
+            picture_index: 1,
+            png: "uploads/first.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: Some(80),
+        }];
+        let second = vec![TextureManifestEntry {
+            file_id: 24,
+            tim2_index: 0,
+            picture_index: 0,
+            png: "uploads/second.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: None,
+        }];
+
+        let (first_result, second_result) = tokio::join!(
+            upsert_texture_manifest_entries(&path, &first),
+            upsert_texture_manifest_entries(&path, &second),
+        );
+        first_result.unwrap();
+        second_result.unwrap();
+
+        let saved: Vec<TextureManifestEntry> =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(saved.iter().any(|entry| entry.file_id == 23));
+        assert!(saved.iter().any(|entry| entry.file_id == 24));
+    }
+
+    #[tokio::test]
+    async fn build_and_import_guards_reject_overlapping_operations() {
+        let db = straw_db::connect("sqlite::memory:").await.unwrap();
+        let state = AppState {
+            db,
+            operation_running: Arc::new(AtomicBool::new(false)),
+            build_running: Arc::new(AtomicBool::new(false)),
+            import_running: Arc::new(AtomicBool::new(false)),
+            texture_running: Arc::new(AtomicBool::new(false)),
+        };
+
+        let build_guard = acquire_build_guard(&state).unwrap();
+        assert!(acquire_import_guard(&state).is_err());
+        assert!(acquire_texture_guard(&state).is_err());
+        drop(build_guard);
+
+        let import_guard = acquire_import_guard(&state).unwrap();
+        assert!(acquire_build_guard(&state).is_err());
+        drop(import_guard);
+        assert!(acquire_texture_guard(&state).is_ok());
+    }
 
     #[tokio::test]
     async fn custom_target_uses_configured_glyph_map_without_reinterpreting_it() {
