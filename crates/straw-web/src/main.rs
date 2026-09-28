@@ -6,7 +6,7 @@ use std::{
     path::Path as FsPath,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 
@@ -53,6 +53,8 @@ const TEXTURE_MANIFEST_PATH: &str = "texturas/manifest.json";
 const TEXTURE_PATCHED_DIR: &str = "work_texturas/patched";
 const TEXTURE_LOG_PATH: &str = "work_texturas/texture.log";
 const TEXTURE_UPLOAD_DIR: &str = "texturas/uploads";
+
+static TEXTURE_MANIFEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 #[derive(Clone)]
 struct AppState {
@@ -2004,6 +2006,10 @@ async fn apply_texture_upload(
     png_filename: &str,
     png_bytes: &[u8],
 ) -> anyhow::Result<usize> {
+    let _manifest_guard = TEXTURE_MANIFEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let records = read_texture_records().await;
     let targets = if texture_hash.is_empty() {
         texture_records_from_filename(&records, png_filename)
@@ -2070,11 +2076,14 @@ async fn apply_texture_upload(
             entry.picture_index,
         )
     });
+    let manifest_path = FsPath::new(TEXTURE_MANIFEST_PATH);
+    let temp_manifest_path = manifest_path.with_extension("json.tmp");
     tokio::fs::write(
-        TEXTURE_MANIFEST_PATH,
+        &temp_manifest_path,
         serde_json::to_string_pretty(&manifest)?,
     )
     .await?;
+    tokio::fs::rename(&temp_manifest_path, manifest_path).await?;
     Ok(targets.len())
 }
 
