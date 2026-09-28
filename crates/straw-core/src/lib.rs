@@ -9,6 +9,7 @@ pub mod lz77;
 pub mod patch_elf;
 pub mod patch_scripts;
 pub mod script_rebuilder;
+pub mod text_layout;
 pub mod texture_inventory;
 
 pub use datafat::{
@@ -38,6 +39,10 @@ pub use patch_scripts::{patch_translated_scripts, PatchScriptsReport};
 pub use script_rebuilder::{
     find_segment_containing, rebuild_local_slack, rebuild_shift_suffix, RebuildReport,
     SegmentReport, TextSegment, TranslationRow,
+};
+pub use text_layout::{
+    glyph_width, is_vertical_script, max_visual_line_width, visual_width, wrap_script_translation,
+    wrap_script_translation_for, SCRIPT_LINE_WIDTH, VERTICAL_COLUMN_CHARACTERS,
 };
 pub use texture_inventory::{
     inject_patched_texture_streams, patch_textures_from_manifest,

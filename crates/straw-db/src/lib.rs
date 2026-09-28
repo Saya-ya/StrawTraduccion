@@ -10,8 +10,8 @@ use sqlx::{
     Row, SqliteConnection, SqlitePool,
 };
 use straw_core::{
-    analyze_script_dec, check_fit, extract_elf_strings, spanish_glyph_map, FitStatus, ImportedText,
-    TextSource,
+    analyze_script_dec, check_fit, extract_elf_strings, spanish_glyph_map,
+    wrap_script_translation_for, FitStatus, ImportedText, TextSource,
 };
 
 pub const DEFAULT_DB_PATH: &str = "work/translation_manager.db";
@@ -404,8 +404,16 @@ pub async fn import_translations_from_db(
         let script_id: i64 = row.try_get("script_id")?;
         let byte_offset: i64 = row.try_get("byte_offset")?;
         let original_text: String = row.try_get("original_text")?;
-        let translated_text =
-            normalize_translation_linebreaks(&row.try_get::<String, _>("translated_text")?);
+        let text_source = if source == "ELF" {
+            TextSource::Elf
+        } else {
+            TextSource::Script
+        };
+        let translated_text = canonicalize_translation(
+            &row.try_get::<String, _>("translated_text")?,
+            text_source,
+            script_id,
+        );
         if translated_text.trim().is_empty() {
             report.skipped_unchanged += 1;
             continue;
@@ -431,7 +439,7 @@ pub async fn import_translations_from_db(
 
         let current = target
             .try_get::<Option<String>, _>("translated_text")?
-            .map(|text| normalize_translation_linebreaks(&text))
+            .map(|text| canonicalize_translation(&text, text_source, script_id))
             .unwrap_or_default();
         if current == translated_text {
             report.skipped_unchanged += 1;
@@ -440,11 +448,6 @@ pub async fn import_translations_from_db(
 
         let id: i64 = target.try_get("id")?;
         let original: String = target.try_get("original_text")?;
-        let text_source = if source == "ELF" {
-            TextSource::Elf
-        } else {
-            TextSource::Script
-        };
         let fallback_capacity = match text_source {
             TextSource::Script => original.encode_utf16().count() * 2 + 2,
             TextSource::Elf => original.len(),
@@ -493,9 +496,12 @@ pub async fn import_translations_from_db(
 pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, source, script_type, variant, rebuild_mode, is_supported,
-               total_texts, translated_texts, total_sections
-        FROM scripts
+        SELECT s.id, s.source, s.script_type, s.variant, s.rebuild_mode, s.is_supported,
+               s.total_texts,
+               (SELECT COUNT(*) FROM text_entries t
+                WHERE t.script_id = s.id AND t.is_translated = 1) AS translated_texts,
+               s.total_sections
+        FROM scripts s
         ORDER BY id
         "#,
     )
@@ -534,10 +540,13 @@ pub async fn list_scripts(pool: &SqlitePool) -> Result<Vec<ScriptSummary>> {
 pub async fn get_script(pool: &SqlitePool, script_id: i64) -> Result<Option<ScriptSummary>> {
     let row = sqlx::query(
         r#"
-        SELECT id, source, script_type, variant, rebuild_mode, is_supported,
-               total_texts, translated_texts, total_sections
-        FROM scripts
-        WHERE id = ?
+        SELECT s.id, s.source, s.script_type, s.variant, s.rebuild_mode, s.is_supported,
+               s.total_texts,
+               (SELECT COUNT(*) FROM text_entries t
+                WHERE t.script_id = s.id AND t.is_translated = 1) AS translated_texts,
+               s.total_sections
+        FROM scripts s
+        WHERE s.id = ?
         "#,
     )
     .bind(script_id)
@@ -644,13 +653,13 @@ pub async fn update_text_entry_translation(
     let Some(existing) = get_text_entry(pool, entry_id).await? else {
         return Ok(None);
     };
-    let translated_text = normalize_translation_linebreaks(translated_text);
-    let is_translated = !translated_text.trim().is_empty();
     let source = if existing.source == "ELF" {
         TextSource::Elf
     } else {
         TextSource::Script
     };
+    let translated_text = canonicalize_translation(translated_text, source, existing.script_id);
+    let is_translated = !translated_text.trim().is_empty();
     let fallback_capacity = match source {
         TextSource::Script => existing.original_text.encode_utf16().count() * 2 + 2,
         TextSource::Elf => existing.original_text.len(),
@@ -929,6 +938,11 @@ pub async fn exported_translations(
             } else {
                 format!("0x{byte_offset:06X}")
             };
+            let text_source = if source == "ELF" {
+                TextSource::Elf
+            } else {
+                TextSource::Script
+            };
             Ok(ExportedTranslation {
                 source,
                 file_id,
@@ -938,7 +952,7 @@ pub async fn exported_translations(
                     .unwrap_or_default(),
                 translated_text: row
                     .try_get::<Option<String>, _>("translated_text")?
-                    .map(|text| normalize_translation_linebreaks(&text))
+                    .map(|text| canonicalize_translation(&text, text_source, script_id))
                     .unwrap_or_default(),
             })
         })
@@ -948,18 +962,10 @@ pub async fn exported_translations(
 pub async fn normalize_stored_translation_linebreaks(pool: &SqlitePool) -> Result<usize> {
     let rows = sqlx::query(
         r#"
-        SELECT id, source, translated_text, segment_capacity
+        SELECT id, script_id, source, translated_text, segment_capacity
         FROM text_entries
         WHERE translated_text IS NOT NULL
           AND translated_text != ''
-          AND (
-              instr(translated_text, char(13)) > 0
-              OR instr(translated_text, char(10) || char(10)) > 0
-              OR (
-                  instr(translated_text, char(10)) > 0
-                  AND instr(substr(translated_text, instr(translated_text, char(10)) + 1), char(10)) > 0
-              )
-          )
         "#,
     )
     .fetch_all(pool)
@@ -969,20 +975,21 @@ pub async fn normalize_stored_translation_linebreaks(pool: &SqlitePool) -> Resul
     let mut tx = pool.begin().await?;
     for row in rows {
         let id: i64 = row.try_get("id")?;
+        let script_id: i64 = row.try_get("script_id")?;
         let source = row
             .try_get::<Option<String>, _>("source")?
             .unwrap_or_else(|| "SCRIPT".to_owned());
         let original: String = row.try_get("translated_text")?;
-        let normalized = normalize_translation_linebreaks(&original);
-        if normalized == original {
-            continue;
-        }
-
         let text_source = if source == "ELF" {
             TextSource::Elf
         } else {
             TextSource::Script
         };
+        let normalized = canonicalize_translation(&original, text_source, script_id);
+        if normalized == original {
+            continue;
+        }
+
         let capacity = row
             .try_get::<Option<i64>, _>("segment_capacity")?
             .unwrap_or(0)
@@ -1098,7 +1105,7 @@ async fn refresh_script_translated_count_on_connection(
 async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, String), String>> {
     let rows = sqlx::query(
         r#"
-        SELECT script_id, byte_offset, original_text, translated_text
+        SELECT source, script_id, byte_offset, original_text, translated_text
         FROM text_entries
         WHERE translated_text IS NOT NULL AND translated_text != ''
         "#,
@@ -1109,13 +1116,21 @@ async fn existing_translations(pool: &SqlitePool) -> Result<HashMap<(i64, i64, S
     let mut translations = HashMap::new();
     for row in rows {
         let translated_text: String = row.try_get("translated_text")?;
+        let source = row
+            .try_get::<Option<String>, _>("source")?
+            .unwrap_or_else(|| "SCRIPT".to_owned());
+        let text_source = if source == "ELF" {
+            TextSource::Elf
+        } else {
+            TextSource::Script
+        };
         translations.insert(
             (
                 row.try_get("script_id")?,
                 row.try_get("byte_offset")?,
                 row.try_get::<String, _>("original_text")?,
             ),
-            normalize_translation_linebreaks(&translated_text),
+            canonicalize_translation(&translated_text, text_source, row.try_get("script_id")?),
         );
     }
     Ok(translations)
@@ -1190,13 +1205,29 @@ fn fit_status_label(status: FitStatus) -> &'static str {
 }
 
 pub fn normalize_translation_linebreaks(text: &str) -> String {
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    normalized
+    let normalized = text
+        .replace("<lb/>", "\n")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let lines = normalized
         .split('\n')
         .map(|line| line.trim_end_matches([' ', '\t']))
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+    let first = lines.iter().position(|line| !line.trim().is_empty());
+    let last = lines.iter().rposition(|line| !line.trim().is_empty());
+    match (first, last) {
+        (Some(first), Some(last)) => lines[first..=last].join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn canonicalize_translation(text: &str, source: TextSource, script_id: i64) -> String {
+    let normalized = normalize_translation_linebreaks(text);
+    if source == TextSource::Script {
+        wrap_script_translation_for(script_id, &normalized)
+    } else {
+        normalized
+    }
 }
 
 async fn rebuild_fts(pool: &SqlitePool) -> Result<()> {
@@ -1585,6 +1616,19 @@ mod tests {
         .await
         .unwrap();
 
+        for offset in 0..4 {
+            sqlx::query(
+                "INSERT INTO text_entries (script_id, byte_offset, original_text, translated_text, is_translated) \
+                 VALUES (2, ?, ?, ?, 1)",
+            )
+            .bind(offset)
+            .bind(format!("original-{offset}"))
+            .bind(format!("translated-{offset}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
         let scripts = list_scripts(&pool).await.unwrap();
         assert_eq!(scripts.len(), 2);
         assert_eq!(scripts[0].id, 1);
@@ -1847,15 +1891,43 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_blank_translation_lines() {
+    fn normalizes_line_endings_and_preserves_paragraphs() {
         assert_eq!(
             normalize_translation_linebreaks("hola\r\n  \nesta es la tercera fila"),
-            "hola\nesta es la tercera fila"
+            "hola\n\nesta es la tercera fila"
         );
         assert_eq!(
             normalize_translation_linebreaks("uno\r\n\r\ndos\n \n tres  "),
-            "uno\ndos\n tres"
+            "uno\n\ndos\n\n tres"
         );
+        assert_eq!(normalize_translation_linebreaks("\n\nuno\n\n"), "uno");
+        assert_eq!(normalize_translation_linebreaks("uno<lb/>dos"), "uno\ndos");
+    }
+
+    #[tokio::test]
+    async fn wraps_long_script_translations_when_saving() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scripts (id, total_texts) VALUES (1, 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, segment_capacity) \
+             VALUES (1, 'SCRIPT', 16, '日本語', '', 1000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let input = "Esta traducción contiene suficientes palabras para superar el ancho visual de una línea del juego";
+        let saved = update_text_entry_translation(&pool, 1, input)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(saved.translated_text.contains('\n'));
+        assert_eq!(saved.translated_text.replace('\n', " "), input);
     }
 
     #[tokio::test]
@@ -1881,7 +1953,7 @@ mod tests {
         assert_eq!(updated, 1);
 
         let text = get_text_entry(&pool, 1).await.unwrap().unwrap();
-        assert_eq!(text.translated_text, "hola\ntercera fila");
+        assert_eq!(text.translated_text, "hola\n\ntercera fila");
         assert!(text.is_translated);
     }
 
@@ -1930,7 +2002,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].file_id, "1");
         assert_eq!(rows[0].offset, "0x00010");
-        assert_eq!(rows[0].translated_text, "b\nc");
+        assert_eq!(rows[0].translated_text, "b\n\nc");
 
         let temp = tempfile::tempdir().unwrap();
         let csv_path = temp.path().join("dialogo.csv");
@@ -1945,7 +2017,7 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].get(4), Some("b\nc"));
+        assert_eq!(records[0].get(4), Some("b\n\nc"));
     }
 
     #[tokio::test]
