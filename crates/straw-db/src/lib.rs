@@ -1471,6 +1471,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_reimport_rolls_back_deleted_translation_data() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scripts (id, source) VALUES (7, 'SCRIPT')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO text_entries (script_id, source, byte_offset, original_text, translated_text, is_translated) \
+             VALUES (7, 'SCRIPT', 12, 'original', 'traducción guardada', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_script_delete BEFORE DELETE ON scripts \
+             BEGIN SELECT RAISE(ABORT, 'simulated import failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let scripts = temp.path().join("scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        let result = import_extracted_texts(&pool, &scripts, temp.path().join("missing-elf")).await;
+
+        assert!(result.is_err());
+        let saved: (i64, String) = sqlx::query_as(
+            "SELECT script_id, translated_text FROM text_entries WHERE byte_offset = 12",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(saved, (7, "traducción guardada".to_owned()));
+        let script_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scripts WHERE id = 7")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(script_count, 1);
+    }
+
+    #[tokio::test]
     async fn settings_roundtrip_json_values() {
         let pool = connect("sqlite::memory:").await.unwrap();
         init_db(&pool).await.unwrap();

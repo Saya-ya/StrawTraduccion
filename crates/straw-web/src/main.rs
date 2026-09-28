@@ -244,7 +244,7 @@ struct TextureUploadTemplate {
     error: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct TextureManifestEntry {
     file_id: u32,
     tim2_index: usize,
@@ -2045,10 +2045,6 @@ async fn apply_texture_upload(
     png_filename: &str,
     png_bytes: &[u8],
 ) -> anyhow::Result<usize> {
-    let _manifest_guard = TEXTURE_MANIFEST_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
     let records = read_texture_records().await;
     let targets = if texture_hash.is_empty() {
         texture_records_from_filename(&records, png_filename)
@@ -2083,22 +2079,12 @@ async fn apply_texture_upload(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let mut manifest = match fs::read_to_string(TEXTURE_MANIFEST_PATH) {
-        Ok(contents) => serde_json::from_str::<Vec<TextureManifestEntry>>(&contents)?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(err) => return Err(err.into()),
-    };
+    let mut manifest_updates = Vec::new();
     for target in &targets {
-        manifest.retain(|entry| {
-            !(entry.file_id == target.id
-                && entry.tim2_index == target.tim2_index
-                && entry.picture_index == target.picture_index
-                && entry.lz77_offset == target.nested_lz77_offset)
-        });
         let filename = uploaded_texture_filename(target);
         let path = FsPath::new(TEXTURE_UPLOAD_DIR).join(&filename);
         tokio::fs::write(&path, png_bytes).await?;
-        manifest.push(TextureManifestEntry {
+        manifest_updates.push(TextureManifestEntry {
             file_id: target.id,
             tim2_index: target.tim2_index,
             picture_index: target.picture_index,
@@ -2106,6 +2092,45 @@ async fn apply_texture_upload(
             mode: "preserve_palette".to_owned(),
             lz77_offset: target.nested_lz77_offset,
         });
+    }
+    upsert_texture_manifest_entries(TEXTURE_MANIFEST_PATH, &manifest_updates).await?;
+    Ok(targets.len())
+}
+
+fn texture_manifest_lock() -> &'static tokio::sync::Mutex<()> {
+    TEXTURE_MANIFEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+async fn write_texture_manifest_atomic(
+    manifest_path: impl AsRef<FsPath>,
+    manifest: &[TextureManifestEntry],
+) -> anyhow::Result<()> {
+    let manifest_path = manifest_path.as_ref();
+    let temp_manifest_path = manifest_path.with_extension("json.tmp");
+    tokio::fs::write(&temp_manifest_path, serde_json::to_string_pretty(manifest)?).await?;
+    tokio::fs::rename(&temp_manifest_path, manifest_path).await?;
+    Ok(())
+}
+
+async fn upsert_texture_manifest_entries(
+    manifest_path: impl AsRef<FsPath>,
+    updates: &[TextureManifestEntry],
+) -> anyhow::Result<()> {
+    let _manifest_guard = texture_manifest_lock().lock().await;
+    let manifest_path = manifest_path.as_ref();
+    let mut manifest = match tokio::fs::read_to_string(manifest_path).await {
+        Ok(contents) => serde_json::from_str::<Vec<TextureManifestEntry>>(&contents)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => return Err(err.into()),
+    };
+    for update in updates {
+        manifest.retain(|entry| {
+            !(entry.file_id == update.file_id
+                && entry.tim2_index == update.tim2_index
+                && entry.picture_index == update.picture_index
+                && entry.lz77_offset == update.lz77_offset)
+        });
+        manifest.push(update.clone());
     }
     manifest.sort_by_key(|entry| {
         (
@@ -2115,15 +2140,7 @@ async fn apply_texture_upload(
             entry.picture_index,
         )
     });
-    let manifest_path = FsPath::new(TEXTURE_MANIFEST_PATH);
-    let temp_manifest_path = manifest_path.with_extension("json.tmp");
-    tokio::fs::write(
-        &temp_manifest_path,
-        serde_json::to_string_pretty(&manifest)?,
-    )
-    .await?;
-    tokio::fs::rename(&temp_manifest_path, manifest_path).await?;
-    Ok(targets.len())
+    write_texture_manifest_atomic(manifest_path, &manifest).await
 }
 
 fn texture_records_from_filename(
@@ -2178,6 +2195,96 @@ fn png_dimensions(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
 #[cfg(test)]
 mod texture_upload_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn texture_manifest_lock_serializes_upload_critical_section() {
+        let guard = texture_manifest_lock().lock().await;
+        assert!(texture_manifest_lock().try_lock().is_err());
+        drop(guard);
+        assert!(texture_manifest_lock().try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn texture_manifest_is_replaced_with_complete_json() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("manifest.json");
+        let entries = vec![TextureManifestEntry {
+            file_id: 23,
+            tim2_index: 2,
+            picture_index: 1,
+            png: "uploads/texture.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: Some(80),
+        }];
+
+        write_texture_manifest_atomic(&path, &entries)
+            .await
+            .unwrap();
+
+        let saved: Vec<TextureManifestEntry> =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].file_id, 23);
+        assert_eq!(saved[0].lz77_offset, Some(80));
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[tokio::test]
+    async fn concurrent_manifest_updates_preserve_both_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("manifest.json");
+        let first = vec![TextureManifestEntry {
+            file_id: 23,
+            tim2_index: 2,
+            picture_index: 1,
+            png: "uploads/first.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: Some(80),
+        }];
+        let second = vec![TextureManifestEntry {
+            file_id: 24,
+            tim2_index: 0,
+            picture_index: 0,
+            png: "uploads/second.png".to_owned(),
+            mode: "preserve_palette".to_owned(),
+            lz77_offset: None,
+        }];
+
+        let (first_result, second_result) = tokio::join!(
+            upsert_texture_manifest_entries(&path, &first),
+            upsert_texture_manifest_entries(&path, &second),
+        );
+        first_result.unwrap();
+        second_result.unwrap();
+
+        let saved: Vec<TextureManifestEntry> =
+            serde_json::from_slice(&tokio::fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(saved.iter().any(|entry| entry.file_id == 23));
+        assert!(saved.iter().any(|entry| entry.file_id == 24));
+    }
+
+    #[tokio::test]
+    async fn build_and_import_guards_reject_overlapping_operations() {
+        let db = straw_db::connect("sqlite::memory:").await.unwrap();
+        let state = AppState {
+            db,
+            operation_running: Arc::new(AtomicBool::new(false)),
+            build_running: Arc::new(AtomicBool::new(false)),
+            import_running: Arc::new(AtomicBool::new(false)),
+            texture_running: Arc::new(AtomicBool::new(false)),
+        };
+
+        let build_guard = acquire_build_guard(&state).unwrap();
+        assert!(acquire_import_guard(&state).is_err());
+        assert!(acquire_texture_guard(&state).is_err());
+        drop(build_guard);
+
+        let import_guard = acquire_import_guard(&state).unwrap();
+        assert!(acquire_build_guard(&state).is_err());
+        drop(import_guard);
+        assert!(acquire_texture_guard(&state).is_ok());
+    }
 
     #[tokio::test]
     async fn custom_target_uses_configured_glyph_map_without_reinterpreting_it() {
