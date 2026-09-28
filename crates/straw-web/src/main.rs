@@ -59,16 +59,21 @@ static TEXTURE_MANIFEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new()
 #[derive(Clone)]
 struct AppState {
     db: SqlitePool,
+    operation_running: Arc<AtomicBool>,
     build_running: Arc<AtomicBool>,
     import_running: Arc<AtomicBool>,
     texture_running: Arc<AtomicBool>,
 }
 
-struct BuildRunGuard(Arc<AtomicBool>);
+struct BuildRunGuard {
+    operation: Arc<AtomicBool>,
+    status: Arc<AtomicBool>,
+}
 
 impl Drop for BuildRunGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.status.store(false, Ordering::Release);
+        self.operation.store(false, Ordering::Release);
     }
 }
 
@@ -398,6 +403,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(AppState {
             db,
+            operation_running: Arc::new(AtomicBool::new(false)),
             build_running: Arc::new(AtomicBool::new(false)),
             import_running: Arc::new(AtomicBool::new(false)),
             texture_running: Arc::new(AtomicBool::new(false)),
@@ -709,7 +715,13 @@ async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<
     Html(template.render().expect("texture upload template renders"))
 }
 
-async fn texture_upload(mut multipart: Multipart) -> impl IntoResponse {
+async fn texture_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let Ok(_guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures/upload?error=operation_already_running").into_response();
+    };
     let mut texture_hash = String::new();
     let mut png_filename = String::new();
     let mut png_bytes = Vec::new();
@@ -968,6 +980,9 @@ async fn build_page(
 }
 
 async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     append_build_log("Paso manual: exportar CSV iniciado");
     println!("[build] Exportando CSV a {BUILD_CSV_PATH}");
     match export_translations_csv(&state.db, BUILD_CSV_PATH, true).await {
@@ -990,6 +1005,9 @@ async fn export_build_csv(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(DATA_BIN_PATH).exists() {
         return Redirect::to("/build?error=missing_databin#manual").into_response();
     }
@@ -1037,6 +1055,9 @@ async fn prepare_data_bin(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(PATCHED_DATA_PATH).exists() {
         return Redirect::to("/build?error=missing_patched_data#manual").into_response();
     }
@@ -1110,6 +1131,9 @@ async fn patch_scripts(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(ORIGINAL_ELF_PATH).exists() {
         return Redirect::to("/build?error=missing_original_elf#manual").into_response();
     }
@@ -1171,6 +1195,9 @@ async fn patch_elf(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(BASE_ISO_PATH).exists() {
         return Redirect::to("/build?error=missing_base_iso#manual").into_response();
     }
@@ -1220,6 +1247,9 @@ async fn build_iso(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn inject_elf(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_build_guard(&state) else {
+        return Redirect::to("/build?error=operation_already_running#manual").into_response();
+    };
     if !FsPath::new(ISO_OUT_PATH).exists() {
         return Redirect::to("/build?error=missing_iso#manual").into_response();
     }
@@ -1517,11 +1547,7 @@ async fn run_full_build(
 }
 
 fn acquire_build_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
-    state
-        .build_running
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.build_running.clone()))
-        .map_err(|_| ())
+    acquire_operation_guard(state, &state.build_running)
 }
 
 fn run_full_build_steps(
@@ -1913,19 +1939,32 @@ async fn import_translations_db_upload(
 }
 
 fn acquire_import_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
-    state
-        .import_running
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.import_running.clone()))
-        .map_err(|_| ())
+    acquire_operation_guard(state, &state.import_running)
 }
 
 fn acquire_texture_guard(state: &AppState) -> Result<BuildRunGuard, ()> {
+    acquire_operation_guard(state, &state.texture_running)
+}
+
+fn acquire_operation_guard(
+    state: &AppState,
+    status: &Arc<AtomicBool>,
+) -> Result<BuildRunGuard, ()> {
     state
-        .texture_running
+        .operation_running
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .map(|_| BuildRunGuard(state.texture_running.clone()))
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    if status
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        state.operation_running.store(false, Ordering::Release);
+        return Err(());
+    }
+    Ok(BuildRunGuard {
+        operation: state.operation_running.clone(),
+        status: status.clone(),
+    })
 }
 
 fn read_build_log() -> String {
