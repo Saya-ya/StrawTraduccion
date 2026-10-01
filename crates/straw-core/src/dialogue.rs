@@ -222,6 +222,10 @@ fn is_shift_suffix_text_record(data: &[u8], block: &TextBlock) -> bool {
 pub fn extract_elf_strings(path: impl AsRef<Path>) -> Result<Vec<ImportedText>> {
     let path = path.as_ref();
     let data = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(extract_elf_strings_from_bytes(&data))
+}
+
+fn extract_elf_strings_from_bytes(data: &[u8]) -> Vec<ImportedText> {
     let mut strings = Vec::new();
     let mut i = 0;
     while i + 1 < data.len() {
@@ -239,7 +243,7 @@ pub fn extract_elf_strings(path: impl AsRef<Path>) -> Result<Vec<ImportedText>> 
                 }
             }
             let raw = &data[start..i];
-            if raw.len() >= 4 {
+            if raw.len() >= 4 && is_elf_string_field(data, start, i) {
                 let (decoded, _, had_errors) = SHIFT_JIS.decode(raw);
                 let text = decoded.trim().to_owned();
                 if !had_errors && !text.is_empty() && !text.is_ascii() && is_valid_elf_text(&text) {
@@ -260,7 +264,57 @@ pub fn extract_elf_strings(path: impl AsRef<Path>) -> Result<Vec<ImportedText>> 
         }
         i += 1;
     }
-    Ok(strings)
+    strings
+}
+
+// This ELF has executable code and strings in the same loadable section. A run
+// of bytes that happens to decode as Shift-JIS is not sufficient evidence of
+// text: MIPS instructions can produce the same run. Require a string/line
+// boundary on both sides, including padding after a NUL terminator.
+fn is_elf_string_field(data: &[u8], start: usize, end: usize) -> bool {
+    let before = start.checked_sub(1).and_then(|pos| data.get(pos)).copied();
+    let at_end = data.get(end).copied();
+    let after_end = data.get(end + 1).copied();
+
+    let starts_at_boundary = match before {
+        None | Some(0 | b'\n') => true,
+        Some(_) => {
+            // Some genuine labels contain an ASCII prefix (e.g. MEMORY CARD)
+            // followed by Japanese text on the same line.
+            let prefix = &data[start.saturating_sub(64)..start];
+            let ascii_start = prefix
+                .iter()
+                .rposition(|&b| b == 0 || b == b'\n')
+                .map(|pos| pos + 1)
+                .unwrap_or(0);
+            ascii_start > 0
+                && !prefix[ascii_start..].is_empty()
+                && prefix[ascii_start..]
+                    .iter()
+                    .all(|&b| (0x20..=0x7e).contains(&b))
+        }
+    };
+    let ends_at_boundary = at_end == Some(b'\n')
+        || (at_end == Some(0)
+            && (after_end == Some(0)
+                || (matches!(before, Some(0 | b'\n'))
+                    && has_repeated_nul_terminated_field(data, start, end))));
+    starts_at_boundary && ends_at_boundary
+}
+
+fn has_repeated_nul_terminated_field(data: &[u8], start: usize, end: usize) -> bool {
+    // Some consecutive Japanese messages are separated by just one NUL. In
+    // this game they also occur in several message blocks; requiring a second
+    // bounded occurrence avoids accepting isolated instruction sequences.
+    data.windows(end - start)
+        .enumerate()
+        .any(|(pos, candidate)| {
+            pos != start
+                && candidate == &data[start..end]
+                && pos > 0
+                && matches!(data[pos - 1], 0 | b'\n')
+                && data.get(pos + candidate.len()) == Some(&0)
+        })
 }
 
 fn find_text_blocks(data: &[u8]) -> Vec<TextBlock> {

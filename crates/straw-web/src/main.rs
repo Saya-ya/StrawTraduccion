@@ -27,11 +27,11 @@ use straw_core::{
     TextureRecord,
 };
 use straw_db::{
-    connect_path, export_translations_csv, get_script_detail_filtered, get_setting, get_text_entry,
-    import_extracted_texts_with_progress, import_translations_from_db, init_db, list_scripts,
-    recent_builds, record_build_step, search_text_entries_filtered, set_setting, translation_stats,
-    update_text_entry_translation, BuildSummary, ScriptDetail, ScriptSummary, SearchResult,
-    TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
+    connect_path, delete_elf_text_entry, export_translations_csv, get_script_detail_filtered,
+    get_setting, get_text_entry, import_extracted_texts_with_progress, import_translations_from_db,
+    init_db, list_scripts, recent_builds, record_build_step, search_text_entries_filtered,
+    set_setting, translation_stats, update_text_entry_translation, BuildSummary, ScriptDetail,
+    ScriptSummary, SearchResult, TextEntrySummary, TranslationStats, DEFAULT_DB_PATH,
 };
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -397,7 +397,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings", get(settings).post(save_settings))
         .route("/api/texts/:entry_id/edit", get(text_editor))
         .route("/api/texts/:entry_id/view", get(text_row))
-        .route("/api/texts/:entry_id", put(update_text))
+        .route(
+            "/api/texts/:entry_id",
+            put(update_text).delete(delete_elf_text),
+        )
         .nest_service("/texture-assets", ServeDir::new(TEXTURE_INVENTORY_DIR))
         .nest_service("/texture-uploads", ServeDir::new(TEXTURE_UPLOAD_DIR))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
@@ -2612,6 +2615,21 @@ async fn update_text(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to update text: {err}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_elf_text(
+    State(state): State<AppState>,
+    Path(entry_id): Path<i64>,
+) -> impl IntoResponse {
+    match delete_elf_text_entry(&state.db, entry_id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "ELF text not found").into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to delete ELF text: {err}"),
         )
             .into_response(),
     }

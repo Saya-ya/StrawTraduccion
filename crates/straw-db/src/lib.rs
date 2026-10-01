@@ -645,6 +645,27 @@ pub async fn get_text_entry(pool: &SqlitePool, entry_id: i64) -> Result<Option<T
     row.map(text_entry_from_row).transpose()
 }
 
+pub async fn delete_elf_text_entry(pool: &SqlitePool, entry_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let deleted =
+        sqlx::query("DELETE FROM text_entries WHERE id = ? AND script_id = -1 AND source = 'ELF'")
+            .bind(entry_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            != 0;
+    if deleted {
+        sqlx::query(
+            "UPDATE scripts SET total_texts = (SELECT COUNT(*) FROM text_entries WHERE script_id = -1), \
+             translated_texts = (SELECT COUNT(*) FROM text_entries WHERE script_id = -1 AND is_translated = 1) WHERE id = -1",
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(deleted)
+}
+
 pub async fn update_text_entry_translation(
     pool: &SqlitePool,
     entry_id: i64,
@@ -1600,6 +1621,35 @@ mod tests {
         .unwrap();
 
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_elf_entry_keeps_counts_and_fts_consistent() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        init_db(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scripts (id, source, total_texts, translated_texts) VALUES (-1, 'ELF', 2, 2), (1, 'SCRIPT', 1, 1)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO text_entries (id, script_id, source, byte_offset, original_text, translated_text, is_translated) VALUES (10, -1, 'ELF', 16, 'falso', 'Cargando', 1), (11, -1, 'ELF', 32, 'real', 'Menú', 1), (12, 1, 'SCRIPT', 16, 'dialogo', 'texto', 1)")
+            .execute(&pool).await.unwrap();
+
+        assert!(!delete_elf_text_entry(&pool, 12).await.unwrap());
+        assert!(delete_elf_text_entry(&pool, 10).await.unwrap());
+        assert!(!delete_elf_text_entry(&pool, 10).await.unwrap());
+        let counts: (i64, i64) =
+            sqlx::query_as("SELECT total_texts, translated_texts FROM scripts WHERE id = -1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(counts, (1, 1));
+        let fts_hits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM text_entries_fts WHERE text_entries_fts MATCH 'Cargando'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(fts_hits, 0);
+        assert!(get_text_entry(&pool, 11).await.unwrap().is_some());
+        assert!(get_text_entry(&pool, 12).await.unwrap().is_some());
     }
 
     #[tokio::test]
