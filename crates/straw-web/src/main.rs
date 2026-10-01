@@ -20,11 +20,11 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use straw_core::{
-    build_iso_with_patched_data, copy_file_creating_parent, english_glyph_map,
-    extract_lz77_scripts_to_dir, inject_elf_into_iso, inject_patched_texture_streams,
-    patch_textures_from_manifest_with_glyph_map, patch_translated_elf, patch_translated_scripts,
-    spanish_glyph_map, validate_glyph_map, write_texture_inventory_with_progress, GlyphMap,
-    TextureRecord,
+    build_iso_with_patched_data, clean_all_pngs_in_dir, copy_file_creating_parent,
+    english_glyph_map, extract_lz77_scripts_to_dir, inject_elf_into_iso,
+    inject_patched_texture_streams, patch_textures_from_manifest_with_glyph_map,
+    patch_translated_elf, patch_translated_scripts, spanish_glyph_map, validate_glyph_map,
+    write_texture_inventory_with_progress, GlyphMap, TextureRecord,
 };
 use straw_db::{
     connect_path, delete_elf_text_entry, export_translations_csv, get_script_detail_filtered,
@@ -306,6 +306,8 @@ struct TextureUploadParams {
     hash: Option<String>,
     status: Option<String>,
     count: Option<usize>,
+    files: Option<usize>,
+    skipped: Option<usize>,
     error: Option<String>,
 }
 
@@ -371,6 +373,8 @@ async fn main() -> anyhow::Result<()> {
             "/textures/upload",
             get(texture_upload_page).post(texture_upload),
         )
+        .route("/textures/upload/folder", post(texture_upload_folder))
+        .route("/textures/optimize", post(optimize_textures))
         .route("/textures/log", get(texture_log))
         .route("/textures/inventory", post(texture_inventory))
         .route("/textures/patch", post(patch_textures))
@@ -712,7 +716,12 @@ async fn texture_upload_page(Query(params): Query<TextureUploadParams>) -> Html<
         uploaded_files: list_uploaded_texture_files(),
         missing_hash_count,
         manifest_exists: FsPath::new(TEXTURE_MANIFEST_PATH).exists(),
-        message: upload_message(params.status.as_deref(), params.count),
+        message: upload_message(
+            params.status.as_deref(),
+            params.count,
+            params.files,
+            params.skipped,
+        ),
         error: params.error.unwrap_or_default(),
     };
     Html(template.render().expect("texture upload template renders"))
@@ -774,6 +783,87 @@ async fn texture_upload(
             } else {
                 format!("&hash={}", url_escape(texture_hash))
             }
+        ))
+        .into_response(),
+    }
+}
+
+async fn texture_upload_folder(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let Ok(_guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures/upload?error=operation_already_running&tab=folder")
+            .into_response();
+    };
+
+    let records = read_texture_records().await;
+    let mut files = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or_default().to_owned();
+        if name == "folder_files" || name == "files" || name == "png" {
+            let filename = field.file_name().unwrap_or_default().to_owned();
+            if let Ok(bytes) = field.bytes().await {
+                if !bytes.is_empty() && !filename.is_empty() {
+                    files.push((filename, bytes.to_vec()));
+                }
+            }
+        }
+    }
+
+    if files.is_empty() {
+        return Redirect::to("/textures/upload?error=no_se_recibieron_archivos_png&tab=folder")
+            .into_response();
+    }
+
+    match apply_texture_batch_upload(&records, &files).await {
+        Ok(report) => {
+            if report.files_processed == 0 {
+                Redirect::to(&format!(
+                    "/textures/upload?error={}&tab=folder",
+                    url_escape(&format!(
+                        "Se leyeron {} archivo(s), pero ninguno coincide con nombres exportados (ID_...) y dimensiones validas.",
+                        report.files_skipped
+                    ))
+                ))
+                .into_response()
+            } else {
+                Redirect::to(&format!(
+                    "/textures/upload?status=folder_ok&count={}&files={}&skipped={}&tab=folder",
+                    report.targets_matched, report.files_processed, report.files_skipped
+                ))
+                .into_response()
+            }
+        }
+        Err(err) => Redirect::to(&format!(
+            "/textures/upload?error={}&tab=folder",
+            url_escape(&err.to_string())
+        ))
+        .into_response(),
+    }
+}
+
+async fn optimize_textures(State(state): State<AppState>) -> impl IntoResponse {
+    let Ok(_guard) = acquire_texture_guard(&state) else {
+        return Redirect::to("/textures/upload?error=operation_already_running").into_response();
+    };
+    let upload_dir = FsPath::new(TEXTURE_UPLOAD_DIR).to_path_buf();
+    let result = tokio::task::spawn_blocking(move || clean_all_pngs_in_dir(&upload_dir)).await;
+
+    match result {
+        Ok(Ok((scanned, cleaned))) => Redirect::to(&format!(
+            "/textures/upload?status=optimized&count={cleaned}&files={scanned}"
+        ))
+        .into_response(),
+        Ok(Err(err)) => Redirect::to(&format!(
+            "/textures/upload?error={}",
+            url_escape(&err.to_string())
+        ))
+        .into_response(),
+        Err(err) => Redirect::to(&format!(
+            "/textures/upload?error={}",
+            url_escape(&err.to_string())
         ))
         .into_response(),
     }
@@ -2100,6 +2190,100 @@ async fn apply_texture_upload(
     Ok(targets.len())
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct BatchUploadReport {
+    pub files_processed: usize,
+    pub targets_matched: usize,
+    pub files_skipped: usize,
+}
+
+async fn apply_texture_batch_upload(
+    records: &[TextureRecord],
+    files: &[(String, Vec<u8>)],
+) -> anyhow::Result<BatchUploadReport> {
+    apply_texture_batch_upload_with_paths(records, files, TEXTURE_UPLOAD_DIR, TEXTURE_MANIFEST_PATH)
+        .await
+}
+
+async fn apply_texture_batch_upload_with_paths(
+    records: &[TextureRecord],
+    files: &[(String, Vec<u8>)],
+    upload_dir: impl AsRef<FsPath>,
+    manifest_path: impl AsRef<FsPath>,
+) -> anyhow::Result<BatchUploadReport> {
+    let upload_dir = upload_dir.as_ref();
+    let manifest_path = manifest_path.as_ref();
+
+    tokio::fs::create_dir_all(upload_dir).await?;
+    if let Some(parent) = manifest_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut manifest_updates = Vec::new();
+    let mut files_processed = 0;
+    let mut targets_matched = 0;
+    let mut files_skipped = 0;
+
+    for (raw_name, bytes) in files {
+        let Some(filename) = FsPath::new(raw_name).file_name().and_then(|n| n.to_str()) else {
+            files_skipped += 1;
+            continue;
+        };
+
+        if filename.starts_with('.')
+            || !filename.to_lowercase().ends_with(".png")
+            || bytes.is_empty()
+        {
+            files_skipped += 1;
+            continue;
+        }
+
+        let targets = texture_records_from_filename(records, filename);
+        if targets.is_empty() {
+            files_skipped += 1;
+            continue;
+        }
+
+        let Ok((width, height)) = png_dimensions(bytes) else {
+            files_skipped += 1;
+            continue;
+        };
+
+        let first = &targets[0];
+        if width != u32::from(first.width) || height != u32::from(first.height) {
+            files_skipped += 1;
+            continue;
+        }
+
+        for target in &targets {
+            let out_filename = uploaded_texture_filename(target);
+            let path = upload_dir.join(&out_filename);
+            tokio::fs::write(&path, bytes).await?;
+            manifest_updates.push(TextureManifestEntry {
+                file_id: target.id,
+                tim2_index: target.tim2_index,
+                picture_index: target.picture_index,
+                png: path.to_string_lossy().replace('\\', "/"),
+                mode: "preserve_palette".to_owned(),
+                lz77_offset: target.nested_lz77_offset,
+            });
+        }
+
+        files_processed += 1;
+        targets_matched += targets.len();
+    }
+
+    if !manifest_updates.is_empty() {
+        upsert_texture_manifest_entries(manifest_path, &manifest_updates).await?;
+    }
+
+    Ok(BatchUploadReport {
+        files_processed,
+        targets_matched,
+        files_skipped,
+    })
+}
+
 fn texture_manifest_lock() -> &'static tokio::sync::Mutex<()> {
     TEXTURE_MANIFEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
@@ -2350,6 +2534,102 @@ mod texture_upload_tests {
             1
         );
     }
+
+    #[tokio::test]
+    async fn batch_upload_processes_folder_and_updates_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let upload_dir = temp.path().join("uploads");
+        let manifest_path = temp.path().join("manifest.json");
+
+        let record = TextureRecord {
+            id: 2,
+            fat_row: 1,
+            file_offset: 0,
+            raw_size: 0,
+            compressed: true,
+            nested_lz77_offset: None,
+            nested_lz77_size: None,
+            tim2_index: 0,
+            tim2_offset: 0,
+            picture_index: 0,
+            width: 64,
+            height: 64,
+            image_type: 5,
+            image_type_name: "INDEX8".into(),
+            image_size: 4096,
+            clut_size: 1024,
+            clut_color_count: 256,
+            score_ui: 0,
+            score_font: 0,
+            texture_hash: "hash_test_64".into(),
+            png: "work_texturas/ID_00002_T000_P00_64x64.png".into(),
+        };
+        let mut duplicate_record = record.clone();
+        duplicate_record.id = 3;
+
+        let records = vec![record.clone(), duplicate_record];
+
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 64, 64);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            let data = vec![255u8; 64 * 64 * 4];
+            writer.write_image_data(&data).unwrap();
+        }
+
+        let files = vec![
+            (
+                "mi_carpeta/subcarpeta/ID_00002_T000_P00_64x64.png".to_string(),
+                png_bytes,
+            ),
+            ("mi_carpeta/desconocido.png".to_string(), vec![1, 2, 3]),
+            ("mi_carpeta/notas.txt".to_string(), b"hola".to_vec()),
+            ("mi_carpeta/.DS_Store".to_string(), b"trash".to_vec()),
+        ];
+
+        let report =
+            apply_texture_batch_upload_with_paths(&records, &files, &upload_dir, &manifest_path)
+                .await
+                .unwrap();
+
+        assert_eq!(report.files_processed, 1);
+        assert_eq!(report.targets_matched, 2); // Aplica a record y duplicate_record (mismo hash)
+        assert_eq!(report.files_skipped, 3);
+
+        let manifest_content = tokio::fs::read_to_string(&manifest_path).await.unwrap();
+        let entries: Vec<TextureManifestEntry> = serde_json::from_str(&manifest_content).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.file_id == 2));
+        assert!(entries.iter().any(|e| e.file_id == 3));
+    }
+
+    #[tokio::test]
+    async fn optimize_cleans_dirty_png_transparency() {
+        let temp = tempfile::tempdir().unwrap();
+        let upload_dir = temp.path().join("uploads");
+        tokio::fs::create_dir_all(&upload_dir).await.unwrap();
+
+        let png_path = upload_dir.join("test.png");
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 2, 2);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            // 4 pixels: 2 dirty transparent, 2 opaque
+            let data = vec![
+                255, 128, 64, 0, 10, 20, 30, 255, 100, 200, 50, 0, 0, 0, 0, 255,
+            ];
+            writer.write_image_data(&data).unwrap();
+        }
+        tokio::fs::write(&png_path, &png_bytes).await.unwrap();
+
+        let (scanned, cleaned) = clean_all_pngs_in_dir(&upload_dir).unwrap();
+        assert_eq!(scanned, 1);
+        assert_eq!(cleaned, 1);
+    }
 }
 
 fn list_uploaded_texture_files() -> Vec<String> {
@@ -2365,12 +2645,38 @@ fn list_uploaded_texture_files() -> Vec<String> {
     files
 }
 
-fn upload_message(status: Option<&str>, count: Option<usize>) -> String {
+fn upload_message(
+    status: Option<&str>,
+    count: Option<usize>,
+    files: Option<usize>,
+    skipped: Option<usize>,
+) -> String {
     match status {
         Some("ok") => format!(
             "PNG aplicado a {} textura(s) duplicada(s) y manifest actualizado",
             count.unwrap_or(0)
         ),
+        Some("folder_ok") => {
+            let n_files = files.unwrap_or(0);
+            let n_targets = count.unwrap_or(0);
+            let n_skipped = skipped.unwrap_or(0);
+            if n_skipped > 0 {
+                format!(
+                    "Carpeta procesada: {n_files} archivo(s) PNG aplicados exitosamente a {n_targets} textura(s) en el manifest ({n_skipped} omitido(s) por nombre o dimensiones no coincidentes)."
+                )
+            } else {
+                format!(
+                    "Carpeta procesada con exito: {n_files} archivo(s) PNG aplicados a {n_targets} textura(s) en el manifest."
+                )
+            }
+        }
+        Some("optimized") => {
+            let n_files = files.unwrap_or(0);
+            let n_cleaned = count.unwrap_or(0);
+            format!(
+                "Optimizacion completada: {n_cleaned} de {n_files} archivo(s) PNG tenian transparencia sucia y fueron reducidos/limpiados con exito para maxima compresion LZ77."
+            )
+        }
         _ => String::new(),
     }
 }

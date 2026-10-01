@@ -453,7 +453,6 @@ fn apply_rows_to_segment(
 ) -> Result<(String, Vec<ReplacementEvent>)> {
     let text_chars: Vec<char> = segment.text.chars().collect();
     let mut replacements = Vec::new();
-    let mut events = Vec::new();
 
     for row in rows {
         let rel_bytes = row
@@ -487,32 +486,80 @@ fn apply_rows_to_segment(
             end_char
         };
         let replacement = game_string(&row.translated_text, glyph_map);
-        replacements.push((start_char, replace_end, replacement, row.csv_line));
-        events.push(ReplacementEvent {
-            csv_line: row.csv_line,
-            offset: row.offset,
-            old: row.original_text.clone(),
-            new: row.translated_text.clone(),
+        replacements.push((
             start_char,
+            replace_end,
             end_char,
-            consumed_chars: replace_end - end_char,
-        });
+            replacement,
+            row.csv_line,
+            row.offset,
+            row.original_text.clone(),
+            row.translated_text.clone(),
+        ));
     }
 
-    replacements.sort_by_key(|item| item.0);
-    for pair in replacements.windows(2) {
+    // Sort by start_char ascending, then by length (end_char) descending,
+    // so broader containing intervals come before any subsumed sub-intervals.
+    replacements.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| b.1.cmp(&a.1))
+    });
+
+    let mut accepted = Vec::new();
+    for item in replacements {
+        let (start, replace_end, end, repl, line, offset, old, new) = item;
+        if let Some(prev) = accepted.iter().find(
+            |p: &&(usize, usize, usize, String, usize, usize, String, String)| {
+                p.0 <= start && end <= p.2
+            },
+        ) {
+            eprintln!(
+                "[script_rebuilder] Omitiendo reemplazo solapado en segmento 0x{:X}: fila {} (offset 0x{:X}) está contenida dentro de la fila {} (offset 0x{:X})",
+                segment.start, line, offset, prev.4, prev.5
+            );
+            continue;
+        }
+        accepted.push((start, replace_end, end, repl, line, offset, old, new));
+    }
+
+    // Ensure trailing punctuation consumption does not spill over into the next accepted row
+    for i in 0..accepted.len().saturating_sub(1) {
+        let next_start = accepted[i + 1].0;
+        if accepted[i].1 > next_start && accepted[i].2 <= next_start {
+            accepted[i].1 = next_start;
+        }
+    }
+
+    // Reject any remaining genuine, incompatible partial overlaps
+    for pair in accepted.windows(2) {
         if pair[0].1 > pair[1].0 {
             bail!(
                 "overlapping replacements in segment 0x{:X}: rows {} and {}",
                 segment.start,
-                pair[0].3,
-                pair[1].3
+                pair[0].4,
+                pair[1].4
             );
         }
     }
 
+    let mut events = Vec::new();
+    let mut final_replacements = Vec::new();
+    for (start, replace_end, end, repl, line, offset, old, new) in accepted {
+        events.push(ReplacementEvent {
+            csv_line: line,
+            offset,
+            old,
+            new,
+            start_char: start,
+            end_char: end,
+            consumed_chars: replace_end - end,
+        });
+        final_replacements.push((start, replace_end, repl, line));
+    }
+
     let mut new_chars = text_chars;
-    for (start, end, replacement, _line) in replacements.into_iter().rev() {
+    for (start, end, replacement, _line) in final_replacements.into_iter().rev() {
         new_chars.splice(start..end, replacement.chars());
     }
 
@@ -758,6 +805,36 @@ mod tests {
 
         let err = rebuild_local_slack(&data, &rows, false, None).unwrap_err();
         assert!(err.to_string().contains("overlapping replacements"));
+    }
+
+    #[test]
+    fn auto_resolves_subsumed_overlapping_replacements() {
+        let data = dec_with_text("abcdef", 8);
+        let rows = [
+            TranslationRow {
+                source: "SCRIPT".to_owned(),
+                file_id: 1,
+                offset: 0,
+                original_text: "abcdef".to_owned(),
+                translated_text: "ABCDEF".to_owned(),
+                csv_line: 2,
+            },
+            TranslationRow {
+                source: "SCRIPT".to_owned(),
+                file_id: 1,
+                offset: 4,
+                original_text: "cde".to_owned(),
+                translated_text: "CDE".to_owned(),
+                csv_line: 3,
+            },
+        ];
+
+        let (rebuilt_data, report) = rebuild_local_slack(&data, &rows, false, None)
+            .expect("should auto-resolve subsumed row");
+        let decoded = decode_utf16le(&rebuilt_data[..report.segments[0].text_end]).unwrap();
+        assert!(decoded.starts_with("ABCDEF"));
+        assert_eq!(report.segments[0].rows.len(), 1);
+        assert_eq!(report.segments[0].rows[0].csv_line, 2);
     }
 
     #[test]

@@ -45,7 +45,8 @@ pub use text_layout::{
     wrap_script_translation_for, SCRIPT_LINE_WIDTH, VERTICAL_COLUMN_CHARACTERS,
 };
 pub use texture_inventory::{
-    inject_patched_texture_streams, patch_textures_from_manifest,
+    clean_all_pngs_in_dir, clean_png_transparency, inject_patched_texture_streams,
+    normalize_transparent_pixels, patch_textures_from_manifest,
     patch_textures_from_manifest_with_glyph_map, write_texture_inventory,
     write_texture_inventory_with_progress, GlyphMetricChange, TextureInjectReport,
     TexturePatchReport, TextureRecord,

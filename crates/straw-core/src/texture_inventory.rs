@@ -966,6 +966,11 @@ fn encode_indexed4_preserve(pic: &Tim2Picture, rgba: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn closest_index(color: &[u8], palette: &[[u8; 4]]) -> usize {
+    if color[3] == 0 {
+        if let Some(idx) = palette.iter().position(|c| c[3] == 0) {
+            return idx;
+        }
+    }
     let mut best = 0;
     let mut best_distance = i64::MAX;
     for (idx, candidate) in palette.iter().enumerate() {
@@ -985,7 +990,56 @@ fn closest_index(color: &[u8], palette: &[[u8; 4]]) -> usize {
     best
 }
 
-fn read_png_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+pub fn normalize_transparent_pixels(rgba: &mut [u8]) -> usize {
+    let mut modified = 0;
+    for chunk in rgba.chunks_exact_mut(4) {
+        if chunk[3] == 0 && (chunk[0] != 0 || chunk[1] != 0 || chunk[2] != 0) {
+            chunk[0] = 0;
+            chunk[1] = 0;
+            chunk[2] = 0;
+            modified += 1;
+        }
+    }
+    modified
+}
+
+pub fn clean_png_transparency(path: &Path) -> Result<bool> {
+    let (width, height, mut rgba) = read_png_raw_rgba(path)?;
+    let modified = normalize_transparent_pixels(&mut rgba);
+    if modified > 0 {
+        write_png_rgba(path, width, height, &rgba)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn clean_all_pngs_in_dir(dir: &Path) -> Result<(usize, usize)> {
+    let mut scanned = 0;
+    let mut cleaned = 0;
+    if !dir.exists() {
+        return Ok((0, 0));
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("png"))
+                .unwrap_or(false)
+        {
+            scanned += 1;
+            if clean_png_transparency(&path)? {
+                cleaned += 1;
+            }
+        }
+    }
+    Ok((scanned, cleaned))
+}
+
+fn read_png_raw_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
     let file =
         fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let decoder = png::Decoder::new(file);
@@ -1010,6 +1064,12 @@ fn read_png_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
         other => bail!("unsupported PNG color type: {other:?}"),
     };
     Ok((info.width, info.height, rgba))
+}
+
+fn read_png_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
+    let (width, height, mut rgba) = read_png_raw_rgba(path)?;
+    normalize_transparent_pixels(&mut rgba);
+    Ok((width, height, rgba))
 }
 
 fn lz77_stream_size(stream: &[u8], offset: usize) -> Result<usize> {
@@ -1731,5 +1791,32 @@ mod tests {
     fn rejects_invalid_lz77_offset_without_overflow() {
         let err = lz77_stream_size(b"LZ77", usize::MAX - 1).unwrap_err();
         assert!(err.to_string().contains("no valid LZ77 stream"));
+    }
+
+    #[test]
+    fn normalizes_dirty_transparent_pixels() {
+        let mut rgba = vec![
+            255, 128, 64, 0, // dirty transparent
+            10, 20, 30, 255, // opaque
+            0, 0, 0, 0, // clean transparent
+            100, 200, 50, 0, // dirty transparent
+        ];
+        let modified = normalize_transparent_pixels(&mut rgba);
+        assert_eq!(modified, 2);
+        assert_eq!(rgba[0..4], [0, 0, 0, 0]);
+        assert_eq!(rgba[4..8], [10, 20, 30, 255]);
+        assert_eq!(rgba[8..12], [0, 0, 0, 0]);
+        assert_eq!(rgba[12..16], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn closest_index_picks_transparent_palette_entry() {
+        let palette = [
+            [255, 255, 255, 255],
+            [128, 0, 0, 255],
+            [0, 0, 0, 0], // transparent at index 2
+        ];
+        let color = [255, 128, 64, 0]; // transparent with dirty RGB
+        assert_eq!(closest_index(&color, &palette), 2);
     }
 }

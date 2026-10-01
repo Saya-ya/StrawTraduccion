@@ -159,20 +159,19 @@ fn find_best_match(
     window: &[u8; WINDOW_SIZE],
     window_pos: usize,
 ) -> (usize, usize) {
-    let search_start = src_pos.saturating_sub(WINDOW_SIZE);
-    let search_end = src_pos.saturating_sub(MIN_MATCH);
-    let search_range = (search_end.saturating_sub(search_start)).min(WINDOW_SIZE);
-
     let mut best_len = 0;
     let mut best_offset = 0;
 
-    for dist in MIN_MATCH..=(search_range + 1).min(WINDOW_SIZE) {
+    for dist in 1..=WINDOW_SIZE {
         let w_idx = window_pos.wrapping_sub(dist) & 0xFFF;
-        let search_max = max_len.min(dist);
         let mut curr_len = 0;
-        while curr_len < search_max {
-            let wpos = (w_idx + curr_len) & 0xFFF;
-            if window[wpos] != uncompressed[src_pos + curr_len] {
+        while curr_len < max_len {
+            let expected_byte = if curr_len < dist {
+                window[(w_idx + curr_len) & 0xFFF]
+            } else {
+                uncompressed[src_pos + curr_len - dist]
+            };
+            if expected_byte != uncompressed[src_pos + curr_len] {
                 break;
             }
             curr_len += 1;
