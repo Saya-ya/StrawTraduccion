@@ -12,7 +12,7 @@ use crate::{
     dialogue::classify_script_rebuild_mode,
     glyph_map::GlyphMap,
     lz77::{compress_lz77, decompress_lz77},
-    script_rebuilder::{rebuild_local_slack, rebuild_shift_suffix, TranslationRow},
+    script_rebuilder::{rebuild_local_slack, rebuild_shift_suffix, SegmentReport, TranslationRow},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +90,7 @@ fn patch_one_script(
         rebuild_local_slack(&dec_data, rows, true, glyph_map)?
     };
     if !rebuild_report.needs_shift.is_empty() {
-        bail!("{} segment(s) need shift", rebuild_report.needs_shift.len());
+        bail!(format_needs_shift(&rebuild_report.needs_shift));
     }
 
     let compressed = compress_lz77(&rebuilt, false);
@@ -172,9 +172,65 @@ fn parse_offset(value: &str) -> Result<usize> {
     }
 }
 
+fn format_needs_shift(segments: &[SegmentReport]) -> String {
+    let mut details = format!("{} segment(s) need shift", segments.len());
+    for segment in segments {
+        details.push_str(&format!(
+            "\n  Segmento 0x{:X}..0x{:X}: requerido {} bytes (texto {} + terminador), capacidad local {} bytes; texto original {} bytes; prefijo de longitud: {}",
+            segment.start,
+            segment.slack_end,
+            segment.required_bytes,
+            segment.new_text_bytes,
+            segment.capacity_bytes,
+            segment.old_text_bytes,
+            segment.has_length_prefix
+        ));
+        for row in &segment.rows {
+            details.push_str(&format!(
+                "\n    CSV línea {}, offset 0x{:X}: original={:?}; traducción={:?}",
+                row.csv_line, row.offset, row.old, row.new
+            ));
+        }
+    }
+    details
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script_rebuilder::{ReplacementEvent, SegmentStatus};
+
+    #[test]
+    fn formats_shift_failures_with_locations_and_text() {
+        let segments = [SegmentReport {
+            start: 0x20,
+            text_end: 0x30,
+            slack_end: 0x34,
+            old_text_bytes: 16,
+            new_text_bytes: 20,
+            capacity_bytes: 20,
+            required_bytes: 22,
+            has_length_prefix: false,
+            length_prefix_offset: None,
+            rows: vec![ReplacementEvent {
+                csv_line: 7,
+                offset: 0x24,
+                old: "前の文".to_owned(),
+                new: "Texto nuevo".to_owned(),
+                start_char: 2,
+                end_char: 5,
+                consumed_chars: 0,
+            }],
+            status: SegmentStatus::NeedsShift,
+        }];
+
+        let message = format_needs_shift(&segments);
+        assert!(message.contains("Segmento 0x20..0x34"));
+        assert!(message.contains("requerido 22 bytes"));
+        assert!(message.contains("CSV línea 7, offset 0x24"));
+        assert!(message.contains("original=\"前の文\""));
+        assert!(message.contains("traducción=\"Texto nuevo\""));
+    }
 
     #[test]
     fn parses_translation_rows_from_csv() {

@@ -1705,7 +1705,7 @@ fn run_full_build_steps(
             Some(glyph_map),
         )?;
         if !script_report.errors.is_empty() {
-            anyhow::bail!(script_report.errors.join("; "));
+            anyhow::bail!(script_report.errors.join("\n"));
         }
         append_build_log(&format!(
             "Scripts parcheados: {}/{} scripts, {}/{} filas aplicadas",
