@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Configuracion - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+
+        <section class="rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Preferencias</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Configuracion</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">Estos valores se guardan en SQLite y afectan busqueda, paginacion y defaults de build.</p>
+
+            {% if message.len() > 0 %}
+            <div class="mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>
+            {% endif %}
+
+            <form method="post" action="/settings" class="mt-8 space-y-6">
+                <div class="grid gap-5 md:grid-cols-2">
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Idioma UI</span>
+                        <select name="ui_lang" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="es" {% if ui_lang == "es" %}selected{% endif %}>ES - Español</option>
+                            <option value="en" {% if ui_lang == "en" %}selected{% endif %}>EN - English</option>
+                        </select>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Idioma objetivo</span>
+                        <select name="target_lang" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="es" {% if target_lang == "es" %}selected{% endif %}>Español</option>
+                            <option value="en" {% if target_lang == "en" %}selected{% endif %}>English</option>
+                            <option value="custom" {% if target_lang == "custom" %}selected{% endif %}>Personalizado</option>
+                        </select>
+                        <span class="mt-2 block text-xs text-slate-500">Afecta el mapa usado para textos y para ajustar automaticamente las metricas de las fuentes editadas.</span>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Build por defecto</span>
+                        <select name="default_build_type" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            <option value="full" {% if default_build_type == "full" %}selected{% endif %}>Completo: textos + texturas</option>
+                            <option value="texts" {% if default_build_type == "texts" %}selected{% endif %}>Solo textos</option>
+                            <option value="images" {% if default_build_type == "images" %}selected{% endif %}>Solo imagenes</option>
+                        </select>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Procesos por defecto</span>
+                        <select name="default_workers" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                            {% for n in 1..=max_workers %}
+                            <option value="{{ n }}" {% if n == default_workers_setting %}selected{% endif %}>{{ n }} proceso{% if n != 1 %}s{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                        <span class="mt-2 block text-xs text-slate-500">Mas procesos acelera build, pero puede hacer la PC menos responsiva.</span>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Filas por pagina de script</span>
+                        <input name="script_page_limit" type="number" min="10" max="200" value="{{ script_page_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                        <span class="mt-2 block text-xs text-slate-500">Sube este valor si prefieres menos paginas; bajalo si el navegador se siente lento.</span>
+                    </label>
+                    <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                        <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Resultados maximos de busqueda</span>
+                        <input name="search_result_limit" type="number" min="10" max="500" value="{{ search_result_limit }}" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-pink-400">
+                        <span class="mt-2 block text-xs text-slate-500">Limita resultados para mantener busquedas rapidas.</span>
+                    </label>
+                </div>
+                <label class="block rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                    <span class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">Mapa de glifos personalizado</span>
+                    <textarea name="custom_glyph_map" rows="8" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-white outline-none focus:border-pink-400">{{ custom_glyph_map }}</textarea>
+                    <span class="mt-2 block text-xs text-slate-500">JSON en formato carácter deseado → slot donante, por ejemplo <span class="font-mono text-pink-200">{"ã":"Г","ç":"Д"}</span>. Se usa cuando el idioma objetivo es Personalizado. Los alias que comparten donante comparten dibujo y métricas.</span>
+                </label>
+                <button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Guardar cambios</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

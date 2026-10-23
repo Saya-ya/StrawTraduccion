@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Buscar - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Busqueda</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Buscar textos</h1>
+            <form class="mt-6 grid gap-3 lg:grid-cols-[1fr_160px_180px_auto]" method="get" action="/search">
+                <input name="q" value="{{ query }}" placeholder="original, traduccion, offset..." autofocus class="min-w-0 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <input name="script_id" value="{{ script_id }}" placeholder="script ID" class="min-w-0 rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                <select name="status" class="rounded-2xl border border-slate-700 bg-slate-950 px-5 py-3 text-white outline-none transition focus:border-pink-400">
+                    <option value="all" {% if status_filter == "all" %}selected{% endif %}>Todos</option>
+                    <option value="untranslated" {% if status_filter == "untranslated" %}selected{% endif %}>No traducidos</option>
+                    <option value="translated" {% if status_filter == "translated" %}selected{% endif %}>Traducidos OK</option>
+                    <option value="warning" {% if status_filter == "warning" %}selected{% endif %}>Warning</option>
+                    <option value="needs_shift" {% if status_filter == "needs_shift" %}selected{% endif %}>Needs shift</option>
+                </select>
+                <button class="rounded-2xl bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Buscar</button>
+            </form>
+            <p class="mt-3 text-sm text-slate-500">Deja Script ID vacio para buscar globalmente, o escribe un ID para buscar solo dentro de ese script.</p>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/search?status=untranslated" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">No traducidos</a>
+                <a href="/search?status=warning" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Warnings</a>
+                <a href="/search?status=needs_shift" class="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-red-100 hover:bg-red-500/20">Needs shift</a>
+            </div>
+            {% if error.len() > 0 %}
+            <div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
+            {% endif %}
+        </section>
+
+        <section class="space-y-4">
+            {% if query.len() == 0 && script_id.len() == 0 && status_filter == "all" %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                <p class="text-lg font-bold text-slate-200">Busca por texto original o traduccion.</p>
+                <p class="mt-2">Tambien puedes usar los accesos rapidos de estado para encontrar pendientes.</p>
+            </div>
+            {% else if results.len() == 0 %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                No hay resultados para los filtros seleccionados.
+            </div>
+            {% else %}
+            {% for result in results %}
+            <a href="/scripts/{{ result.script_id }}?page={{ result.page }}&limit=50#entry-{{ result.id }}" class="block rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/30 transition hover:border-pink-400/40">
+                <div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span class="font-mono text-pink-200">Script {{ result.script_id }}</span>
+                    <span class="font-mono">{{ result.byte_offset_hex }}</span>
+                    <span>[{{ result.section_id }}:{{ result.section_order }}]</span>
+                    {% if result.needs_shift %}<span class="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">needs_shift</span>{% endif %}
+                    {% if result.is_translated %}<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">traducido</span>{% endif %}
+                </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                    <p class="whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{{ result.original_text }}</p>
+                    {% if result.translated_text.len() == 0 %}
+                    <p class="rounded-xl border border-dashed border-slate-700 p-4 text-sm italic text-slate-600">Sin traducir</p>
+                    {% else %}
+                    <p class="whitespace-pre-wrap rounded-xl bg-slate-800/80 p-4 text-sm text-white">{{ result.translated_text }}</p>
+                    {% endif %}
+                </div>
+            </a>
+            {% endfor %}
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

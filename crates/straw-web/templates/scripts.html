@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Scripts - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Base de datos</p>
+                    <h1 class="mt-2 text-4xl font-black tracking-tight">Scripts</h1>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-center max-sm:w-full">
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ scripts_count }}</div>
+                        <div class="text-xs text-slate-500">scripts</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ translated_texts }}/{{ total_texts }}</div>
+                        <div class="text-xs text-slate-500">textos</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ percent_label }}%</div>
+                        <div class="text-xs text-slate-500">avance</div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-5 overflow-hidden rounded-full bg-slate-950">
+                <div class="h-3 rounded-full bg-pink-500" style="width: {{ percent_label }}%"></div>
+            </div>
+            <div class="mt-5 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/search?status=untranslated" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">No traducidos</a>
+                <a href="/search?status=needs_shift" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Needs shift</a>
+                <a href="/build" class="rounded-full border border-pink-400/40 bg-pink-500/10 px-4 py-2 text-pink-100 hover:bg-pink-500/20">Preparar build</a>
+            </div>
+            <div class="mt-5 grid gap-3 text-xs sm:grid-cols-4">
+                <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3"><span class="font-black text-emerald-200">{{ shift_suffix_count }}</span><span class="ml-2 text-emerald-100/70">shift-suffix experimental</span></div>
+                <div class="rounded-2xl border border-slate-700 bg-slate-950/50 p-3"><span class="font-black text-slate-200">{{ local_slack_count }}</span><span class="ml-2 text-slate-400">local-slack</span></div>
+                <div class="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3"><span class="font-black text-amber-200">{{ pointer_table_count }}</span><span class="ml-2 text-amber-100/70">requieren tabla</span></div>
+                <div class="rounded-2xl border border-red-500/20 bg-red-500/10 p-3"><span class="font-black text-red-200">{{ unknown_rebuild_count }}</span><span class="ml-2 text-red-100/70">sin clasificar</span></div>
+            </div>
+        </section>
+
+        <section class="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70">
+            {% if scripts_count == 0 %}
+            <div class="p-10 text-center text-slate-400">
+                <p class="text-lg font-bold text-slate-200">No hay scripts importados todavia.</p>
+                <p class="mt-2">Primero extrae los scripts e importa textos a SQLite.</p>
+                <a href="/import" class="mt-5 inline-flex rounded-full bg-pink-500 px-5 py-3 text-sm font-bold text-white hover:bg-pink-400">Ir a importar</a>
+            </div>
+            {% else %}
+            <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px] text-sm">
+                <thead class="bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400">
+                    <tr>
+                        <th class="px-5 py-3">ID</th>
+                        <th class="px-5 py-3">Tipo</th>
+                        <th class="px-5 py-3">Var</th>
+                        <th class="px-5 py-3">Rebuild</th>
+                        <th class="px-5 py-3">Secciones</th>
+                        <th class="px-5 py-3">Textos</th>
+                        <th class="px-5 py-3">Estado</th>
+                        <th class="px-5 py-3">Accion</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800">
+                    {% for script in scripts %}
+                    <tr class="cursor-pointer transition hover:bg-slate-800/50" onclick="location.href='/scripts/{{ script.id }}'" title="Abrir script {{ script.id }}">
+                        <td class="px-5 py-3 font-mono text-pink-200">{{ script.id }}</td>
+                        <td class="px-5 py-3 text-slate-300">{{ script.script_type }}</td>
+                        <td class="px-5 py-3 font-mono text-slate-400">{{ script.variant }}</td>
+                        <td class="px-5 py-3">
+                            {% if script.rebuild_mode == "shift_suffix_safe" %}
+                            <span class="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300" title="Experimental: puede ampliar registros inline preservando sufijos/comandos">shift-suffix</span>
+                            {% else if script.rebuild_mode == "local_slack_only" %}
+                            <span class="rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-slate-300">local</span>
+                            {% else if script.rebuild_mode == "pointer_table_needed" %}
+                            <span class="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-300">tabla</span>
+                            {% else %}
+                            <span class="rounded-full bg-red-500/15 px-3 py-1 text-xs font-bold text-red-300">desconocido</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-5 py-3 text-slate-400">{{ script.total_sections }}</td>
+                        <td class="px-5 py-3 text-slate-300">{{ script.translated_texts }}/{{ script.total_texts }}</td>
+                        <td class="px-5 py-3">
+                            {% if script.is_supported %}
+                            <span class="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300">soportado</span>
+                            {% else %}
+                            <span class="rounded-full bg-slate-700 px-3 py-1 text-xs font-bold text-slate-300">pendiente</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-5 py-3 text-xs font-bold"><a href="/scripts/{{ script.id }}" class="text-pink-200 hover:text-pink-100">Abrir →</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Subir texturas - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+        <nav aria-label="Navegacion contextual" class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+            <a href="/textures" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Texturas</a>
+            <div class="flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wider">
+                <a href="/textures/catalog" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Catalogo</a>
+                <a href="/textures/duplicates" class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:text-pink-200">Duplicados</a>
+            </div>
+        </nav>
+        <section class="mb-6 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Upload</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Subir texturas editadas</h1>
+            <p class="mt-3 text-slate-400">Sube PNGs editados para una textura individual o una carpeta completa de texturas. El sistema copia nombres correctos y actualiza <span class="font-mono text-pink-200">texturas/manifest.json</span>.</p>
+            {% if missing_hash_count > 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">Hay {{ missing_hash_count }} textura(s) sin hash. Regenera inventario para detectar duplicados correctamente.</div>{% endif %}
+            {% if groups.len() == 0 && selected_records.len() == 0 && missing_hash_count == 0 %}<div class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">No hay texturas con hash disponibles. Puedes subir PNGs con nombre exportado para autodetectar las texturas.</div>{% endif %}
+            {% if selected_hash.len() > 0 && selected_records.len() == 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">El hash seleccionado no existe en el inventario actual.</div>{% endif %}
+            {% if message.len() > 0 %}<div class="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100">{{ message }}</div>{% endif %}
+            {% if error.len() > 0 %}<div class="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-100">{{ error }}</div>{% endif %}
+        </section>
+
+        <!-- Selector de pestañas: Individual vs Carpeta completa -->
+        <div class="mb-6 flex flex-wrap gap-3">
+            <button id="tab_single_btn" type="button" onclick="switchUploadTab('single')" class="rounded-2xl px-5 py-2.5 text-sm font-bold transition bg-pink-500 text-white shadow-lg shadow-pink-500/20">
+                Archivo individual
+            </button>
+            <button id="tab_folder_btn" type="button" onclick="switchUploadTab('folder')" class="rounded-2xl px-5 py-2.5 text-sm font-bold transition border border-slate-700 bg-slate-900/60 text-slate-300 hover:text-pink-200">
+                Cargar carpeta completa
+            </button>
+        </div>
+
+        <section class="grid gap-6 lg:grid-cols-2">
+            <!-- Panel 1: Subida individual -->
+            <div id="single_upload_pane">
+                <form method="post" action="/textures/upload" enctype="multipart/form-data" class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                    {% if selected_records.len() > 0 %}
+                    <input type="hidden" name="texture_hash" value="{{ selected_hash }}">
+                    <div class="rounded-2xl border border-pink-400/30 bg-pink-500/10 p-4">
+                        <div class="text-sm font-bold text-pink-100">Objetivo seleccionado</div>
+                        <div class="mt-2 break-all font-mono text-xs text-pink-200">{{ selected_hash }}</div>
+                        <div class="mt-2 text-sm text-slate-300">Se aplicara a {{ selected_records.len() }} textura(s).</div>
+                        <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                            {% for record in selected_records %}
+                            <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">{% if record.is_header_resource() %}Fuentes de cabecera · {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <label class="text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_filter">Buscar textura</label>
+                    <input id="texture_filter" type="search" placeholder="ID_00002, 320x320, hash, nombre PNG..." class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100 placeholder:text-slate-600">
+                    <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="texture_hash">Textura o grupo</label>
+                    <select id="texture_hash" name="texture_hash" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100">
+                        <option value="" data-search="autodetect detectar nombre archivo sin grupo desconocido">Detectar por nombre del PNG subido</option>
+                        {% for group in groups %}
+                        <option value="{{ group.hash }}" data-search="{{ group.hash }} {% for record in group.records %}{% if record.is_header_resource() %}fuentes de cabecera {% endif %}ID {{ record.id }} T{{ record.tim2_index }} P{{ record.picture_index }} {{ record.width }}x{{ record.height }} {{ record.png }} {% endfor %}">{{ group.records.len() }} textura(s) · {{ group.records[0].width }}x{{ group.records[0].height }} · {% if group.records[0].is_header_resource() %}Cabecera{% else %}ID {{ group.records[0].id }}{% endif %} T{{ group.records[0].tim2_index }} P{{ group.records[0].picture_index }} · {{ group.hash }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="mt-2 text-xs text-slate-500">Si eliges autodetect, conserva el nombre exportado, por ejemplo <span class="font-mono text-pink-200">ID_00002_T000_P00_320x320.png</span>.</p>
+                    {% endif %}
+                    <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="png">PNG editado</label>
+                    <input id="png" name="png" type="file" accept="image/png" required class="mt-2 w-full rounded-2xl border border-dashed border-pink-400/40 bg-slate-950 p-6 text-sm text-slate-300">
+                    {% if groups.len() > 0 || selected_records.len() > 0 %}<button class="mt-5 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400 transition">Subir y actualizar manifest</button>{% else %}<button class="mt-5 w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>{% if missing_hash_count > 0 %}Regenera inventario primero{% else %}Sube usando nombre exportado{% endif %}</button>{% endif %}
+                </form>
+            </div>
+
+            <!-- Panel 2: Subida por carpeta / lote -->
+            <div id="folder_upload_pane" class="hidden">
+                <form id="folder_form" method="post" action="/textures/upload/folder" enctype="multipart/form-data" class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                    <div class="rounded-2xl border border-pink-400/30 bg-pink-500/10 p-4">
+                        <div class="text-sm font-bold text-pink-100">Cargar carpeta completa de PNGs</div>
+                        <p class="mt-2 text-xs text-slate-300">
+                            Sube una carpeta con todos tus PNGs editados de una sola vez. Cada archivo debe conservar su nombre exportado (ej: <span class="font-mono text-pink-200">ID_00002_T000_P00_320x320.png</span>). El sistema identificará automáticamente cada textura, verificará sus resoluciones y actualizará <span class="font-mono text-pink-200">texturas/manifest.json</span>.
+                        </p>
+                    </div>
+
+                    <label class="mt-5 block text-sm font-bold uppercase tracking-wider text-slate-400" for="folder_input">
+                        Seleccionar carpeta
+                    </label>
+                    <input id="folder_input" name="folder_files" type="file" webkitdirectory directory multiple accept="image/png" class="mt-2 w-full rounded-2xl border border-dashed border-pink-400/40 bg-slate-950 p-6 text-sm text-slate-300 cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-pink-500 file:text-white hover:file:bg-pink-400">
+
+                    <div id="folder_summary" class="hidden mt-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                        <span id="folder_count" class="font-bold">0</span> archivo(s) PNG listos para procesar.
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-between text-xs text-slate-500">
+                        <span>¿Prefieres elegir varios archivos sueltos?</span>
+                        <button type="button" onclick="document.getElementById('batch_files_input').click()" class="text-pink-300 underline hover:text-pink-200">
+                            Seleccionar múltiples PNGs
+                        </button>
+                    </div>
+                    <input id="batch_files_input" name="folder_files" type="file" multiple accept="image/png" class="hidden">
+
+                    <button id="folder_submit_btn" type="submit" class="mt-5 w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400 transition">
+                        Cargar carpeta y actualizar manifest
+                    </button>
+                </form>
+            </div>
+
+            <!-- Panel imágenes ya cargadas -->
+            <section class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-xl font-black">Imagenes ya cargadas</h2>
+                        <p class="mt-1 text-sm text-slate-400">Manifest: {% if manifest_exists %}<span class="text-emerald-300">existe</span>{% else %}<span class="text-slate-500">pendiente</span>{% endif %}</p>
+                    </div>
+                    {% if uploaded_files.len() > 0 %}
+                    <form method="post" action="/textures/optimize">
+                        <button type="submit" title="Limpia píxeles transparentes sucios para mejorar drásticamente la compresión LZ77" class="rounded-full border border-purple-400/40 bg-purple-500/20 px-4 py-2 text-xs font-bold text-purple-200 hover:bg-purple-500/30 transition shadow">
+                            ⚡ Reducir / Optimizar PNGs
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+                <div class="mt-4 max-h-96 space-y-2 overflow-auto text-sm">
+                    {% for file in uploaded_files %}
+                    <div class="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300">{{ file }}</div>
+                    {% endfor %}
+                    {% if uploaded_files.len() == 0 %}<div class="text-slate-500">No hay PNGs subidos todavia.</div>{% endif %}
+                </div>
+            </section>
+        </section>
+    </main>
+    <script>
+        function switchUploadTab(tab) {
+            const singlePane = document.getElementById('single_upload_pane');
+            const folderPane = document.getElementById('folder_upload_pane');
+            const singleBtn = document.getElementById('tab_single_btn');
+            const folderBtn = document.getElementById('tab_folder_btn');
+
+            if (tab === 'folder') {
+                singlePane.classList.add('hidden');
+                folderPane.classList.remove('hidden');
+                folderBtn.className = "rounded-2xl px-5 py-2.5 text-sm font-bold transition bg-pink-500 text-white shadow-lg shadow-pink-500/20";
+                singleBtn.className = "rounded-2xl px-5 py-2.5 text-sm font-bold transition border border-slate-700 bg-slate-900/60 text-slate-300 hover:text-pink-200";
+            } else {
+                folderPane.classList.add('hidden');
+                singlePane.classList.remove('hidden');
+                singleBtn.className = "rounded-2xl px-5 py-2.5 text-sm font-bold transition bg-pink-500 text-white shadow-lg shadow-pink-500/20";
+                folderBtn.className = "rounded-2xl px-5 py-2.5 text-sm font-bold transition border border-slate-700 bg-slate-900/60 text-slate-300 hover:text-pink-200";
+            }
+        }
+
+        const textureFilter = document.getElementById('texture_filter');
+        const textureSelect = document.getElementById('texture_hash');
+        if (textureFilter && textureSelect) {
+            const options = Array.from(textureSelect.options);
+            textureFilter.addEventListener('input', () => {
+                const query = textureFilter.value.trim().toLowerCase();
+                let firstVisible = null;
+                for (const option of options) {
+                    const haystack = (option.dataset.search || option.textContent || '').toLowerCase();
+                    const visible = query.length === 0 || haystack.includes(query);
+                    option.hidden = !visible;
+                    if (visible && firstVisible === null) firstVisible = option;
+                }
+                if (textureSelect.selectedOptions[0]?.hidden && firstVisible) {
+                    textureSelect.value = firstVisible.value;
+                }
+            });
+        }
+
+        const folderInput = document.getElementById('folder_input');
+        const batchInput = document.getElementById('batch_files_input');
+        const folderSummary = document.getElementById('folder_summary');
+        const folderCount = document.getElementById('folder_count');
+        const folderForm = document.getElementById('folder_form');
+
+        function updateFolderSummary(files) {
+            if (!files || files.length === 0) {
+                folderSummary.classList.add('hidden');
+                return;
+            }
+            const pngs = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.png') && !f.name.startsWith('.'));
+            folderCount.textContent = pngs.length;
+            folderSummary.classList.remove('hidden');
+        }
+
+        if (folderInput) {
+            folderInput.addEventListener('change', (e) => updateFolderSummary(e.target.files));
+        }
+        if (batchInput) {
+            batchInput.addEventListener('change', (e) => updateFolderSummary(e.target.files));
+        }
+        if (folderForm) {
+            folderForm.addEventListener('submit', (e) => {
+                const fCount = folderInput?.files?.length || 0;
+                const bCount = batchInput?.files?.length || 0;
+                if (fCount === 0 && bCount === 0) {
+                    e.preventDefault();
+                    alert('Por favor selecciona una carpeta o archivos PNG antes de continuar.');
+                }
+            });
+        }
+
+        if (window.location.search.includes('status=folder_ok') || window.location.search.includes('tab=folder')) {
+            switchUploadTab('folder');
+        }
+    </script>
+</body>
+</html>

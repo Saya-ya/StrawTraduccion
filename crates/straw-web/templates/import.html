@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Importar - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+
+        <section class="rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Importacion</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Extraer scripts LZ77</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">
+                Esta etapa Rust lee <span class="font-mono text-pink-200">{{ data_bin_path }}</span>, parsea la FAT y escribe los scripts descomprimidos en <span class="font-mono text-pink-200">{{ scripts_out_dir }}</span>.
+            </p>
+            <p class="mt-3 max-w-3xl rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+                Al importar a SQLite tambien se clasifica cada `.dec`: <span class="font-mono text-emerald-200">shift_suffix_safe</span>, <span class="font-mono text-emerald-200">local_slack_only</span>, <span class="font-mono text-emerald-200">pointer_table_needed</span> o <span class="font-mono text-emerald-200">unknown_unsafe</span>. Vuelve a importar si quieres actualizar esa clasificacion experimental.
+            </p>
+
+            <div class="mt-6 grid gap-4 md:grid-cols-3">
+                <div class="rounded-2xl bg-slate-950/60 p-5">
+                    <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
+                    {% if data_bin_exists %}
+                    <div class="mt-2 font-bold text-emerald-300">Encontrado</div>
+                    {% else %}
+                    <div class="mt-2 font-bold text-red-300">Falta</div>
+                    {% endif %}
+                </div>
+                <div class="rounded-2xl bg-slate-950/60 p-5">
+                    <div class="text-xs uppercase tracking-wider text-slate-500">.dec actuales</div>
+                    <div class="mt-2 text-2xl font-black text-white">{{ existing_dec_count }}</div>
+                </div>
+                <div class="rounded-2xl bg-slate-950/60 p-5">
+                    <div class="text-xs uppercase tracking-wider text-slate-500">Esperado</div>
+                    <div class="mt-2 text-2xl font-black text-white">997</div>
+                </div>
+            </div>
+
+            {% if message.len() > 0 %}
+            <div class="mt-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>
+            {% endif %}
+            {% if error.len() > 0 %}
+            <div class="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>
+            {% endif %}
+            {% if import_running %}
+            <div class="mt-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm font-bold text-yellow-100">Hay una tarea de importacion corriendo. El log se actualiza en vivo.</div>
+            {% endif %}
+
+            <div class="mt-8 grid gap-4 lg:grid-cols-3">
+            <form method="post" action="/import" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+                <div class="mb-4 flex items-start gap-3">
+                    <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-pink-500 text-sm font-black text-white">1</span>
+                    <div><h2 class="font-black text-white">Extraer scripts</h2><p class="mt-1 text-sm text-slate-400">Crea los `.dec` desde `Data.bin`.</p></div>
+                </div>
+                {% if data_bin_exists && !import_running %}
+                <button class="w-full rounded-full bg-pink-500 px-6 py-3 font-bold text-white shadow-lg shadow-pink-950/40 hover:bg-pink-400">
+                    Extraer scripts LZ77
+                </button>
+                {% else %}
+                <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>
+                    {% if import_running %}Importacion corriendo{% else %}Data.bin requerido{% endif %}
+                </button>
+                {% endif %}
+            </form>
+
+            <form method="post" action="/import/db" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+                <div class="mb-4 flex items-start gap-3">
+                    <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-black text-slate-950">2</span>
+                    <div><h2 class="font-black text-white">Importar a SQLite</h2><p class="mt-1 text-sm text-slate-400">Llena la base de datos, preserva traducciones y recalcula el modo de rebuild experimental.</p></div>
+                </div>
+                {% if existing_dec_count > 0 && !import_running %}
+                <button class="w-full rounded-full bg-slate-100 px-6 py-3 font-bold text-slate-950 hover:bg-white">
+                    Importar textos a SQLite
+                </button>
+                {% else %}
+                <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>
+                    {% if import_running %}Importacion corriendo{% else %}Requiere scripts .dec{% endif %}
+                </button>
+                {% endif %}
+            </form>
+
+            <form method="post" action="/import/translations-db" enctype="multipart/form-data" class="import-action rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+                <div class="mb-4 flex items-start gap-3">
+                    <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-sm font-black text-white">3</span>
+                    <div><h2 class="font-black text-white">Cargar DB traducida</h2><p class="mt-1 text-sm text-slate-400">Fusiona traducciones desde otra SQLite sin reemplazar esta base. Maximo: 512 MB.</p></div>
+                </div>
+                <input name="database" type="file" accept=".db,.sqlite,.sqlite3" class="mb-4 block w-full text-sm text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:font-bold file:text-slate-950">
+                {% if !import_running %}
+                <button class="w-full rounded-full bg-emerald-500 px-6 py-3 font-bold text-white hover:bg-emerald-400">Fusionar traducciones</button>
+                {% else %}
+                <button class="w-full rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Importacion corriendo</button>
+                {% endif %}
+            </form>
+            </div>
+
+            <section class="mt-6 rounded-3xl border border-slate-800 bg-slate-950 p-5">
+                <div class="mb-3 flex items-center justify-between gap-3">
+                    <div><h2 class="font-black text-white">Log de importacion</h2><p class="mt-1 text-xs text-slate-500">Archivo: <span class="font-mono text-pink-200">work/import_temp/import.log</span></p></div>
+                    <a href="/import" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold text-slate-300 hover:text-pink-200">Actualizar</a>
+                </div>
+                <pre id="import-log" class="max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{% if import_log.len() > 0 %}{{ import_log }}{% else %}Todavia no hay logs de importacion.{% endif %}</pre>
+            </section>
+        </section>
+    </main>
+    <script>
+        const importLog = document.getElementById('import-log');
+        const importWasRunning = {% if import_running %}true{% else %}false{% endif %};
+        let importReloadScheduled = false;
+
+        function importTaskFinished(text) {
+            return text.includes('Extraccion completada:')
+                || text.includes('SQLite importado:')
+                || text.includes('Fusion completada:')
+                || text.includes('ERROR extrayendo scripts:')
+                || text.includes('ERROR importando a SQLite:')
+                || text.includes('ERROR fusionando DB traducida:')
+                || text.includes('ERROR de tarea');
+        }
+
+        async function refreshImportLog() {
+            if (!importLog) return;
+            try {
+                const response = await fetch('/import/log', { cache: 'no-store' });
+                const text = await response.text();
+                if (text.trim().length > 0 && importLog.textContent !== text) {
+                    importLog.textContent = text;
+                    importLog.scrollTop = importLog.scrollHeight;
+                }
+                if (importWasRunning && !importReloadScheduled && importTaskFinished(text)) {
+                    importReloadScheduled = true;
+                    setTimeout(() => window.location.href = '/import', 700);
+                }
+            } catch (_) {}
+        }
+        setInterval(refreshImportLog, 1500);
+        refreshImportLog();
+
+        document.querySelectorAll('form.import-action').forEach((form) => {
+            form.addEventListener('submit', () => {
+                form.querySelectorAll('button').forEach((button) => {
+                    button.disabled = true;
+                    button.textContent = 'Ejecutando...';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

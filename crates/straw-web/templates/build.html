@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Build - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+
+        <section class="mb-6 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">Build</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight">Pipeline de parcheo</h1>
+            <p class="mt-3 max-w-3xl text-slate-400">Usa la pestaña Completo para generar la ISO de una vez, o Manual para ejecutar pasos puntuales.</p>
+        </section>
+
+        {% if !data_bin_exists || !base_iso_exists || !original_elf_exists || dec_count == 0 %}
+        <section class="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+            <span class="font-black">Faltan prerequisitos:</span>
+            {% if !data_bin_exists %}<span class="ml-2 rounded-full bg-amber-500/20 px-2 py-1 font-mono">originales/Data.bin</span>{% endif %}
+            {% if !base_iso_exists %}<span class="ml-2 rounded-full bg-amber-500/20 px-2 py-1 font-mono">originales/Strawberry_patched.iso</span>{% endif %}
+            {% if !original_elf_exists %}<span class="ml-2 rounded-full bg-amber-500/20 px-2 py-1 font-mono">originales/SLPS_256.11</span>{% endif %}
+            {% if dec_count == 0 %}<a href="/import" class="ml-2 rounded-full bg-pink-500 px-3 py-1 font-bold text-white">Importar scripts</a>{% endif %}
+        </section>
+        {% endif %}
+
+        <section class="mb-6 grid gap-3 md:grid-cols-4">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data.bin</div>
+                {% if data_bin_exists %}<div class="mt-2 font-bold text-emerald-300">OK</div>{% else %}<div class="mt-2 font-bold text-red-300">Falta</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Scripts .dec</div>
+                <div class="mt-2 text-2xl font-black text-white">{{ dec_count }}</div>
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">Data parcheado</div>
+                {% if patched_data_exists %}<div class="mt-2 font-bold text-emerald-300">Existe</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                <div class="text-xs uppercase tracking-wider text-slate-500">ISO</div>
+                {% if iso_exists %}<div class="mt-2 truncate font-bold text-emerald-300">{{ iso_out_path }}</div>{% else %}<div class="mt-2 font-bold text-slate-400">Pendiente</div>{% endif %}
+            </div>
+        </section>
+
+        <section class="mb-6 rounded-2xl border border-emerald-500/20 bg-slate-900/70 p-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="font-black text-white">Clasificacion experimental de scripts</h2>
+                    <p class="mt-1 text-sm text-slate-400">El parcheo de scripts elige automaticamente el modo segun el `.dec`: local-slack para lo conservador y shift-suffix solo en registros inline seguros.</p>
+                </div>
+                <a href="/import" class="self-start rounded-full border border-emerald-500/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/10 lg:self-auto">Reimportar clasificacion</a>
+            </div>
+            <div class="mt-4 grid gap-3 text-xs sm:grid-cols-4">
+                <div class="rounded-xl bg-emerald-500/10 p-3"><span class="font-black text-emerald-200">{{ shift_suffix_count }}</span><span class="ml-2 text-emerald-100/70">shift-suffix</span></div>
+                <div class="rounded-xl bg-slate-950/60 p-3"><span class="font-black text-slate-200">{{ local_slack_count }}</span><span class="ml-2 text-slate-400">local-slack</span></div>
+                <div class="rounded-xl bg-amber-500/10 p-3"><span class="font-black text-amber-200">{{ pointer_table_count }}</span><span class="ml-2 text-amber-100/70">requieren tabla</span></div>
+                <div class="rounded-xl bg-red-500/10 p-3"><span class="font-black text-red-200">{{ unknown_rebuild_count }}</span><span class="ml-2 text-red-100/70">sin clasificar</span></div>
+            </div>
+        </section>
+
+        {% if build_running %}<div class="mb-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-100"><span class="font-black">Build en curso.</span> Puedes dejar esta pagina abierta; la pestaña Logs se actualiza sola.</div>{% endif %}
+        {% if message.len() > 0 %}<div class="mb-6 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">{{ message }}</div>{% endif %}
+        {% if error.len() > 0 %}<div class="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{{ error }}</div>{% endif %}
+
+        <div class="sticky top-2 z-10 mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-slate-900/95 p-2 shadow-lg shadow-slate-950/30 backdrop-blur">
+            <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-white data-[active=true]:bg-pink-500" data-tab-target="complete" data-active="true">Completo</button>
+            <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="manual">Manual</button>
+            <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="logs">Logs</button>
+            <button type="button" class="tab-btn rounded-xl px-4 py-2 text-sm font-bold text-slate-300 data-[active=true]:bg-pink-500 data-[active=true]:text-white" data-tab-target="history">Historial</button>
+        </div>
+
+        <section id="tab-complete" class="tab-panel">
+            <div class="rounded-3xl border border-pink-500/40 bg-pink-500/10 p-6 shadow-xl shadow-pink-950/30">
+                <div class="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-end">
+                    <div>
+                        <h2 class="text-2xl font-black">Build completo</h2>
+                        <p class="mt-2 text-sm text-pink-100/80">Exporta CSV, prepara Data, parchea scripts/ELF/texturas, genera ISO e inyecta ELF.</p>
+                        {% if build_running %}<p class="mt-3 font-bold text-yellow-200">Hay un build corriendo. Mira la pestaña Logs.</p>{% endif %}
+                    </div>
+                    <form method="post" action="/build/run-full" class="build-action space-y-3">
+                        <label class="block text-sm">
+                            <span class="font-bold text-pink-100">Tipo</span>
+                            <select id="build-type" name="build_type" class="mt-1 w-full rounded-xl border border-pink-400/30 bg-slate-950 px-3 py-2 text-white">
+                                <option value="full"{% if default_build_type == "full" %} selected{% endif %}>Completo: textos + texturas</option>
+                                <option value="texts"{% if default_build_type == "texts" %} selected{% endif %}>Solo textos</option>
+                                <option value="images"{% if default_build_type == "images" %} selected{% endif %}>Solo texturas</option>
+                            </select>
+                        </label>
+                        <label class="block text-sm">
+                            <span class="font-bold text-pink-100">Procesos</span>
+                            <select name="workers" class="mt-1 w-full rounded-xl border border-pink-400/30 bg-slate-950 px-3 py-2 text-white">
+                                {% for n in 1..=max_workers %}
+                                <option value="{{ n }}"{% if n == default_workers %} selected{% endif %}>{{ n }} proceso{% if n != 1 %}s{% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <span class="mt-1 block text-xs text-pink-100/60">Usa 1-2 si quieres menos carga.</span>
+                        </label>
+                        <button id="full-build-button" class="w-full rounded-full px-7 py-3 font-black shadow-lg shadow-pink-950/40" data-base-ready="{% if data_bin_exists && base_iso_exists && original_elf_exists %}1{% else %}0{% endif %}" data-text-ready="{% if dec_count > 0 %}1{% else %}0{% endif %}" data-image-ready="{% if texture_manifest_exists %}1{% else %}0{% endif %}" data-running="{% if build_running %}1{% else %}0{% endif %}">Ejecutar build completo</button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-manual" class="tab-panel hidden">
+            <div class="grid gap-4 lg:grid-cols-2">
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">1. Exportar CSV</h2>
+                    <p class="mt-2 text-sm text-slate-400">Genera <span class="font-mono text-pink-200">{{ build_csv_path }}</span>.</p>
+                    <form method="post" action="/build/export-csv" class="build-action mt-4"><button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Exportar CSV</button></form>
+                </div>
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">2. Preparar Data.bin</h2>
+                    <p class="mt-2 text-sm text-slate-400">Copia una base limpia a <span class="font-mono text-pink-200">work/Data_patched.bin</span>.</p>
+                    <form method="post" action="/build/prepare-data" class="build-action mt-4">{% if data_bin_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Preparar Data</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Data.bin requerido</button>{% endif %}</form>
+                </div>
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">3. Parchear scripts</h2>
+                    <p class="mt-2 text-sm text-slate-400">Reconstruye scripts con local-slack o shift-suffix experimental segun clasificacion, recomprime LZ77 e inyecta en Data.</p>
+                    <form method="post" action="/build/patch-scripts" class="build-action mt-4">{% if patched_data_exists && build_csv_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear scripts</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere Data y CSV</button>{% endif %}</form>
+                </div>
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">4. Parchear ELF</h2>
+                    <p class="mt-2 text-sm text-slate-400">Aplica filas ELF del CSV en Shift-JIS.</p>
+                    <form method="post" action="/build/patch-elf" class="build-action mt-4">{% if original_elf_exists && build_csv_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Parchear ELF</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere ELF y CSV</button>{% endif %}</form>
+                </div>
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">5. Generar ISO</h2>
+                    <p class="mt-2 text-sm text-slate-400">Inyecta Data parcheado en la ISO base.</p>
+                    <form method="post" action="/build/build-iso" class="build-action mt-4">{% if base_iso_exists && patched_data_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Generar ISO</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere ISO base y Data</button>{% endif %}</form>
+                </div>
+                <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                    <h2 class="text-xl font-black">6. Inyectar ELF</h2>
+                    <p class="mt-2 text-sm text-slate-400">Inserta el ELF traducido dentro de la ISO.</p>
+                    <form method="post" action="/build/inject-elf" class="build-action mt-4">{% if iso_exists && original_elf_exists && translated_elf_exists %}<button class="rounded-full bg-pink-500 px-6 py-3 font-bold text-white hover:bg-pink-400">Inyectar ELF</button>{% else %}<button class="rounded-full bg-slate-700 px-6 py-3 font-bold text-slate-400" disabled>Requiere ISO y ELF</button>{% endif %}</form>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-logs" class="tab-panel hidden">
+            <div class="rounded-3xl border border-slate-800 bg-slate-950 p-6">
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div><h2 class="text-xl font-black">Log del build</h2><p class="mt-1 text-sm text-slate-500">Archivo: <span class="font-mono text-pink-200">work/build_temp/build.log</span></p></div>
+                    <a href="/build#logs" class="rounded-full border border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-300 hover:border-pink-400 hover:text-pink-200">Actualizar</a>
+                </div>
+                <pre id="build-log" class="max-h-96 overflow-auto whitespace-pre-wrap rounded-2xl bg-black/60 p-4 font-mono text-xs leading-relaxed text-emerald-100">{% if build_log.len() > 0 %}{{ build_log }}{% else %}Todavia no hay logs de build.{% endif %}</pre>
+            </div>
+        </section>
+
+        <section id="tab-history" class="tab-panel hidden">
+            <div class="mb-6 grid gap-4 md:grid-cols-4">
+                <div class="rounded-2xl bg-slate-900/70 p-5"><div class="text-xs uppercase tracking-wider text-slate-500">Scripts DB</div><div class="mt-2 text-2xl font-black text-white">{{ stats.scripts }}</div></div>
+                <div class="rounded-2xl bg-slate-900/70 p-5"><div class="text-xs uppercase tracking-wider text-slate-500">Textos</div><div class="mt-2 text-2xl font-black text-white">{{ stats.text_entries }}</div></div>
+                <div class="rounded-2xl bg-slate-900/70 p-5"><div class="text-xs uppercase tracking-wider text-slate-500">Traducidos</div><div class="mt-2 text-2xl font-black text-white">{{ stats.translated_entries }}</div></div>
+                <div class="rounded-2xl bg-slate-900/70 p-5"><div class="text-xs uppercase tracking-wider text-slate-500">Needs shift</div><div class="mt-2 text-2xl font-black text-white">{{ stats.needs_shift_entries }}</div></div>
+            </div>
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+                <h2 class="text-xl font-black">Historial reciente</h2>
+                {% if builds.len() == 0 %}<p class="mt-4 text-slate-400">Aun no hay builds registrados.</p>{% else %}
+                <div class="mt-4 overflow-hidden rounded-2xl border border-slate-800"><table class="w-full text-sm"><thead class="bg-slate-800/80 text-left text-xs uppercase tracking-wider text-slate-400"><tr><th class="px-4 py-3">ID</th><th class="px-4 py-3">Estado</th><th class="px-4 py-3">Tipo</th><th class="px-4 py-3">Paso</th><th class="px-4 py-3">Progreso</th></tr></thead><tbody class="divide-y divide-slate-800">{% for build in builds %}<tr><td class="px-4 py-3 font-mono text-pink-200">{{ build.id }}</td><td class="px-4 py-3">{{ build.status }}</td><td class="px-4 py-3">{{ build.build_type }}</td><td class="px-4 py-3 text-slate-400">{{ build.step }}</td><td class="px-4 py-3">{{ build.progress_pct }}%</td></tr>{% endfor %}</tbody></table></div>
+                {% endif %}
+            </div>
+        </section>
+    </main>
+    <script>
+        const buildLog = document.getElementById('build-log');
+        const buildWasRunning = {% if build_running %}true{% else %}false{% endif %};
+        let buildReloadScheduled = false;
+
+        function buildTaskFinished(text) {
+            return text.includes('Build completo finalizado correctamente:')
+                || text.includes('ISO generada:')
+                || text.includes('ELF inyectado en ISO:')
+                || text.includes('ERROR ')
+                || text.includes('ERROR:');
+        }
+
+        async function refreshBuildLog() {
+            if (!buildLog) return;
+            try {
+                const response = await fetch('/build/log', { cache: 'no-store' });
+                const text = await response.text();
+                if (text.trim().length > 0 && buildLog.textContent !== text) {
+                    buildLog.textContent = text;
+                    buildLog.scrollTop = buildLog.scrollHeight;
+                }
+                if (buildWasRunning && !buildReloadScheduled && buildTaskFinished(text)) {
+                    buildReloadScheduled = true;
+                    setTimeout(() => window.location.href = '/build#logs', 700);
+                }
+            } catch (_) {}
+        }
+        setInterval(refreshBuildLog, 2000);
+        refreshBuildLog();
+
+        function activateTab(target) {
+            document.querySelectorAll('.tab-btn').forEach((btn) => {
+                const active = btn.dataset.tabTarget === target;
+                btn.dataset.active = String(active);
+                btn.classList.toggle('text-white', active);
+                btn.classList.toggle('text-slate-300', !active);
+            });
+            document.querySelectorAll('.tab-panel').forEach((panel) => {
+                panel.classList.toggle('hidden', panel.id !== `tab-${target}`);
+            });
+        }
+        document.querySelectorAll('.tab-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                const target = button.dataset.tabTarget;
+                activateTab(target);
+                history.replaceState(null, '', `#${target}`);
+            });
+        });
+        const initialTab = location.hash.replace('#', '');
+        if (['complete', 'manual', 'logs', 'history'].includes(initialTab)) activateTab(initialTab);
+        if (new URLSearchParams(location.search).has('started')) activateTab('logs');
+
+        const buildType = document.getElementById('build-type');
+        const fullBuildButton = document.getElementById('full-build-button');
+        function refreshFullBuildButton() {
+            if (!buildType || !fullBuildButton) return;
+            const baseReady = fullBuildButton.dataset.baseReady === '1';
+            const textReady = fullBuildButton.dataset.textReady === '1';
+            const imageReady = fullBuildButton.dataset.imageReady === '1';
+            const running = fullBuildButton.dataset.running === '1';
+            const imagesOnly = buildType.value === 'images';
+            const ready = baseReady && (imagesOnly ? imageReady : textReady) && !running;
+            fullBuildButton.disabled = !ready;
+            fullBuildButton.textContent = running
+                ? 'Build corriendo'
+                : (ready ? 'Ejecutar build completo' : (imagesOnly && !imageReady ? 'Falta manifest de texturas' : (baseReady && !textReady && !imagesOnly ? 'Importa scripts primero' : 'Faltan prerequisitos')));
+            fullBuildButton.className = ready
+                ? 'w-full rounded-full bg-white px-7 py-3 font-black text-slate-950 shadow-lg shadow-pink-950/40 hover:bg-pink-100'
+                : 'w-full rounded-full bg-slate-700 px-7 py-3 font-black text-slate-400 shadow-lg shadow-pink-950/40';
+        }
+        if (buildType) buildType.addEventListener('change', refreshFullBuildButton);
+        refreshFullBuildButton();
+
+        document.querySelectorAll('form.build-action').forEach((form) => {
+            form.addEventListener('submit', () => {
+                form.querySelectorAll('button').forEach((button) => {
+                    button.disabled = true;
+                    button.textContent = 'Ejecutando...';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

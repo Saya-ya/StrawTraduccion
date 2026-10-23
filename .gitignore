@@ -10,8 +10,7 @@ IOP/
 
 # Archivos generados
 work/
-__pycache__/
-*.pyc
+work_texturas/
 *.p2s
 sstates/
 
@@ -38,7 +37,10 @@ HerramientasDev/
 dev/
 
 /textos
+/texturas/*.png
+/texturas/manifest.json
+/texturas/uploads/
+/Replacement/
 
 .env
-.venv/
-venv/
+target/

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Script {{ detail.script.id }} - StrawTraduccion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        {% include "components/global_nav.html" %}
+        <nav aria-label="Navegacion contextual" class="mb-6 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <a href="/scripts" class="text-sm font-bold uppercase tracking-[0.25em] text-pink-300">← Scripts</a>
+            <div class="flex flex-wrap gap-2">
+                <span class="rounded-full border border-slate-700 px-4 py-2 text-xs text-slate-400">Script #{{ detail.script.id }}</span>
+            </div>
+        </nav>
+
+        <section class="mb-8 rounded-3xl border border-pink-400/20 bg-slate-900/80 p-6 shadow-xl shadow-pink-950/20">
+            <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-[0.35em] text-pink-300">{{ detail.script.source }}</p>
+                    <h1 class="mt-2 text-4xl font-black tracking-tight">Script {{ detail.script.id }}</h1>
+                    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                        <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">{{ detail.script.script_type }}</span>
+                        <span class="rounded-full border border-slate-700 px-3 py-1 text-slate-300">Var {{ detail.script.variant }}</span>
+                        {% if detail.script.rebuild_mode == "shift_suffix_safe" %}
+                        <span class="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-emerald-200">shift-suffix experimental</span>
+                        {% else if detail.script.rebuild_mode == "local_slack_only" %}
+                        <span class="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">local-slack</span>
+                        {% else if detail.script.rebuild_mode == "pointer_table_needed" %}
+                        <span class="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-amber-200">requiere tabla</span>
+                        {% else %}
+                        <span class="rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-red-200">modo desconocido</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-center">
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.script.translated_texts }}/{{ detail.script.total_texts }}</div>
+                        <div class="text-xs text-slate-500">traducidos</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.script.total_sections }}</div>
+                        <div class="text-xs text-slate-500">secciones</div>
+                    </div>
+                    <div class="rounded-2xl bg-slate-950/70 px-5 py-3">
+                        <div class="text-2xl font-black text-white">{{ detail.total }}</div>
+                        <div class="text-xs text-slate-500">filas</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">
+            Haz click en una fila para editar. Atajos: <span class="font-mono text-pink-200">Ctrl+Enter</span> guarda, <span class="font-mono text-pink-200">Esc</span> cancela edicion, <span class="font-mono text-pink-200">/</span> enfoca busqueda.
+            {% if detail.script.rebuild_mode == "shift_suffix_safe" %}
+            <span class="mt-2 block text-emerald-200">Este script puede usar el modo experimental shift-suffix: si una linea no cabe, el build puede ampliar el registro preservando los comandos/sufijos de color.</span>
+            {% endif %}
+        </section>
+
+        <section class="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+            <div class="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="font-black text-white">Filtros del script</h2>
+                    <p class="mt-1 text-sm text-slate-500">Filtra esta lista sin salir del script.</p>
+                </div>
+                <form class="flex min-w-0 flex-col gap-2 sm:flex-row" method="get" action="/search">
+                    <input type="hidden" name="script_id" value="{{ detail.script.id }}">
+                    <input id="script-search" name="q" placeholder="buscar dentro del script..." class="min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-pink-400">
+                    <button class="rounded-xl bg-pink-500 px-4 py-2 text-sm font-bold text-white hover:bg-pink-400">Buscar aqui</button>
+                </form>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-bold">
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}" class="rounded-full border px-3 py-2 {% if status_filter == "all" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">Todos</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=untranslated" class="rounded-full border px-3 py-2 {% if status_filter == "untranslated" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">No traducidos</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=translated" class="rounded-full border px-3 py-2 {% if status_filter == "translated" %}border-pink-400 bg-pink-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-pink-400 hover:text-pink-200{% endif %}">Traducidos OK</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=warning" class="rounded-full border px-3 py-2 {% if status_filter == "warning" %}border-yellow-400 bg-yellow-500 text-slate-950{% else %}border-slate-700 text-slate-300 hover:border-yellow-400 hover:text-yellow-200{% endif %}">Warning</a>
+                <a href="/scripts/{{ detail.script.id }}?page=1&limit={{ detail.limit }}&status=needs_shift" class="rounded-full border px-3 py-2 {% if status_filter == "needs_shift" %}border-red-400 bg-red-500 text-white{% else %}border-slate-700 text-slate-300 hover:border-red-400 hover:text-red-200{% endif %}">Needs shift</a>
+            </div>
+        </section>
+
+        <nav class="mb-4 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex flex-wrap items-center gap-2">
+                {% if detail.page > 1 %}
+                <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
+                {% else %}
+                <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">← Anterior</span>
+                {% endif %}
+                <span class="px-2 text-slate-500">Pagina {{ detail.page }} de {{ detail.total_pages }}</span>
+                {% if detail.page < detail.total_pages %}
+                <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
+                {% else %}
+                <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">Siguiente →</span>
+                {% endif %}
+            </div>
+            <form method="get" action="/scripts/{{ detail.script.id }}" class="flex items-center gap-2">
+                <input type="hidden" name="page" value="1">
+                {% if status_filter != "all" %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+                <label class="text-slate-500" for="limit">Filas</label>
+                <select id="limit" name="limit" class="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white" onchange="this.form.submit()">
+                    <option value="25" {% if detail.limit == 25 %}selected{% endif %}>25</option>
+                    <option value="50" {% if detail.limit == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if detail.limit == 100 %}selected{% endif %}>100</option>
+                    <option value="200" {% if detail.limit == 200 %}selected{% endif %}>200</option>
+                </select>
+            </form>
+        </nav>
+
+        <section class="space-y-4">
+            {% if detail.texts.len() == 0 %}
+            <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center text-slate-400">
+                No hay filas para este filtro.
+            </div>
+            {% else %}
+            {% for text in detail.texts %}
+            {% include "components/text_row.html" %}
+            {% endfor %}
+            {% endif %}
+        </section>
+
+        <nav class="mt-8 flex items-center justify-between gap-3 text-sm">
+            {% if detail.page > 1 %}
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ prev_page }}&limit={{ detail.limit }}{{ status_query }}">← Anterior</a>
+            {% else %}
+            <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">← Anterior</span>
+            {% endif %}
+            <span class="text-slate-500">Página {{ detail.page }} de {{ detail.total_pages }}</span>
+            {% if detail.page < detail.total_pages %}
+            <a class="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-800" href="/scripts/{{ detail.script.id }}?page={{ next_page }}&limit={{ detail.limit }}{{ status_query }}">Siguiente →</a>
+            {% else %}
+            <span aria-disabled="true" class="rounded-full border border-slate-800 px-4 py-2 text-slate-600">Siguiente →</span>
+            {% endif %}
+        </nav>
+    </main>
+    <script>
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+            const active = document.activeElement;
+            if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
+            const search = document.getElementById('script-search');
+            if (!search) return;
+            event.preventDefault();
+            search.focus();
+        });
+    </script>
+</body>
+</html>
